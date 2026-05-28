@@ -10,6 +10,18 @@ export default {
       return createPost(request, env);
     }
 
+    if (url.pathname === "/api/admin/posts" && request.method === "GET") {
+      return adminListPosts(request, env);
+    }
+
+    if (url.pathname === "/api/admin/approve" && request.method === "POST") {
+      return adminApprovePost(request, env);
+    }
+
+    if (url.pathname === "/api/admin/delete" && request.method === "POST") {
+      return adminDeletePost(request, env);
+    }
+
     return env.ASSETS.fetch(request);
   }
 };
@@ -19,6 +31,12 @@ function json(data, status = 200) {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" }
   });
+}
+
+function isAdmin(request, env) {
+  const url = new URL(request.url);
+  const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
+  return key && env.ADMIN_KEY && key === env.ADMIN_KEY;
 }
 
 async function listPosts(request, env) {
@@ -38,20 +56,17 @@ async function listPosts(request, env) {
     params.push(type);
   }
 
-  const countQuery = `SELECT COUNT(*) AS total FROM posts ${where}`;
-  const count = await env.DB.prepare(countQuery).bind(...params).first();
+  const count = await env.DB.prepare(
+    `SELECT COUNT(*) AS total FROM posts ${where}`
+  ).bind(...params).first();
 
-  const listQuery = `
+  const posts = await env.DB.prepare(`
     SELECT *
     FROM posts
     ${where}
     ORDER BY datetime(created_at) DESC
     LIMIT ? OFFSET ?
-  `;
-
-  const posts = await env.DB.prepare(listQuery)
-    .bind(...params, limit, offset)
-    .all();
+  `).bind(...params, limit, offset).all();
 
   return json({
     ok: true,
@@ -66,8 +81,6 @@ async function listPosts(request, env) {
 async function createPost(request, env) {
   const data = await request.json();
 
-  const id = crypto.randomUUID();
-
   const section = String(data.section || "").trim();
   const type = String(data.type || "").trim();
   const title = String(data.title || "").trim();
@@ -81,9 +94,9 @@ async function createPost(request, env) {
       id, section, type, title, body, link,
       author_name, author_email, linkedin_url, status
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
   `).bind(
-    id,
+    crypto.randomUUID(),
     section,
     type,
     title,
@@ -94,5 +107,57 @@ async function createPost(request, env) {
     data.linkedinUrl || ""
   ).run();
 
-  return json({ ok: true, id });
+  return json({
+    ok: true,
+    message: "Submitted. Your post will appear after admin approval."
+  });
+}
+
+async function adminListPosts(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const url = new URL(request.url);
+  const status = url.searchParams.get("status") || "pending";
+
+  const posts = await env.DB.prepare(`
+    SELECT *
+    FROM posts
+    WHERE status = ?
+    ORDER BY datetime(created_at) DESC
+  `).bind(status).all();
+
+  return json({ ok: true, posts: posts.results });
+}
+
+async function adminApprovePost(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json();
+
+  await env.DB.prepare(`
+    UPDATE posts
+    SET status = 'published'
+    WHERE id = ?
+  `).bind(data.id).run();
+
+  return json({ ok: true });
+}
+
+async function adminDeletePost(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json();
+
+  await env.DB.prepare(`
+    DELETE FROM posts
+    WHERE id = ?
+  `).bind(data.id).run();
+
+  return json({ ok: true });
 }
