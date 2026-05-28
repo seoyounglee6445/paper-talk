@@ -153,6 +153,41 @@ h2 {
   font-size: 18px;
   margin-bottom: 10px;
 }
+.jobsite-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.jobsite-card {
+  display: block;
+  background: white;
+  border: 1px solid var(--border-blue);
+  border-radius: 20px;
+  padding: 22px;
+  text-decoration: none;
+  color: var(--text-dark);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  transition: all 0.2s ease;
+}
+
+.jobsite-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 32px rgba(20, 40, 160, 0.16);
+  border-color: var(--main-blue);
+}
+
+.jobsite-card h3 {
+  color: var(--main-blue);
+  margin-top: 0;
+}
+
+@media (max-width: 900px) {
+  .jobsite-list {
+    grid-template-columns: 1fr;
+  }
+}
 
 .study-panel {
   min-height: 360px;
