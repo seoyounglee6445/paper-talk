@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Study Materials | Paper_Talk</title>
-  <link rel="stylesheet" href="/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Study Materials | Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
 <header class="header">
   <nav class="nav">
@@ -19,9 +21,44 @@
 
 <main class="container">
   <h1>Study Materials</h1>
-  <div class="card">
-    <p>Seo-Young님이 직접 글을 작성할 공간입니다.</p>
+  <p>Curated study resources, methodology notes, and research blog posts.</p>
+
+  <div class="mini-tabs">
+    <button class="mini-tab active" onclick="showStudyTab('study', this)">Study</button>
+    <button class="mini-tab" onclick="showStudyTab('methodology', this)">Methodology</button>
+    <button class="mini-tab" onclick="showStudyTab('blog', this)">Blog</button>
   </div>
+
+  <section class="card study-panel" id="study">
+    <h2>Study</h2>
+    <p>Personal study notes, curated resources, tutorials, and learning materials will be organized here.</p>
+  </section>
+
+  <section class="card study-panel" id="methodology" style="display:none;">
+    <h2>Methodology</h2>
+    <p>Experimental design, sequencing workflows, computational pipelines, statistical analysis, and reproducible research methods will be organized here.</p>
+  </section>
+
+  <section class="card study-panel" id="blog" style="display:none;">
+    <h2>Blog</h2>
+    <p>Research insights, project updates, conference reflections, scientific opinions, and technical writing will be organized here.</p>
+  </section>
 </main>
+
+<script>
+function showStudyTab(id, button) {
+  document.querySelectorAll(".study-panel").forEach(panel => {
+    panel.style.display = "none";
+  });
+
+  document.getElementById(id).style.display = "block";
+
+  document.querySelectorAll(".mini-tab").forEach(tab => {
+    tab.classList.remove("active");
+  });
+
+  button.classList.add("active");
+}
+</script>
 </body>
 </html>
