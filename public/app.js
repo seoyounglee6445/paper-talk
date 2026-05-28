@@ -1,3 +1,22 @@
+async function loadAuth() {
+  const res = await fetch("/api/me");
+  const data = await res.json();
+
+  const box = document.getElementById("authBox");
+  if (!box) return;
+
+  if (data.ok && data.user) {
+    box.innerHTML = `
+      <span class="auth-name">Signed in as ${escapeHtml(data.user.name)}</span>
+      <a class="btn" href="/auth/logout">Logout</a>
+    `;
+  } else {
+    box.innerHTML = `<a class="btn" href="/auth/google">Sign in with Google</a>`;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", loadAuth);
+
 async function loadPosts({ section, type = "", page = 1, target = "postList" }) {
   const params = new URLSearchParams({ section, page });
 
@@ -40,6 +59,7 @@ function renderPost(p) {
   return `
     <article class="card">
       <h3>${escapeHtml(p.title)}</h3>
+
       <p class="meta">
         ${escapeHtml(p.type)} · ${new Date(p.created_at).toLocaleDateString()}
       </p>
@@ -92,7 +112,7 @@ async function submitPost(e) {
     return;
   }
 
-  alert("Submitted! 관리자 승인 후 공개됩니다.");
+  alert("Submitted! Your post will be published after admin approval.");
   e.target.reset();
   location.reload();
 }
