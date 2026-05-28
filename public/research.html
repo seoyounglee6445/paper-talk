@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Research Paper | Paper_Talk</title>
-  <link rel="stylesheet" href="/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Research Paper | Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
 <header class="header">
   <nav class="nav">
@@ -19,15 +21,37 @@
 
 <main class="container">
   <h1>Research Paper</h1>
-  <p>전체 논문 목록입니다. 한 페이지에 10개씩 표시됩니다.</p>
+  <p>Full research paper list. 10 papers per page.</p>
 
-  <div id="postList"></div>
-  <div id="pagination" class="pagination"></div>
+  <div class="toolbar">
+    <input class="search-input" id="paperSearch" placeholder="Search research papers...">
+    <button class="write-btn" onclick="searchPapers()">Search</button>
+  </div>
+
+  <section class="card">
+    <h2>Research Papers</h2>
+
+    <div id="paperList">
+      <p>No papers yet.</p>
+    </div>
+  </section>
 </main>
 
-<script src="/app.js"></script>
 <script>
-loadPosts({ section: "research" });
+function searchPapers() {
+  const keyword = document.getElementById("paperSearch").value.toLowerCase();
+  const items = document.querySelectorAll(".paper-item");
+
+  items.forEach(item => {
+    const text = item.textContent.toLowerCase();
+
+    if (text.includes(keyword)) {
+      item.style.display = "block";
+    } else {
+      item.style.display = "none";
+    }
+  });
+}
 </script>
 </body>
 </html>
