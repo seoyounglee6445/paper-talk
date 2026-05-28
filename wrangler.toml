@@ -1,1 +1,11 @@
+name = "paper-talk"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
 
+[assets]
+directory = "./public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "paper-talk-db"
+database_id = "PASTE_YOUR_D1_DATABASE_ID_HERE"
