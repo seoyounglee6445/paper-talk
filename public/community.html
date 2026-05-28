@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Community | Paper_Talk</title>
-  <link rel="stylesheet" href="/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Community | Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
 <header class="header">
   <nav class="nav">
@@ -19,46 +21,43 @@
 
 <main class="container">
   <h1>Community</h1>
-  <p>질문/토론과 학회 공고를 올릴 수 있습니다.</p>
+  <p>Choose a community category.</p>
 
-  <section class="card">
-    <h2>Write Community Post</h2>
-    <form onsubmit="submitPost(event)">
-      <input type="hidden" name="section" value="community">
+  <div class="mini-tabs">
+    <button class="mini-tab active" onclick="showCommunityTab('discussion', this)">
+      Question / Discussion
+    </button>
 
-      <label>Type</label>
-      <select name="type">
-        <option value="question">Question / Discussion</option>
-        <option value="conference_notice">Conference Notice</option>
-      </select>
+    <button class="mini-tab" onclick="showCommunityTab('conference', this)">
+      Conference Notice
+    </button>
+  </div>
 
-      <label>Title</label>
-      <input name="title" required>
-
-      <label>Body</label>
-      <textarea name="body"></textarea>
-
-      <label>Link</label>
-      <input name="link">
-
-      <label>Your Name</label>
-      <input name="authorName">
-
-      <label>Your Email</label>
-      <input name="authorEmail">
-
-      <button type="submit">Submit</button>
-    </form>
+  <section class="card community-panel" id="discussion">
+    <h2>Question / Discussion</h2>
+    <p>Research questions, discussion topics, paper questions, and analysis ideas will be posted here.</p>
   </section>
 
-  <h2>Posts</h2>
-  <div id="postList"></div>
-  <div id="pagination" class="pagination"></div>
+  <section class="card community-panel" id="conference" style="display:none;">
+    <h2>Conference Notice</h2>
+    <p>Conference announcements, symposiums, workshops, deadlines, and meeting information will be posted here.</p>
+  </section>
 </main>
 
-<script src="/app.js"></script>
 <script>
-loadPosts({ section: "community" });
+function showCommunityTab(id, button) {
+  document.querySelectorAll(".community-panel").forEach(panel => {
+    panel.style.display = "none";
+  });
+
+  document.getElementById(id).style.display = "block";
+
+  document.querySelectorAll(".mini-tab").forEach(tab => {
+    tab.classList.remove("active");
+  });
+
+  button.classList.add("active");
+}
 </script>
 </body>
 </html>
