@@ -284,6 +284,23 @@ h2 {
   margin-right: 12px;
 }
 
+.admin-post {
+  margin-bottom: 20px;
+}
+
+.danger-btn {
+  background: #ef4444;
+}
+
+.danger-btn:hover {
+  background: #b91c1c;
+}
+
+.error {
+  color: #ef4444;
+  font-weight: 900;
+}
+
 .study-panel {
   min-height: 360px;
 }
