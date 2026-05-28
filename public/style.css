@@ -139,6 +139,21 @@ h2 {
   margin-bottom: 24px;
 }
 
+.post {
+  padding: 16px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.post:last-child {
+  border-bottom: 0;
+}
+
+.post-title {
+  font-weight: 900;
+  font-size: 18px;
+  margin-bottom: 10px;
+}
+
 .study-panel {
   min-height: 360px;
 }
