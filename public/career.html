@@ -1,1 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Career | Paper_Talk</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="header">
+  <nav class="nav">
+    <div class="logo">Paper_Talk</div>
+    <a href="/">Home</a>
+    <a href="/research.html">Research Paper</a>
+    <a href="/study.html">Study Materials</a>
+    <a href="/community.html">Community</a>
+    <a href="/career.html">Career</a>
+  </nav>
+</header>
 
+<main class="container">
+  <h1>Career</h1>
+  <p>LinkedIn 자기 홍보와 구인공고를 올릴 수 있습니다.</p>
+
+  <section class="card">
+    <h2>Write Career Post</h2>
+    <form onsubmit="submitPost(event)">
+      <input type="hidden" name="section" value="career">
+
+      <label>Type</label>
+      <select name="type">
+        <option value="linkedin">LinkedIn Promotion</option>
+        <option value="job">Job Posting</option>
+      </select>
+
+      <label>Title</label>
+      <input name="title" required>
+
+      <label>Description</label>
+      <textarea name="body"></textarea>
+
+      <label>Link</label>
+      <input name="link">
+
+      <label>Your LinkedIn URL</label>
+      <input name="linkedinUrl">
+
+      <label>Your Name</label>
+      <input name="authorName">
+
+      <label>Your Email</label>
+      <input name="authorEmail">
+
+      <button type="submit">Submit</button>
+    </form>
+  </section>
+
+  <h2>Posts</h2>
+  <div id="postList"></div>
+  <div id="pagination" class="pagination"></div>
+</main>
+
+<script src="/app.js"></script>
+<script>
+loadPosts({ section: "career" });
+</script>
+</body>
+</html>
