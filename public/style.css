@@ -1,1 +1,112 @@
+body {
+  margin: 0;
+  font-family: Inter, system-ui, Arial, sans-serif;
+  background: #eef8ff;
+  color: #0f172a;
+}
 
+.header {
+  background: white;
+  border-bottom: 1px solid #dbeafe;
+  padding: 18px 24px;
+  position: sticky;
+  top: 0;
+}
+
+.nav {
+  max-width: 1100px;
+  margin: auto;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.logo {
+  font-weight: 900;
+  font-size: 22px;
+  margin-right: auto;
+}
+
+.nav a {
+  text-decoration: none;
+  color: #1d4ed8;
+  font-weight: 800;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 32px auto;
+  padding: 0 20px;
+}
+
+.card {
+  background: white;
+  border: 1px solid #bfdbfe;
+  border-radius: 20px;
+  padding: 22px;
+  margin-bottom: 18px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+
+h1 {
+  font-size: 42px;
+}
+
+h2 {
+  margin-top: 34px;
+}
+
+button, .btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 11px 17px;
+  background: linear-gradient(135deg, #2563eb, #06b6d4);
+  color: white;
+  font-weight: 900;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+input, select, textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  margin: 7px 0 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  font: inherit;
+}
+
+textarea {
+  min-height: 130px;
+}
+
+.pagination {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.pagination button.active {
+  background: #0f172a;
+}
+
+.meta {
+  color: #64748b;
+  font-weight: 700;
+}
+
+@media (max-width: 800px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nav {
+    flex-wrap: wrap;
+  }
+}
