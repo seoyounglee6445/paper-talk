@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Admin | Paper_Talk</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="header">
+  <nav class="nav">
+    <div class="logo">Paper_Talk Admin</div>
+    <a href="/">Home</a>
+  </nav>
+</header>
+
+<main class="container">
+  <h1>Admin Approval</h1>
+
+  <section class="card">
+    <label>Admin Key</label>
+    <input id="adminKey" type="password" placeholder="Enter admin key">
+    <button onclick="loadPending()">Load Pending Posts</button>
+  </section>
+
+  <h2>Pending Posts</h2>
+  <div id="pendingList"></div>
+</main>
+
+<script>
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function key() {
+  return document.getElementById("adminKey").value;
+}
+
+async function loadPending() {
+  const res = await fetch("/api/admin/posts?status=pending&key=" + encodeURIComponent(key()));
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Failed");
+    return;
+  }
+
+  const box = document.getElementById("pendingList");
+
+  if (!data.posts.length) {
+    box.innerHTML = "<p>No pending posts.</p>";
+    return;
+  }
+
+  box.innerHTML = data.posts.map(p => `
+    <article class="card">
+      <h3>${escapeHtml(p.title)}</h3>
+      <p class="meta">${escapeHtml(p.section)} · ${escapeHtml(p.type)} · ${escapeHtml(p.created_at)}</p>
+      <p>${escapeHtml(p.body)}</p>
+      ${p.link ? `<p><a href="${escapeHtml(p.link)}" target="_blank">Open Link</a></p>` : ""}
+      ${p.linkedin_url ? `<p><a href="${escapeHtml(p.linkedin_url)}" target="_blank">LinkedIn</a></p>` : ""}
+      <p>Author: ${escapeHtml(p.author_name)} / ${escapeHtml(p.author_email)}</p>
+      <button onclick="approvePost('${p.id}')">Approve</button>
+      <button onclick="deletePost('${p.id}')">Delete</button>
+    </article>
+  `).join("");
+}
+
+async function approvePost(id) {
+  const res = await fetch("/api/admin/approve", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key()
+    },
+    body: JSON.stringify({ id })
+  });
+
+  const data = await res.json();
+  if (!data.ok) alert(data.error || "Failed");
+  loadPending();
+}
+
+async function deletePost(id) {
+  if (!confirm("Delete this post?")) return;
+
+  const res = await fetch("/api/admin/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key()
+    },
+    body: JSON.stringify({ id })
+  });
+
+  const data = await res.json();
+  if (!data.ok) alert(data.error || "Failed");
+  loadPending();
+}
+</script>
+</body>
+</html>
