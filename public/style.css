@@ -189,6 +189,59 @@ h2 {
   }
 }
 
+.write-form {
+  margin: 26px 0;
+  padding: 30px;
+  border-radius: 26px;
+}
+
+.write-form form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 22px;
+}
+
+.write-form label {
+  display: block;
+  font-weight: 900;
+  color: var(--main-blue);
+  margin-bottom: 8px;
+}
+
+.write-form input,
+.write-form select,
+.write-form textarea {
+  width: 100%;
+  border: 1px solid var(--border-blue);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font-size: 15px;
+  background: white;
+}
+
+.write-form textarea {
+  min-height: 140px;
+  resize: vertical;
+}
+
+.write-form .full-row {
+  grid-column: 1 / -1;
+}
+
+.write-form button[type="submit"] {
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 14px 26px;
+  border-radius: 999px;
+  box-shadow: 0 10px 24px rgba(20, 40, 160, 0.18);
+}
+
+@media (max-width: 800px) {
+  .write-form form {
+    grid-template-columns: 1fr;
+  }
+}
+
 .study-panel {
   min-height: 360px;
 }
