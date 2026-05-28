@@ -21,6 +21,7 @@
 
 <main class="container">
   <div id="authBox" class="auth-box"></div>
+
   <h1>Career</h1>
   <p>LinkedIn promotion, job postings, and curated job search websites.</p>
 
@@ -49,30 +50,34 @@
     <form onsubmit="submitPost(event)">
       <input type="hidden" name="section" value="career">
 
-      <label>Category</label>
-      <select name="type">
-        <option value="linkedin">LinkedIn Promotion</option>
-        <option value="job">Job Posting</option>
-        <option value="jobsite">Job Website</option>
-      </select>
+      <div>
+        <label>Category</label>
+        <select name="type" id="careerType" onchange="toggleLinkedInField()">
+          <option value="linkedin">LinkedIn Promotion</option>
+          <option value="job">Job Posting</option>
+          <option value="jobsite">Job Website</option>
+        </select>
+      </div>
 
-      <label>Title</label>
-      <input name="title" required>
+      <div>
+        <label>Title</label>
+        <input name="title" required placeholder="Enter title">
+      </div>
 
-      <label>Description</label>
-      <textarea name="body"></textarea>
+      <div class="full-row">
+        <label>Description</label>
+        <textarea name="body" placeholder="Write details..."></textarea>
+      </div>
 
-      <label>Link</label>
-      <input name="link">
+      <div>
+        <label>Link</label>
+        <input name="link" placeholder="https://">
+      </div>
 
-      <label>Your LinkedIn URL</label>
-      <input name="linkedinUrl">
-
-      <label>Your Name</label>
-      <input name="authorName">
-
-      <label>Your Email</label>
-      <input name="authorEmail">
+      <div id="linkedinField">
+        <label>LinkedIn URL</label>
+        <input name="linkedinUrl" placeholder="https://www.linkedin.com/in/...">
+      </div>
 
       <button type="submit">Submit for Approval</button>
     </form>
@@ -135,7 +140,17 @@ function toggleWriteForm() {
   const form = document.getElementById("writeForm");
   form.style.display = form.style.display === "none" ? "block" : "none";
 }
+
+function toggleLinkedInField() {
+  const type = document.getElementById("careerType").value;
+  const field = document.getElementById("linkedinField");
+
+  field.style.display = type === "linkedin" ? "block" : "none";
+}
+
+document.addEventListener("DOMContentLoaded", toggleLinkedInField);
 </script>
+
 <script src="/app.js"></script>
 </body>
 </html>
