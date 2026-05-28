@@ -5,7 +5,7 @@ export default {
     if (url.pathname === "/") {
       return html(homePage());
     }
-
+ 
     if (url.pathname === "/research") {
       return html(researchPage());
     }
