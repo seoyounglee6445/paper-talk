@@ -1,1 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Community | Paper_Talk</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="header">
+  <nav class="nav">
+    <div class="logo">Paper_Talk</div>
+    <a href="/">Home</a>
+    <a href="/research.html">Research Paper</a>
+    <a href="/study.html">Study Materials</a>
+    <a href="/community.html">Community</a>
+    <a href="/career.html">Career</a>
+  </nav>
+</header>
 
+<main class="container">
+  <h1>Community</h1>
+  <p>질문/토론과 학회 공고를 올릴 수 있습니다.</p>
+
+  <section class="card">
+    <h2>Write Community Post</h2>
+    <form onsubmit="submitPost(event)">
+      <input type="hidden" name="section" value="community">
+
+      <label>Type</label>
+      <select name="type">
+        <option value="question">Question / Discussion</option>
+        <option value="conference_notice">Conference Notice</option>
+      </select>
+
+      <label>Title</label>
+      <input name="title" required>
+
+      <label>Body</label>
+      <textarea name="body"></textarea>
+
+      <label>Link</label>
+      <input name="link">
+
+      <label>Your Name</label>
+      <input name="authorName">
+
+      <label>Your Email</label>
+      <input name="authorEmail">
+
+      <button type="submit">Submit</button>
+    </form>
+  </section>
+
+  <h2>Posts</h2>
+  <div id="postList"></div>
+  <div id="pagination" class="pagination"></div>
+</main>
+
+<script src="/app.js"></script>
+<script>
+loadPosts({ section: "community" });
+</script>
+</body>
+</html>
