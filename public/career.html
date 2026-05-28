@@ -21,7 +21,7 @@
 
 <main class="container">
   <h1>Career</h1>
-  <p>LinkedIn promotion, job postings, and useful job search websites.</p>
+  <p>LinkedIn promotion, job postings, and curated job search websites.</p>
 
   <div class="mini-tabs">
     <button class="mini-tab active" onclick="showCareer('linkedin', this)">
@@ -32,8 +32,8 @@
       Job Posting
     </button>
 
-    <button class="mini-tab" onclick="showCareer('jobSites', this)">
-      Job Search Websites
+    <button class="mini-tab" onclick="showCareer('jobsites', this)">
+      Job Websites
     </button>
   </div>
 
@@ -52,7 +52,7 @@
       <select name="type">
         <option value="linkedin">LinkedIn Promotion</option>
         <option value="job">Job Posting</option>
-        <option value="job_site">Job Search Website</option>
+        <option value="jobsite">Job Website</option>
       </select>
 
       <label>Title</label>
@@ -87,23 +87,30 @@
     <p>Labs, hospitals, companies, and research groups can share hiring opportunities here.</p>
   </section>
 
-  <section class="card career-panel" id="jobSites" style="display:none;">
-    <h2>Job Search Websites</h2>
-    <p>Useful job search websites for bioinformatics, cancer genomics, and computational biology careers.</p>
+  <section class="card career-panel" id="jobsites" style="display:none;">
+    <h2>Job Websites</h2>
+    <p>Curated job search websites for bioinformatics, cancer genomics, computational biology, and research careers.</p>
 
-    <div class="post">
-      <div class="post-title">LinkedIn Jobs</div>
-      <a class="btn" href="https://www.linkedin.com/jobs/" target="_blank">Open Website</a>
-    </div>
+    <div class="jobsite-list">
+      <a class="jobsite-card" href="https://www.linkedin.com/jobs/" target="_blank">
+        <h3>LinkedIn Jobs</h3>
+        <p>General job search platform with research, biotech, data science, and academic roles.</p>
+      </a>
 
-    <div class="post">
-      <div class="post-title">Nature Careers</div>
-      <a class="btn" href="https://www.nature.com/naturecareers" target="_blank">Open Website</a>
-    </div>
+      <a class="jobsite-card" href="https://www.nature.com/naturecareers" target="_blank">
+        <h3>Nature Careers</h3>
+        <p>Academic, postdoc, faculty, and scientific research positions.</p>
+      </a>
 
-    <div class="post">
-      <div class="post-title">Bioinformatics.org Jobs</div>
-      <a class="btn" href="https://www.bioinformatics.org/jobs/" target="_blank">Open Website</a>
+      <a class="jobsite-card" href="https://www.bioinformatics.org/jobs/" target="_blank">
+        <h3>Bioinformatics.org Jobs</h3>
+        <p>Bioinformatics and computational biology job listings.</p>
+      </a>
+
+      <a class="jobsite-card" href="https://jobs.sciencecareers.org/" target="_blank">
+        <h3>Science Careers</h3>
+        <p>Scientific research jobs from academia, industry, and research institutes.</p>
+      </a>
     </div>
   </section>
 </main>
