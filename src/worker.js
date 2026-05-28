@@ -2,365 +2,333 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/") {
-      return html(homePage());
-    }
- 
-    if (url.pathname === "/research") {
-      return html(researchPage());
-    }
+    if (url.pathname === "/auth/google") return googleLogin(request, env);
+    if (url.pathname === "/auth/google/callback") return googleCallback(request, env);
+    if (url.pathname === "/auth/logout") return logout();
+    if (url.pathname === "/api/me") return apiMe(request, env);
 
-    if (url.pathname === "/study") {
-      return html(studyPage());
-    }
+    if (url.pathname === "/api/posts" && request.method === "GET") return listPosts(request, env);
+    if (url.pathname === "/api/posts" && request.method === "POST") return createPost(request, env);
 
-    if (url.pathname === "/community") {
-      return html(communityPage());
-    }
+    if (url.pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
+    if (url.pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
+    if (url.pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
 
-    if (url.pathname === "/career") {
-      return html(careerPage());
-    }
-
-    return html(homePage());
+    if (env.ASSETS) return env.ASSETS.fetch(request);
+    return new Response("Not found", { status: 404 });
   }
 };
 
-function html(content) {
-  return new Response(content, {
+function json(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
     headers: {
-      "Content-Type": "text/html;charset=UTF-8"
+      "Content-Type": "application/json; charset=utf-8",
+      ...headers
     }
   });
 }
 
-function layout(title, body) {
-  return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title}</title>
-
-<style>
-:root {
-  --main-blue: #1428A0;
-  --dark-blue: #0b1f78;
-  --light-blue: #eef3ff;
-  --border-blue: #c7d2fe;
-  --text-dark: #0f172a;
+function redirect(location, headers = {}) {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: location,
+      ...headers
+    }
+  });
 }
 
-body {
-  margin: 0;
-  font-family: Inter, Arial, sans-serif;
-  background: var(--light-blue);
-  color: var(--text-dark);
+function getOrigin(request) {
+  return new URL(request.url).origin;
 }
 
-.header {
-  background: var(--main-blue);
-  padding: 18px 24px;
-}
+function getCookie(request, name) {
+  const cookie = request.headers.get("Cookie") || "";
+  const parts = cookie.split(";").map(v => v.trim());
 
-.nav {
-  max-width: 1200px;
-  margin: auto;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-
-.logo {
-  color: white;
-  font-size: 28px;
-  font-weight: 900;
-  margin-right: auto;
-}
-
-.nav a {
-  color: white;
-  text-decoration: none;
-  font-weight: 700;
-}
-
-.container {
-  max-width: 1200px;
-  margin: auto;
-  padding: 30px 20px;
-}
-
-h1 {
-  color: var(--main-blue);
-  font-size: 44px;
-}
-
-h2 {
-  color: var(--main-blue);
-}
-
-.card {
-  background: white;
-  border-radius: 20px;
-  border: 1px solid var(--border-blue);
-  padding: 20px;
-}
-
-.home-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-}
-
-.post {
-  padding: 14px 0;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.post:last-child {
-  border-bottom: 0;
-}
-
-.post-title {
-  font-weight: 800;
-  margin-bottom: 6px;
-}
-
-.category-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
-}
-
-.category-box {
-  background: white;
-  border-radius: 20px;
-  border: 1px solid var(--border-blue);
-  padding: 20px;
-}
-
-.badge {
-  display: inline-block;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: var(--main-blue);
-  color: white;
-  font-weight: 700;
-  margin: 6px 6px 0 0;
-}
-
-@media (max-width: 900px) {
-  .home-grid {
-    grid-template-columns: 1fr;
+  for (const part of parts) {
+    if (part.startsWith(name + "=")) {
+      return decodeURIComponent(part.slice(name.length + 1));
+    }
   }
 
-  .category-grid {
-    grid-template-columns: 1fr;
+  return "";
+}
+
+async function sign(value, secret) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(value)
+  );
+
+  return btoa(String.fromCharCode(...new Uint8Array(sig)));
+}
+
+async function createSessionCookie(user, env) {
+  const payload = btoa(JSON.stringify({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    picture: user.picture || "",
+    createdAt: Date.now()
+  }));
+
+  const signature = await sign(payload, env.SESSION_SECRET);
+  const value = `${payload}.${signature}`;
+
+  return `pt_session=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`;
+}
+
+async function getSession(request, env) {
+  const cookie = getCookie(request, "pt_session");
+  if (!cookie || !cookie.includes(".")) return null;
+
+  const [payload, signature] = cookie.split(".");
+  const expected = await sign(payload, env.SESSION_SECRET);
+
+  if (signature !== expected) return null;
+
+  try {
+    return JSON.parse(atob(payload));
+  } catch {
+    return null;
   }
 }
-</style>
 
-</head>
+async function googleLogin(request, env) {
+  const origin = getOrigin(request);
+  const redirectUri = `${origin}/auth/google/callback`;
 
-<body>
+  const params = new URLSearchParams({
+    client_id: env.GOOGLE_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "openid email profile",
+    access_type: "online",
+    prompt: "select_account"
+  });
 
-<header class="header">
-  <nav class="nav">
-    <div class="logo">Paper_Talk</div>
-
-    <a href="/">Home</a>
-    <a href="/research">Research Paper</a>
-    <a href="/study">Study Materials</a>
-    <a href="/community">Community</a>
-    <a href="/career">Career</a>
-  </nav>
-</header>
-
-<div class="container">
-${body}
-</div>
-
-</body>
-</html>
-`;
+  return redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params.toString());
 }
 
-function homePage() {
-  return layout(
-    "Paper_Talk",
-    `
-<h1>Paper_Talk</h1>
+async function googleCallback(request, env) {
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
 
-<p>
-Research paper, conference, community, and career platform
-for cancer genomics and bioinformatics researchers.
-</p>
+  if (!code) {
+    return new Response("Missing Google authorization code.", { status: 400 });
+  }
 
-<div class="home-grid">
+  const origin = getOrigin(request);
+  const redirectUri = `${origin}/auth/google/callback`;
 
-  <div class="card">
-    <h2>Latest Research Papers</h2>
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: new URLSearchParams({
+      code,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code"
+    })
+  });
 
-    <div class="post">
-      <div class="post-title">
-        TFvelo: gene regulation inspired RNA velocity estimation
-      </div>
-      <div>Nature Communications · 2024</div>
-    </div>
+  const token = await tokenRes.json();
 
-    <div class="post">
-      <div class="post-title">
-        Spatial transcriptomics in oncology
-      </div>
-      <div>Genome Biology · 2025</div>
-    </div>
-  </div>
+  if (!token.access_token) {
+    return json({ ok: false, error: "Google token exchange failed.", token }, 400);
+  }
 
-  <div class="card">
-    <h2>Conference Notices</h2>
+  const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+    headers: {
+      Authorization: `Bearer ${token.access_token}`
+    }
+  });
 
-    <div class="post">
-      <div class="post-title">
-        AACR 2026 Abstract Submission
-      </div>
-      <div>Deadline: July 2026</div>
-    </div>
+  const googleUser = await userRes.json();
 
-    <div class="post">
-      <div class="post-title">
-        ASCO 2026 Travel Grant
-      </div>
-      <div>Application Open</div>
-    </div>
-  </div>
+  const user = {
+    id: googleUser.id,
+    name: googleUser.name || googleUser.email,
+    email: googleUser.email,
+    picture: googleUser.picture || ""
+  };
 
-  <div class="card">
-    <h2>LinkedIn Profiles</h2>
+  await env.DB.prepare(`
+    INSERT INTO users (id, name, email, created_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      email = excluded.email
+  `).bind(user.id, user.name, user.email).run();
 
-    <div class="post">
-      <div class="post-title">
-        Cancer Multi-omics Researcher
-      </div>
-      <div>LinkedIn Promotion</div>
-    </div>
+  const cookie = await createSessionCookie(user, env);
 
-    <div class="post">
-      <div class="post-title">
-        Single-cell AI Scientist
-      </div>
-      <div>Machine Learning & Oncology</div>
-    </div>
-  </div>
-
-</div>
-`
-  );
+  return redirect("/", {
+    "Set-Cookie": cookie
+  });
 }
 
-function researchPage() {
-  return layout(
-    "Research",
-    `
-<h1>Research Paper</h1>
-
-<div class="card">
-  <h2>All Research Papers</h2>
-
-  <div class="post">
-    <div class="post-title">
-      TFvelo: gene regulation inspired RNA velocity estimation
-    </div>
-    <div>Nature Communications · 2024</div>
-  </div>
-
-  <div class="post">
-    <div class="post-title">
-      Multi-omics precision oncology
-    </div>
-    <div>Cell · 2025</div>
-  </div>
-
-  <div style="margin-top:20px;">
-    <span class="badge">1</span>
-    <span class="badge">2</span>
-    <span class="badge">3</span>
-  </div>
-</div>
-`
-  );
+function logout() {
+  return redirect("/", {
+    "Set-Cookie": "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+  });
 }
 
-function studyPage() {
-  return layout(
-    "Study",
-    `
-<h1>Study Materials</h1>
+async function apiMe(request, env) {
+  const user = await getSession(request, env);
 
-<div class="category-grid">
+  if (!user) {
+    return json({ ok: false, user: null });
+  }
 
-  <div class="category-box">
-    <h2>Study</h2>
-    <p>Personal study notes and materials.</p>
-  </div>
-
-  <div class="category-box">
-    <h2>Methodology</h2>
-    <p>Experimental methods and pipelines.</p>
-  </div>
-
-  <div class="category-box">
-    <h2>Blog</h2>
-    <p>Research blog and scientific writing.</p>
-  </div>
-
-</div>
-`
-  );
+  return json({ ok: true, user });
 }
 
-function communityPage() {
-  return layout(
-    "Community",
-    `
-<h1>Community</h1>
-
-<div class="category-grid">
-
-  <div class="category-box">
-    <h2>Question / Discussion</h2>
-    <p>Research discussion and Q&A.</p>
-  </div>
-
-  <div class="category-box">
-    <h2>Conference Notices</h2>
-    <p>Conference announcements and deadlines.</p>
-  </div>
-
-</div>
-`
-  );
+function isAdmin(request, env) {
+  const url = new URL(request.url);
+  const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
+  return key && env.ADMIN_KEY && key === env.ADMIN_KEY;
 }
 
-function careerPage() {
-  return layout(
-    "Career",
-    `
-<h1>Career</h1>
+async function listPosts(request, env) {
+  const url = new URL(request.url);
 
-<div class="category-grid">
+  const section = url.searchParams.get("section") || "research";
+  const type = url.searchParams.get("type") || "";
+  const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
+  const limit = 10;
+  const offset = (page - 1) * limit;
 
-  <div class="category-box">
-    <h2>LinkedIn Promotion</h2>
-    <p>Researchers can promote their LinkedIn profiles.</p>
-  </div>
+  let where = "WHERE section = ? AND status = 'published'";
+  const params = [section];
 
-  <div class="category-box">
-    <h2>Job Postings</h2>
-    <p>Labs and companies can post hiring opportunities.</p>
-  </div>
+  if (type) {
+    where += " AND type = ?";
+    params.push(type);
+  }
 
-</div>
-`
-  );
+  const count = await env.DB.prepare(
+    `SELECT COUNT(*) AS total FROM posts ${where}`
+  ).bind(...params).first();
+
+  const posts = await env.DB.prepare(`
+    SELECT *
+    FROM posts
+    ${where}
+    ORDER BY datetime(created_at) DESC
+    LIMIT ? OFFSET ?
+  `).bind(...params, limit, offset).all();
+
+  return json({
+    ok: true,
+    posts: posts.results,
+    page,
+    perPage: limit,
+    total: count.total,
+    totalPages: Math.ceil(count.total / limit)
+  });
+}
+
+async function createPost(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({
+      ok: false,
+      error: "Please sign in with Google before writing a post."
+    }, 401);
+  }
+
+  const data = await request.json();
+
+  const section = String(data.section || "").trim();
+  const type = String(data.type || "").trim();
+  const title = String(data.title || "").trim();
+
+  if (!section || !type || !title) {
+    return json({ ok: false, error: "section, type, and title are required." }, 400);
+  }
+
+  await env.DB.prepare(`
+    INSERT INTO posts (
+      id, section, type, title, body, link,
+      author_name, author_email, linkedin_url, status
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+  `).bind(
+    crypto.randomUUID(),
+    section,
+    type,
+    title,
+    data.body || "",
+    data.link || "",
+    user.name,
+    user.email,
+    data.linkedinUrl || ""
+  ).run();
+
+  return json({
+    ok: true,
+    message: "Submitted. Your post will be published after admin approval."
+  });
+}
+
+async function adminListPosts(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const posts = await env.DB.prepare(`
+    SELECT *
+    FROM posts
+    WHERE status = 'pending'
+    ORDER BY datetime(created_at) DESC
+  `).all();
+
+  return json({ ok: true, posts: posts.results });
+}
+
+async function adminApprovePost(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json();
+
+  await env.DB.prepare(`
+    UPDATE posts
+    SET status = 'published'
+    WHERE id = ?
+  `).bind(data.id).run();
+
+  return json({ ok: true });
+}
+
+async function adminDeletePost(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json();
+
+  await env.DB.prepare(`
+    DELETE FROM posts
+    WHERE id = ?
+  `).bind(data.id).run();
+
+  return json({ ok: true });
 }
