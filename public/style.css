@@ -115,6 +115,29 @@ h2 {
   border-radius: 26px;
 }
 
+.toolbar {
+  display: flex;
+  gap: 14px;
+  margin: 26px 0;
+  align-items: center;
+}
+
+.search-input {
+  flex: 1;
+  margin: 0;
+  border-radius: 999px;
+  padding: 14px 20px;
+}
+
+.write-btn {
+  white-space: nowrap;
+  padding: 14px 24px;
+  box-shadow: 0 10px 24px rgba(20, 40, 160, 0.18);
+}
+
+.write-form {
+  margin-bottom: 24px;
+}
 
 .study-panel {
   min-height: 360px;
