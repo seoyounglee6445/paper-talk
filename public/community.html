@@ -21,17 +21,48 @@
 
 <main class="container">
   <h1>Community</h1>
-  <p>Choose a community category.</p>
+  <p>Questions, discussions, and conference notices.</p>
 
   <div class="mini-tabs">
-    <button class="mini-tab active" onclick="showCommunityTab('discussion', this)">
-      Question / Discussion
-    </button>
-
-    <button class="mini-tab" onclick="showCommunityTab('conference', this)">
-      Conference Notice
-    </button>
+    <button class="mini-tab active" onclick="showCommunity('discussion', this)">Question / Discussion</button>
+    <button class="mini-tab" onclick="showCommunity('conference', this)">Conference Notice</button>
   </div>
+
+  <div class="toolbar">
+    <input class="search-input" id="communitySearch" placeholder="Search community posts...">
+    <button class="write-btn" onclick="toggleWriteForm()">Write Post</button>
+  </div>
+
+  <section class="card write-form" id="writeForm" style="display:none;">
+    <h2>Write Community Post</h2>
+
+    <form onsubmit="submitPost(event)">
+      <input type="hidden" name="section" value="community">
+
+      <label>Category</label>
+      <select name="type">
+        <option value="question">Question / Discussion</option>
+        <option value="conference_notice">Conference Notice</option>
+      </select>
+
+      <label>Title</label>
+      <input name="title" required>
+
+      <label>Body</label>
+      <textarea name="body"></textarea>
+
+      <label>Link</label>
+      <input name="link">
+
+      <label>Your Name</label>
+      <input name="authorName">
+
+      <label>Your Email</label>
+      <input name="authorEmail">
+
+      <button type="submit">Submit for Approval</button>
+    </form>
+  </section>
 
   <section class="card community-panel" id="discussion">
     <h2>Question / Discussion</h2>
@@ -45,7 +76,7 @@
 </main>
 
 <script>
-function showCommunityTab(id, button) {
+function showCommunity(id, button) {
   document.querySelectorAll(".community-panel").forEach(panel => {
     panel.style.display = "none";
   });
@@ -58,6 +89,12 @@ function showCommunityTab(id, button) {
 
   button.classList.add("active");
 }
+
+function toggleWriteForm() {
+  const form = document.getElementById("writeForm");
+  form.style.display = form.style.display === "none" ? "block" : "none";
+}
 </script>
+<script src="/app.js"></script>
 </body>
 </html>
