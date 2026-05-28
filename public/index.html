@@ -1,1 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Paper_Talk</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="header">
+  <nav class="nav">
+    <div class="logo">Paper_Talk</div>
+    <a href="/">Home</a>
+    <a href="/research.html">Research Paper</a>
+    <a href="/study.html">Study Materials</a>
+    <a href="/community.html">Community</a>
+    <a href="/career.html">Career</a>
+  </nav>
+</header>
 
+<main class="container">
+  <h1>Paper_Talk</h1>
+  <p>Research paper, community, and career platform.</p>
+
+  <h2>Latest Research Papers</h2>
+  <div id="latestResearch"></div>
+
+  <h2>Latest Conference Notices</h2>
+  <div id="latestConference"></div>
+
+  <h2>Latest LinkedIn Profiles</h2>
+  <div id="latestLinkedIn"></div>
+</main>
+
+<script src="/app.js"></script>
+<script>
+loadPosts({ section: "research", target: "latestResearch" });
+loadPosts({ section: "community", type: "conference_notice", target: "latestConference" });
+loadPosts({ section: "career", type: "linkedin", target: "latestLinkedIn" });
+</script>
+</body>
+</html>
