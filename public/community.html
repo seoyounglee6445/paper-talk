@@ -36,32 +36,44 @@
   <section class="card write-form" id="writeForm" style="display:none;">
     <h2>Write Community Post</h2>
 
-    <form onsubmit="submitPost(event)">
-      <input type="hidden" name="section" value="community">
+   <form onsubmit="submitPost(event)">
+  <input type="hidden" name="section" value="community">
 
-      <label>Category</label>
-      <select name="type">
-        <option value="question">Question / Discussion</option>
-        <option value="conference_notice">Conference Notice</option>
-      </select>
+  <div>
+    <label>Category</label>
+    <select name="type">
+      <option value="question">Question / Discussion</option>
+      <option value="conference_notice">Conference Notice</option>
+    </select>
+  </div>
 
-      <label>Title</label>
-      <input name="title" required>
+  <div>
+    <label>Title</label>
+    <input name="title" required placeholder="Enter post title">
+  </div>
 
-      <label>Body</label>
-      <textarea name="body"></textarea>
+  <div class="full-row">
+    <label>Body</label>
+    <textarea name="body" placeholder="Write your post..."></textarea>
+  </div>
 
-      <label>Link</label>
-      <input name="link">
+  <div>
+    <label>Link</label>
+    <input name="link" placeholder="https://">
+  </div>
 
-      <label>Your Name</label>
-      <input name="authorName">
+  <div>
+    <label>Your Name</label>
+    <input name="authorName" placeholder="Your name">
+  </div>
 
-      <label>Your Email</label>
-      <input name="authorEmail">
+  <div>
+    <label>Your Email</label>
+    <input name="authorEmail" placeholder="your@email.com">
+  </div>
 
-      <button type="submit">Submit for Approval</button>
-    </form>
+  <button type="submit">Submit for Approval</button>
+</form>
   </section>
 
   <section class="card community-panel" id="discussion">
