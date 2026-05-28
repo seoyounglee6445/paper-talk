@@ -40,7 +40,7 @@
   </div>
 
   <div class="toolbar">
-    <input class="search-input" id="careerSearch" placeholder="Search career posts...">
+    <input class="search-input" id="careerSearch" placeholder="Search career posts..." oninput="filterCareerPosts()">
     <button class="write-btn" onclick="toggleWriteForm()">Write Post</button>
   </div>
 
@@ -86,11 +86,13 @@
   <section class="card career-panel" id="linkedin">
     <h2>LinkedIn Promotion</h2>
     <p>Researchers can promote their LinkedIn profiles and research background here.</p>
+    <div id="linkedinPosts"></div>
   </section>
 
   <section class="card career-panel" id="job" style="display:none;">
     <h2>Job Posting</h2>
     <p>Labs, hospitals, companies, and research groups can share hiring opportunities here.</p>
+    <div id="jobPosts"></div>
   </section>
 
   <section class="card career-panel" id="jobsites" style="display:none;">
@@ -118,6 +120,8 @@
         <p>Scientific research jobs from academia, industry, and research institutes.</p>
       </a>
     </div>
+
+    <div id="jobsitePosts"></div>
   </section>
 </main>
 
@@ -148,7 +152,37 @@ function toggleLinkedInField() {
   field.style.display = type === "linkedin" ? "block" : "none";
 }
 
-document.addEventListener("DOMContentLoaded", toggleLinkedInField);
+function filterCareerPosts() {
+  const keyword = document.getElementById("careerSearch").value.toLowerCase();
+  const cards = document.querySelectorAll("#linkedinPosts .card, #jobPosts .card, #jobsitePosts .card");
+
+  cards.forEach(card => {
+    const text = card.textContent.toLowerCase();
+    card.style.display = text.includes(keyword) ? "block" : "none";
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  toggleLinkedInField();
+
+  loadPosts({
+    section: "career",
+    type: "linkedin",
+    target: "linkedinPosts"
+  });
+
+  loadPosts({
+    section: "career",
+    type: "job",
+    target: "jobPosts"
+  });
+
+  loadPosts({
+    section: "career",
+    type: "jobsite",
+    target: "jobsitePosts"
+  });
+});
 </script>
 
 <script src="/app.js"></script>
