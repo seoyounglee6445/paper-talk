@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Paper_Talk</title>
-  <link rel="stylesheet" href="/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
 <header class="header">
   <nav class="nav">
@@ -19,23 +21,24 @@
 
 <main class="container">
   <h1>Paper_Talk</h1>
-  <p>Research paper, community, and career platform.</p>
+  <p>Research paper, conference notice, and LinkedIn networking platform.</p>
 
-  <h2>Latest Research Papers</h2>
-  <div id="latestResearch"></div>
+  <section class="home-three-grid">
+    <div class="home-column">
+      <h2>Latest Papers</h2>
+      <p>No papers yet.</p>
+    </div>
 
-  <h2>Latest Conference Notices</h2>
-  <div id="latestConference"></div>
+    <div class="home-column">
+      <h2>Conference Notices</h2>
+      <p>No conference notices yet.</p>
+    </div>
 
-  <h2>Latest LinkedIn Profiles</h2>
-  <div id="latestLinkedIn"></div>
+    <div class="home-column">
+      <h2>LinkedIn</h2>
+      <p>No LinkedIn posts yet.</p>
+    </div>
+  </section>
 </main>
-
-<script src="/app.js"></script>
-<script>
-loadPosts({ section: "research", target: "latestResearch" });
-loadPosts({ section: "community", type: "conference_notice", target: "latestConference" });
-loadPosts({ section: "career", type: "linkedin", target: "latestLinkedIn" });
-</script>
 </body>
 </html>
