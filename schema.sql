@@ -1,4 +1,7 @@
-CREATE TABLE IF NOT EXISTS users (
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS posts;
+
+CREATE TABLE users (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT,
@@ -7,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS posts (
+CREATE TABLE posts (
   id TEXT PRIMARY KEY,
   section TEXT NOT NULL,
   type TEXT NOT NULL,
@@ -17,6 +20,6 @@ CREATE TABLE IF NOT EXISTS posts (
   author_name TEXT,
   author_email TEXT,
   linkedin_url TEXT,
-  status TEXT DEFAULT 'published',
+  status TEXT DEFAULT 'pending',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
