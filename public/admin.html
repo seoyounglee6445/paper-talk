@@ -1,29 +1,35 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Admin | Paper_Talk</title>
-  <link rel="stylesheet" href="/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin | Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
 <header class="header">
   <nav class="nav">
     <div class="logo">Paper_Talk Admin</div>
     <a href="/">Home</a>
+    <a href="/admin.html">Admin</a>
   </nav>
 </header>
 
 <main class="container">
   <h1>Admin Approval</h1>
+  <p>Approve or delete submitted posts.</p>
 
   <section class="card">
     <label>Admin Key</label>
     <input id="adminKey" type="password" placeholder="Enter admin key">
-    <button onclick="loadPending()">Load Pending Posts</button>
+    <button onclick="loadPendingPosts()">Load Pending Posts</button>
   </section>
 
-  <h2>Pending Posts</h2>
-  <div id="pendingList"></div>
+  <section>
+    <h2>Pending Posts</h2>
+    <div id="pendingList"></div>
+  </section>
 </main>
 
 <script>
@@ -36,70 +42,72 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function key() {
-  return document.getElementById("adminKey").value;
-}
+async function loadPendingPosts() {
+  const key = document.getElementById("adminKey").value;
 
-async function loadPending() {
-  const res = await fetch("/api/admin/posts?status=pending&key=" + encodeURIComponent(key()));
+  const res = await fetch("/api/admin/posts?key=" + encodeURIComponent(key));
   const data = await res.json();
 
+  const box = document.getElementById("pendingList");
+
   if (!data.ok) {
-    alert(data.error || "Failed");
+    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed")}</p>`;
     return;
   }
-
-  const box = document.getElementById("pendingList");
 
   if (!data.posts.length) {
     box.innerHTML = "<p>No pending posts.</p>";
     return;
   }
 
-  box.innerHTML = data.posts.map(p => `
-    <article class="card">
-      <h3>${escapeHtml(p.title)}</h3>
-      <p class="meta">${escapeHtml(p.section)} · ${escapeHtml(p.type)} · ${escapeHtml(p.created_at)}</p>
-      <p>${escapeHtml(p.body)}</p>
-      ${p.link ? `<p><a href="${escapeHtml(p.link)}" target="_blank">Open Link</a></p>` : ""}
-      ${p.linkedin_url ? `<p><a href="${escapeHtml(p.linkedin_url)}" target="_blank">LinkedIn</a></p>` : ""}
-      <p>Author: ${escapeHtml(p.author_name)} / ${escapeHtml(p.author_email)}</p>
-      <button onclick="approvePost('${p.id}')">Approve</button>
-      <button onclick="deletePost('${p.id}')">Delete</button>
+  box.innerHTML = data.posts.map(post => `
+    <article class="card admin-post">
+      <h3>${escapeHtml(post.title)}</h3>
+      <p class="meta">${escapeHtml(post.section)} · ${escapeHtml(post.type)}</p>
+      <p>${escapeHtml(post.body)}</p>
+
+      ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>` : ""}
+      ${post.linkedin_url ? `<p><a class="btn" href="${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>` : ""}
+
+      <p><strong>Author:</strong> ${escapeHtml(post.author_name)}</p>
+      <p><strong>Email:</strong> ${escapeHtml(post.author_email)}</p>
+
+      <button onclick="approvePost('${post.id}')">Approve</button>
+      <button class="danger-btn" onclick="deletePost('${post.id}')">Delete</button>
     </article>
   `).join("");
 }
 
 async function approvePost(id) {
-  const res = await fetch("/api/admin/approve", {
+  const key = document.getElementById("adminKey").value;
+
+  await fetch("/api/admin/approve", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Admin-Key": key()
+      "X-Admin-Key": key
     },
     body: JSON.stringify({ id })
   });
 
-  const data = await res.json();
-  if (!data.ok) alert(data.error || "Failed");
-  loadPending();
+  loadPendingPosts();
 }
 
 async function deletePost(id) {
   if (!confirm("Delete this post?")) return;
 
-  const res = await fetch("/api/admin/delete", {
+  const key = document.getElementById("adminKey").value;
+
+  await fetch("/api/admin/delete", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Admin-Key": key()
+      "X-Admin-Key": key
     },
     body: JSON.stringify({ id })
   });
 
-  const data = await res.json();
-  if (!data.ok) alert(data.error || "Failed");
-  loadPending();
+  loadPendingPosts();
 }
 </script>
 </body>
