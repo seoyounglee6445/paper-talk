@@ -1,8 +1,9 @@
+function adminPage() {
+  return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin | Paper_Talk</title>
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -17,19 +18,58 @@
 </header>
 
 <main class="container">
-  <h1>Admin Approval</h1>
-  <p>Approve or delete submitted posts.</p>
+  <h1>Admin Dashboard</h1>
+  <p>Manage posts by section, category, and status.</p>
 
-  <section class="card">
-    <label>Admin Key</label>
-    <input id="adminKey" type="password" placeholder="Enter admin key">
-    <button onclick="loadPendingPosts()">Load Pending Posts</button>
+  <section class="card write-form">
+    <h2>Admin Filter</h2>
+
+    <div>
+      <label>Admin Key</label>
+      <input id="adminKey" type="password" placeholder="Enter admin key">
+    </div>
+
+    <div>
+      <label>Section</label>
+      <select id="sectionFilter">
+        <option value="">All Sections</option>
+        <option value="research">Research Paper</option>
+        <option value="study">Study Materials</option>
+        <option value="community">Community</option>
+        <option value="career">Career</option>
+      </select>
+    </div>
+
+    <div>
+      <label>Category</label>
+      <select id="typeFilter">
+        <option value="">All Categories</option>
+        <option value="paper">Research Paper</option>
+        <option value="study_post">Study</option>
+        <option value="methodology">Methodology</option>
+        <option value="blog">Blog</option>
+        <option value="question">Question / Discussion</option>
+        <option value="conference_notice">Conference Notice</option>
+        <option value="linkedin">LinkedIn Promotion</option>
+        <option value="job">Job Posting</option>
+        <option value="jobsite">Job Website</option>
+      </select>
+    </div>
+
+    <div>
+      <label>Status</label>
+      <select id="statusFilter">
+        <option value="">All Status</option>
+        <option value="pending">Pending</option>
+        <option value="published">Published</option>
+      </select>
+    </div>
+
+    <button onclick="loadAdminPosts()">Load Posts</button>
   </section>
 
-  <section>
-    <h2>Pending Posts</h2>
-    <div id="pendingList"></div>
-  </section>
+  <h2>Posts</h2>
+  <div id="adminPostList"></div>
 </main>
 
 <script>
@@ -42,40 +82,57 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-async function loadPendingPosts() {
+async function loadAdminPosts() {
   const key = document.getElementById("adminKey").value;
+  const section = document.getElementById("sectionFilter").value;
+  const type = document.getElementById("typeFilter").value;
+  const status = document.getElementById("statusFilter").value;
 
-  const res = await fetch("/api/admin/posts?key=" + encodeURIComponent(key));
+  const params = new URLSearchParams({ key });
+
+  if (section) params.set("section", section);
+  if (type) params.set("type", type);
+  if (status) params.set("status", status);
+
+  const res = await fetch("/api/admin/posts?" + params.toString());
   const data = await res.json();
 
-  const box = document.getElementById("pendingList");
+  const box = document.getElementById("adminPostList");
 
   if (!data.ok) {
-    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed")}</p>`;
+    box.innerHTML = "<p class='error'>" + escapeHtml(data.error || "Failed") + "</p>";
     return;
   }
 
   if (!data.posts.length) {
-    box.innerHTML = "<p>No pending posts.</p>";
+    box.innerHTML = "<p>No posts found.</p>";
     return;
   }
 
-  box.innerHTML = data.posts.map(post => `
+  box.innerHTML = data.posts.map(post => \`
     <article class="card admin-post">
-      <h3>${escapeHtml(post.title)}</h3>
-      <p class="meta">${escapeHtml(post.section)} · ${escapeHtml(post.type)}</p>
-      <p>${escapeHtml(post.body)}</p>
+      <h3>\${escapeHtml(post.title)}</h3>
 
-      ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>` : ""}
-      ${post.linkedin_url ? `<p><a class="btn" href="${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>` : ""}
+      <p class="meta">
+        \${escapeHtml(post.section)} ·
+        \${escapeHtml(post.type)} ·
+        \${escapeHtml(post.status)}
+      </p>
 
-      <p><strong>Author:</strong> ${escapeHtml(post.author_name)}</p>
-      <p><strong>Email:</strong> ${escapeHtml(post.author_email)}</p>
+      <p>\${escapeHtml(post.body)}</p>
 
-      <button onclick="approvePost('${post.id}')">Approve</button>
-      <button class="danger-btn" onclick="deletePost('${post.id}')">Delete</button>
+      \${post.link ? \`<p><a class="btn" href="\${escapeHtml(post.link)}" target="_blank">Open Link</a></p>\` : ""}
+      \${post.linkedin_url ? \`<p><a class="btn" href="\${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>\` : ""}
+
+      <p><strong>Author:</strong> \${escapeHtml(post.author_name)}</p>
+      <p><strong>Email:</strong> \${escapeHtml(post.author_email)}</p>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        \${post.status === "pending" ? \`<button onclick="approvePost('\${post.id}')">Approve</button>\` : ""}
+        <button class="danger-btn" onclick="deletePost('\${post.id}')">Delete</button>
+      </div>
     </article>
-  `).join("");
+  \`).join("");
 }
 
 async function approvePost(id) {
@@ -90,7 +147,7 @@ async function approvePost(id) {
     body: JSON.stringify({ id })
   });
 
-  loadPendingPosts();
+  loadAdminPosts();
 }
 
 async function deletePost(id) {
@@ -107,8 +164,10 @@ async function deletePost(id) {
     body: JSON.stringify({ id })
   });
 
-  loadPendingPosts();
+  loadAdminPosts();
 }
 </script>
 </body>
 </html>
+`;
+}
