@@ -75,7 +75,31 @@ h2 {
   border-bottom: 2px solid var(--main-blue);
   padding-bottom: 14px;
 }
+.mini-tabs {
+  display: flex;
+  gap: 12px;
+  margin: 26px 0;
+  flex-wrap: wrap;
+}
 
+.mini-tab {
+  border: 1px solid var(--border-blue);
+  background: white;
+  color: var(--main-blue);
+  border-radius: 14px;
+  padding: 12px 22px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.mini-tab.active {
+  background: var(--main-blue);
+  color: white;
+}
+
+.study-panel {
+  min-height: 360px;
+}
 @media (max-width: 900px) {
   .home-three-grid {
     grid-template-columns: 1fr;
