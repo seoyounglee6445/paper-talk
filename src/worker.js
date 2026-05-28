@@ -7,6 +7,10 @@ export default {
     if (url.pathname === "/auth/logout") return logout();
     if (url.pathname === "/api/me") return apiMe(request, env);
 
+    if (url.pathname === "/admin" || url.pathname === "/admin.html") {
+      return html(adminPage());
+    }
+
     if (url.pathname === "/api/posts" && request.method === "GET") return listPosts(request, env);
     if (url.pathname === "/api/posts" && request.method === "POST") return createPost(request, env);
 
@@ -15,9 +19,16 @@ export default {
     if (url.pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
 
     if (env.ASSETS) return env.ASSETS.fetch(request);
+
     return new Response("Not found", { status: 404 });
   }
 };
+
+function html(content) {
+  return new Response(content, {
+    headers: { "Content-Type": "text/html; charset=utf-8" }
+  });
+}
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -32,15 +43,8 @@ function json(data, status = 200, headers = {}) {
 function redirect(location, headers = {}) {
   return new Response(null, {
     status: 302,
-    headers: {
-      Location: location,
-      ...headers
-    }
+    headers: { Location: location, ...headers }
   });
-}
-
-function getOrigin(request) {
-  return new URL(request.url).origin;
 }
 
 function getCookie(request, name) {
@@ -106,7 +110,7 @@ async function getSession(request, env) {
 }
 
 async function googleLogin(request, env) {
-  const origin = getOrigin(request);
+  const origin = new URL(request.url).origin;
   const redirectUri = `${origin}/auth/google/callback`;
 
   const params = new URLSearchParams({
@@ -125,18 +129,14 @@ async function googleCallback(request, env) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
 
-  if (!code) {
-    return new Response("Missing Google authorization code.", { status: 400 });
-  }
+  if (!code) return new Response("Missing code", { status: 400 });
 
-  const origin = getOrigin(request);
+  const origin = new URL(request.url).origin;
   const redirectUri = `${origin}/auth/google/callback`;
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
       client_id: env.GOOGLE_CLIENT_ID,
@@ -149,13 +149,11 @@ async function googleCallback(request, env) {
   const token = await tokenRes.json();
 
   if (!token.access_token) {
-    return json({ ok: false, error: "Google token exchange failed.", token }, 400);
+    return json({ ok: false, error: "Google token exchange failed", token }, 400);
   }
 
   const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-    headers: {
-      Authorization: `Bearer ${token.access_token}`
-    }
+    headers: { Authorization: `Bearer ${token.access_token}` }
   });
 
   const googleUser = await userRes.json();
@@ -177,9 +175,7 @@ async function googleCallback(request, env) {
 
   const cookie = await createSessionCookie(user, env);
 
-  return redirect("/", {
-    "Set-Cookie": cookie
-  });
+  return redirect("/", { "Set-Cookie": cookie });
 }
 
 function logout() {
@@ -190,23 +186,11 @@ function logout() {
 
 async function apiMe(request, env) {
   const user = await getSession(request, env);
-
-  if (!user) {
-    return json({ ok: false, user: null });
-  }
-
-  return json({ ok: true, user });
-}
-
-function isAdmin(request, env) {
-  const url = new URL(request.url);
-  const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
-  return key && env.ADMIN_KEY && key === env.ADMIN_KEY;
+  return json({ ok: !!user, user });
 }
 
 async function listPosts(request, env) {
   const url = new URL(request.url);
-
   const section = url.searchParams.get("section") || "research";
   const type = url.searchParams.get("type") || "";
   const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
@@ -237,7 +221,6 @@ async function listPosts(request, env) {
     ok: true,
     posts: posts.results,
     page,
-    perPage: limit,
     total: count.total,
     totalPages: Math.ceil(count.total / limit)
   });
@@ -287,6 +270,12 @@ async function createPost(request, env) {
   });
 }
 
+function isAdmin(request, env) {
+  const url = new URL(request.url);
+  const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
+  return key && env.ADMIN_KEY && key === env.ADMIN_KEY;
+}
+
 async function adminListPosts(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
@@ -331,4 +320,120 @@ async function adminDeletePost(request, env) {
   `).bind(data.id).run();
 
   return json({ ok: true });
+}
+
+function adminPage() {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Admin | Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+<header class="header">
+  <nav class="nav">
+    <div class="logo">Paper_Talk Admin</div>
+    <a href="/">Home</a>
+    <a href="/admin.html">Admin</a>
+  </nav>
+</header>
+
+<main class="container">
+  <h1>Admin Dashboard</h1>
+  <p>Approve or delete submitted posts.</p>
+
+  <section class="card">
+    <label>Admin Key</label>
+    <input id="adminKey" type="password" placeholder="Enter admin key">
+    <button onclick="loadPendingPosts()">Load Pending Posts</button>
+  </section>
+
+  <h2>Pending Posts</h2>
+  <div id="pendingList"></div>
+</main>
+
+<script>
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function loadPendingPosts() {
+  const key = document.getElementById("adminKey").value;
+
+  const res = await fetch("/api/admin/posts?key=" + encodeURIComponent(key));
+  const data = await res.json();
+
+  const box = document.getElementById("pendingList");
+
+  if (!data.ok) {
+    box.innerHTML = "<p class='error'>" + escapeHtml(data.error || "Failed") + "</p>";
+    return;
+  }
+
+  if (!data.posts.length) {
+    box.innerHTML = "<p>No pending posts.</p>";
+    return;
+  }
+
+  box.innerHTML = data.posts.map(post => \`
+    <article class="card admin-post">
+      <h3>\${escapeHtml(post.title)}</h3>
+      <p class="meta">\${escapeHtml(post.section)} · \${escapeHtml(post.type)}</p>
+      <p>\${escapeHtml(post.body)}</p>
+
+      \${post.link ? \`<p><a class="btn" href="\${escapeHtml(post.link)}" target="_blank">Open Link</a></p>\` : ""}
+      \${post.linkedin_url ? \`<p><a class="btn" href="\${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>\` : ""}
+
+      <p><strong>Author:</strong> \${escapeHtml(post.author_name)}</p>
+      <p><strong>Email:</strong> \${escapeHtml(post.author_email)}</p>
+
+      <button onclick="approvePost('\${post.id}')">Approve</button>
+      <button class="danger-btn" onclick="deletePost('\${post.id}')">Delete</button>
+    </article>
+  \`).join("");
+}
+
+async function approvePost(id) {
+  const key = document.getElementById("adminKey").value;
+
+  await fetch("/api/admin/approve", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({ id })
+  });
+
+  loadPendingPosts();
+}
+
+async function deletePost(id) {
+  if (!confirm("Delete this post?")) return;
+
+  const key = document.getElementById("adminKey").value;
+
+  await fetch("/api/admin/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({ id })
+  });
+
+  loadPendingPosts();
+}
+</script>
+</body>
+</html>
+`;
 }
