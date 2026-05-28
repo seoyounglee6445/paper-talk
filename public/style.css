@@ -245,14 +245,43 @@ h2 {
 .auth-box {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
   align-items: center;
-  margin-bottom: 18px;
+  margin: 24px 0 10px;
+}
+
+.auth-box .btn {
+  background: white;
+  color: var(--main-blue);
+  border: 1px solid var(--border-blue);
+  border-radius: 999px;
+  padding: 13px 22px;
+  font-weight: 900;
+  box-shadow: 0 10px 24px rgba(20, 40, 160, 0.12);
+}
+
+.auth-box .btn::before {
+  content: "G";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 10px;
+  border-radius: 50%;
+  background: var(--main-blue);
+  color: white;
+  font-weight: 900;
+}
+
+.auth-box .btn:hover {
+  background: var(--main-blue);
+  color: white;
 }
 
 .auth-name {
   font-weight: 900;
   color: var(--main-blue);
+  margin-right: 12px;
 }
 
 .study-panel {
