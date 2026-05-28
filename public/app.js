@@ -8,6 +8,8 @@ async function loadPosts({ section, type = "", page = 1, target = "postList" }) 
 
   const box = document.getElementById(target);
 
+  if (!box) return;
+
   if (!data.posts || data.posts.length === 0) {
     box.innerHTML = "<p>No posts yet.</p>";
     return;
@@ -16,13 +18,18 @@ async function loadPosts({ section, type = "", page = 1, target = "postList" }) 
   box.innerHTML = data.posts.map(renderPost).join("");
 
   const pagination = document.getElementById("pagination");
+
   if (pagination) {
     pagination.innerHTML = "";
 
     for (let i = 1; i <= data.totalPages; i++) {
       const btn = document.createElement("button");
       btn.textContent = i;
-      if (i === data.page) btn.classList.add("active");
+
+      if (i === data.page) {
+        btn.classList.add("active");
+      }
+
       btn.onclick = () => loadPosts({ section, type, page: i, target });
       pagination.appendChild(btn);
     }
@@ -33,11 +40,24 @@ function renderPost(p) {
   return `
     <article class="card">
       <h3>${escapeHtml(p.title)}</h3>
-      <p class="meta">${escapeHtml(p.type)} · ${new Date(p.created_at).toLocaleDateString()}</p>
+      <p class="meta">
+        ${escapeHtml(p.type)} · ${new Date(p.created_at).toLocaleDateString()}
+      </p>
+
       ${p.author_name ? `<p>By ${escapeHtml(p.author_name)}</p>` : ""}
       ${p.body ? `<p>${escapeHtml(p.body)}</p>` : ""}
-      ${p.link ? `<p><a class="btn" href="${escapeHtml(p.link)}" target="_blank">Open Link</a></p>` : ""}
-      ${p.linkedin_url ? `<p><a href="${escapeHtml(p.linkedin_url)}" target="_blank">LinkedIn Profile</a></p>` : ""}
+
+      ${
+        p.link
+          ? `<p><a class="btn" href="${escapeHtml(p.link)}" target="_blank">Open Link</a></p>`
+          : ""
+      }
+
+      ${
+        p.linkedin_url
+          ? `<p><a class="btn" href="${escapeHtml(p.linkedin_url)}" target="_blank">LinkedIn Profile</a></p>`
+          : ""
+      }
     </article>
   `;
 }
@@ -59,7 +79,9 @@ async function submitPost(e) {
 
   const res = await fetch("/api/posts", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json"
+    },
     body: JSON.stringify(data)
   });
 
@@ -70,7 +92,7 @@ async function submitPost(e) {
     return;
   }
 
-  alert("Submitted!");
+  alert("Submitted! 관리자 승인 후 공개됩니다.");
   e.target.reset();
   location.reload();
 }
