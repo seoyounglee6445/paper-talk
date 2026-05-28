@@ -21,11 +21,20 @@
 
 <main class="container">
   <h1>Career</h1>
-  <p>LinkedIn promotion and job postings.</p>
+  <p>LinkedIn promotion, job postings, and useful job search websites.</p>
 
   <div class="mini-tabs">
-    <button class="mini-tab active" onclick="showCareer('linkedin', this)">LinkedIn Promotion</button>
-    <button class="mini-tab" onclick="showCareer('job', this)">Job Posting</button>
+    <button class="mini-tab active" onclick="showCareer('linkedin', this)">
+      LinkedIn Promotion
+    </button>
+
+    <button class="mini-tab" onclick="showCareer('job', this)">
+      Job Posting
+    </button>
+
+    <button class="mini-tab" onclick="showCareer('jobSites', this)">
+      Job Search Websites
+    </button>
   </div>
 
   <div class="toolbar">
@@ -43,6 +52,7 @@
       <select name="type">
         <option value="linkedin">LinkedIn Promotion</option>
         <option value="job">Job Posting</option>
+        <option value="job_site">Job Search Website</option>
       </select>
 
       <label>Title</label>
@@ -75,6 +85,26 @@
   <section class="card career-panel" id="job" style="display:none;">
     <h2>Job Posting</h2>
     <p>Labs, hospitals, companies, and research groups can share hiring opportunities here.</p>
+  </section>
+
+  <section class="card career-panel" id="jobSites" style="display:none;">
+    <h2>Job Search Websites</h2>
+    <p>Useful job search websites for bioinformatics, cancer genomics, and computational biology careers.</p>
+
+    <div class="post">
+      <div class="post-title">LinkedIn Jobs</div>
+      <a class="btn" href="https://www.linkedin.com/jobs/" target="_blank">Open Website</a>
+    </div>
+
+    <div class="post">
+      <div class="post-title">Nature Careers</div>
+      <a class="btn" href="https://www.nature.com/naturecareers" target="_blank">Open Website</a>
+    </div>
+
+    <div class="post">
+      <div class="post-title">Bioinformatics.org Jobs</div>
+      <a class="btn" href="https://www.bioinformatics.org/jobs/" target="_blank">Open Website</a>
+    </div>
   </section>
 </main>
 
