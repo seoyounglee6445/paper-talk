@@ -8,4 +8,4 @@ directory = "./public"
 [[d1_databases]]
 binding = "DB"
 database_name = "paper-talk-db"
-database_id = "PASTE_YOUR_D1_DATABASE_ID_HERE"
+database_id = "5b33c4d2-9d1d-47f0-993f-a694c2b05d8a"
