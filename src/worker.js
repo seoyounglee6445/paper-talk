@@ -47,6 +47,26 @@ export default {
       return adminCreateResearchPaper(request, env);
     }
 
+    if (url.pathname === "/admin") {
+      return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
+    }
+
+    if (url.pathname === "/research") {
+      return env.ASSETS.fetch(new Request(new URL("/research.html", request.url)));
+    }
+
+    if (url.pathname === "/career") {
+      return env.ASSETS.fetch(new Request(new URL("/career.html", request.url)));
+    }
+
+    if (url.pathname === "/study") {
+      return env.ASSETS.fetch(new Request(new URL("/study.html", request.url)));
+    }
+
+    if (url.pathname === "/community") {
+      return env.ASSETS.fetch(new Request(new URL("/community.html", request.url)));
+    }
+
     if (env.ASSETS) return env.ASSETS.fetch(request);
 
     return new Response("Not found", { status: 404 });
@@ -380,7 +400,6 @@ async function updateMyPost(request, env) {
   }
 
   const data = await request.json();
-
   const title = String(data.title || "").trim();
 
   if (!data.id || !title) {
