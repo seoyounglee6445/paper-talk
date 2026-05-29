@@ -668,18 +668,19 @@ async function adminSaveMethodologyPage(request, env) {
   }
 
   const data = await request.json();
-  const title = String(data.title || "Methodology").trim();
-  const body = String(data.body || "").trim();
+  const title = String(data.title || "").trim();
 
-  if (!body) {
-    return json({ ok: false, error: "Methodology content is required." }, 400);
+  if (!title) {
+    return json({ ok: false, error: "Title is required." }, 400);
   }
 
-  await env.DB.prepare(`
-    DELETE FROM posts
-    WHERE section = 'study'
-      AND type = 'methodology_page'
-  `).run();
+  const methodologyData = {
+    category: data.category || "",
+    tags: data.tags || "",
+    body: data.body || "",
+    note: data.note || "",
+    link: data.link || ""
+  };
 
   await env.DB.prepare(`
     INSERT INTO posts (
@@ -694,16 +695,17 @@ async function adminSaveMethodologyPage(request, env) {
       linkedin_url,
       status
     )
-    VALUES (?, 'study', 'methodology_page', ?, ?, '', 'Admin', '', '', 'published')
+    VALUES (?, 'study', 'methodology_page', ?, ?, ?, 'Admin', '', '', 'published')
   `).bind(
     crypto.randomUUID(),
     title,
-    body
+    JSON.stringify(methodologyData),
+    data.link || ""
   ).run();
 
   return json({
     ok: true,
-    message: "Methodology page saved."
+    message: "Methodology post saved."
   });
 }
 
