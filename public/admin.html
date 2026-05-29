@@ -20,45 +20,39 @@
   <h1>Admin Dashboard</h1>
   <p>Manage posts by section, category, and status.</p>
 
-  <section class="card">
-    <h2>Admin Filter</h2>
+<section class="card">
+  <h2>Admin Filter</h2>
 
-    <label>Admin Key</label>
-    <input id="adminKey" type="password" placeholder="Enter admin key">
+  <label>Admin Key</label>
+  <input id="adminKey" type="password" placeholder="Enter admin key">
 
-    <label>Section</label>
-    <select id="sectionFilter">
-      <option value="">All Sections</option>
-      <option value="research">Research Paper</option>
-      <option value="study">Study Materials</option>
-      <option value="community">Community</option>
-      <option value="career">Career</option>
-    </select>
+  <label>Section</label>
+  <select id="sectionFilter">
+    <option value="">All Sections</option>
+    <option value="research">Research Paper</option>
+    <option value="study">Study Materials</option>
+    <option value="community">Community</option>
+    <option value="career">Career</option>
+  </select>
 
-    <label>Category</label>
-    <select id="typeFilter">
-      <option value="">All Categories</option>
-      <option value="paper">Research Paper</option>
-      <option value="study_post">Study</option>
-      <option value="methodology">Methodology</option>
-      <option value="blog">Blog</option>
-      <option value="question">Question / Discussion</option>
-      <option value="conference_notice">Conference Notice</option>
-      <option value="linkedin">LinkedIn Promotion</option>
-      <option value="job">Job Posting</option>
-      <option value="jobsite">Job Website</option>
-      <option value="collaboration">Research Collaboration</option>
-    </select>
+  <label>Category</label>
+  <select id="typeFilter">
+    <option value="">All Categories</option>
+    <option value="linkedin">LinkedIn Promotion</option>
+    <option value="job">Job Posting</option>
+    <option value="jobsite">Job Website</option>
+    <option value="collaboration">Collaboration Hub</option>
+  </select>
 
-    <label>Status</label>
-    <select id="statusFilter">
-      <option value="">All Status</option>
-      <option value="pending">Pending</option>
-      <option value="published">Published</option>
-    </select>
+  <label>Status</label>
+  <select id="statusFilter">
+    <option value="">All Status</option>
+    <option value="pending">Pending</option>
+    <option value="published">Published</option>
+  </select>
 
-    <button onclick="loadAdminPosts()">Load Posts</button>
-  </section>
+  <button onclick="loadAdminPosts()">Load Posts</button>
+</section>
 
   <h2>Posts</h2>
   <div id="adminPostList"></div>
