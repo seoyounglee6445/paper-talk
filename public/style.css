@@ -436,3 +436,25 @@ textarea {
     flex-direction: column;
   }
 }
+
+.home-list-item {
+  padding: 16px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.home-list-item:last-child {
+  border-bottom: 0;
+}
+
+.home-list-item h3 {
+  margin: 0 0 8px;
+  color: var(--main-blue);
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.home-list-item p {
+  margin: 0;
+  color: #64748b;
+  font-weight: 800;
+}
