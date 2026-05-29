@@ -1,9 +1,8 @@
-function adminPage() {
-  return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin | Paper_Talk</title>
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -21,49 +20,42 @@ function adminPage() {
   <h1>Admin Dashboard</h1>
   <p>Manage posts by section, category, and status.</p>
 
-  <section class="card write-form">
+  <section class="card">
     <h2>Admin Filter</h2>
 
-    <div>
-      <label>Admin Key</label>
-      <input id="adminKey" type="password" placeholder="Enter admin key">
-    </div>
+    <label>Admin Key</label>
+    <input id="adminKey" type="password" placeholder="Enter admin key">
 
-    <div>
-      <label>Section</label>
-      <select id="sectionFilter">
-        <option value="">All Sections</option>
-        <option value="research">Research Paper</option>
-        <option value="study">Study Materials</option>
-        <option value="community">Community</option>
-        <option value="career">Career</option>
-      </select>
-    </div>
+    <label>Section</label>
+    <select id="sectionFilter">
+      <option value="">All Sections</option>
+      <option value="research">Research Paper</option>
+      <option value="study">Study Materials</option>
+      <option value="community">Community</option>
+      <option value="career">Career</option>
+    </select>
 
-    <div>
-      <label>Category</label>
-      <select id="typeFilter">
-        <option value="">All Categories</option>
-        <option value="paper">Research Paper</option>
-        <option value="study_post">Study</option>
-        <option value="methodology">Methodology</option>
-        <option value="blog">Blog</option>
-        <option value="question">Question / Discussion</option>
-        <option value="conference_notice">Conference Notice</option>
-        <option value="linkedin">LinkedIn Promotion</option>
-        <option value="job">Job Posting</option>
-        <option value="jobsite">Job Website</option>
-      </select>
-    </div>
+    <label>Category</label>
+    <select id="typeFilter">
+      <option value="">All Categories</option>
+      <option value="paper">Research Paper</option>
+      <option value="study_post">Study</option>
+      <option value="methodology">Methodology</option>
+      <option value="blog">Blog</option>
+      <option value="question">Question / Discussion</option>
+      <option value="conference_notice">Conference Notice</option>
+      <option value="linkedin">LinkedIn Promotion</option>
+      <option value="job">Job Posting</option>
+      <option value="jobsite">Job Website</option>
+      <option value="collaboration">Research Collaboration</option>
+    </select>
 
-    <div>
-      <label>Status</label>
-      <select id="statusFilter">
-        <option value="">All Status</option>
-        <option value="pending">Pending</option>
-        <option value="published">Published</option>
-      </select>
-    </div>
+    <label>Status</label>
+    <select id="statusFilter">
+      <option value="">All Status</option>
+      <option value="pending">Pending</option>
+      <option value="published">Published</option>
+    </select>
 
     <button onclick="loadAdminPosts()">Load Posts</button>
   </section>
@@ -100,7 +92,7 @@ async function loadAdminPosts() {
   const box = document.getElementById("adminPostList");
 
   if (!data.ok) {
-    box.innerHTML = "<p class='error'>" + escapeHtml(data.error || "Failed") + "</p>";
+    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed")}</p>`;
     return;
   }
 
@@ -109,36 +101,38 @@ async function loadAdminPosts() {
     return;
   }
 
-  box.innerHTML = data.posts.map(post => \`
-    <article class="card admin-post">
-      <h3>\${escapeHtml(post.title)}</h3>
+  box.innerHTML = data.posts.map(post => `
+    <article class="post-card">
+      <div class="post-card-header">
+        <div>
+          <h3>${escapeHtml(post.title)}</h3>
+          <p class="post-meta">
+            ${escapeHtml(post.section)} · ${escapeHtml(post.type)} · ${escapeHtml(post.status)}
+          </p>
+        </div>
+        <span class="post-badge">${escapeHtml(post.status)}</span>
+      </div>
 
-      <p class="meta">
-        \${escapeHtml(post.section)} ·
-        \${escapeHtml(post.type)} ·
-        \${escapeHtml(post.status)}
-      </p>
+      <p class="post-body">${escapeHtml(post.body)}</p>
 
-      <p>\${escapeHtml(post.body)}</p>
+      ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>` : ""}
+      ${post.linkedin_url ? `<p><a class="btn" href="${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>` : ""}
 
-      \${post.link ? \`<p><a class="btn" href="\${escapeHtml(post.link)}" target="_blank">Open Link</a></p>\` : ""}
-      \${post.linkedin_url ? \`<p><a class="btn" href="\${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>\` : ""}
+      <p><strong>Author:</strong> ${escapeHtml(post.author_name)}</p>
+      <p><strong>Email:</strong> ${escapeHtml(post.author_email)}</p>
 
-      <p><strong>Author:</strong> \${escapeHtml(post.author_name)}</p>
-      <p><strong>Email:</strong> \${escapeHtml(post.author_email)}</p>
-
-      <div style="display:flex; gap:10px; flex-wrap:wrap;">
-        \${post.status === "pending" ? \`<button onclick="approvePost('\${post.id}')">Approve</button>\` : ""}
-        <button class="danger-btn" onclick="deletePost('\${post.id}')">Delete</button>
+      <div class="post-actions">
+        ${post.status === "pending" ? `<button onclick="approvePost('${post.id}')">Approve</button>` : ""}
+        <button class="danger-btn" onclick="deletePost('${post.id}')">Delete</button>
       </div>
     </article>
-  \`).join("");
+  `).join("");
 }
 
 async function approvePost(id) {
   const key = document.getElementById("adminKey").value;
 
-  await fetch("/api/admin/approve", {
+  const res = await fetch("/api/admin/approve", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -146,6 +140,13 @@ async function approvePost(id) {
     },
     body: JSON.stringify({ id })
   });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Approve failed");
+    return;
+  }
 
   loadAdminPosts();
 }
@@ -155,7 +156,7 @@ async function deletePost(id) {
 
   const key = document.getElementById("adminKey").value;
 
-  await fetch("/api/admin/delete", {
+  const res = await fetch("/api/admin/delete", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -164,10 +165,15 @@ async function deletePost(id) {
     body: JSON.stringify({ id })
   });
 
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Delete failed");
+    return;
+  }
+
   loadAdminPosts();
 }
 </script>
 </body>
 </html>
-`;
-}
