@@ -54,6 +54,14 @@ h2 {
   color: var(--main-blue);
 }
 
+.card {
+  background: white;
+  border: 1px solid var(--border-blue);
+  border-radius: 24px;
+  padding: 26px;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+}
+
 .home-three-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -109,12 +117,6 @@ h2 {
   box-shadow: 0 14px 32px rgba(20, 40, 160, 0.28);
 }
 
-.study-panel {
-  min-height: 360px;
-  padding: 34px;
-  border-radius: 26px;
-}
-
 .toolbar {
   display: flex;
   gap: 14px;
@@ -135,58 +137,39 @@ h2 {
   box-shadow: 0 10px 24px rgba(20, 40, 160, 0.18);
 }
 
-.write-form {
-  margin-bottom: 24px;
-}
-
-.post {
-  padding: 16px 0;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.post:last-child {
-  border-bottom: 0;
-}
-
-.post-title {
+button,
+.btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 18px;
+  background: var(--main-blue);
+  color: white;
   font-weight: 900;
-  font-size: 18px;
-  margin-bottom: 10px;
-}
-.jobsite-list {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 18px;
-  margin-top: 24px;
-}
-
-.jobsite-card {
-  display: block;
-  background: white;
-  border: 1px solid var(--border-blue);
-  border-radius: 20px;
-  padding: 22px;
+  cursor: pointer;
   text-decoration: none;
-  color: var(--text-dark);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-  transition: all 0.2s ease;
+  display: inline-block;
 }
 
-.jobsite-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 14px 32px rgba(20, 40, 160, 0.16);
-  border-color: var(--main-blue);
+button:hover,
+.btn:hover {
+  background: var(--dark-blue);
 }
 
-.jobsite-card h3 {
-  color: var(--main-blue);
-  margin-top: 0;
+input,
+select,
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-blue);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font-size: 15px;
+  background: white;
 }
 
-@media (max-width: 900px) {
-  .jobsite-list {
-    grid-template-columns: 1fr;
-  }
+textarea {
+  min-height: 140px;
+  resize: vertical;
 }
 
 .write-form {
@@ -208,22 +191,6 @@ h2 {
   margin-bottom: 8px;
 }
 
-.write-form input,
-.write-form select,
-.write-form textarea {
-  width: 100%;
-  border: 1px solid var(--border-blue);
-  border-radius: 16px;
-  padding: 14px 16px;
-  font-size: 15px;
-  background: white;
-}
-
-.write-form textarea {
-  min-height: 140px;
-  resize: vertical;
-}
-
 .write-form .full-row {
   grid-column: 1 / -1;
 }
@@ -236,16 +203,11 @@ h2 {
   box-shadow: 0 10px 24px rgba(20, 40, 160, 0.18);
 }
 
-@media (max-width: 800px) {
-  .write-form form {
-    grid-template-columns: 1fr;
-  }
-}
-
 .auth-box {
   display: flex;
   justify-content: flex-end;
   align-items: center;
+  gap: 12px;
   margin: 24px 0 10px;
 }
 
@@ -281,11 +243,97 @@ h2 {
 .auth-name {
   font-weight: 900;
   color: var(--main-blue);
-  margin-right: 12px;
 }
 
-.admin-post {
-  margin-bottom: 20px;
+/* Pretty published post cards */
+.post-card {
+  background: white;
+  border: 1px solid var(--border-blue);
+  border-radius: 26px;
+  padding: 28px;
+  margin-top: 24px;
+  max-width: 900px;
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.09);
+}
+
+.post-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.post-card h3 {
+  margin: 0;
+  color: var(--main-blue);
+  font-size: 26px;
+  line-height: 1.3;
+}
+
+.post-badge {
+  background: var(--main-blue);
+  color: white;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 900;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.post-meta,
+.post-author {
+  color: #64748b;
+  font-weight: 800;
+  margin-top: 10px;
+}
+
+.post-body {
+  line-height: 1.75;
+  font-size: 16px;
+  margin-top: 18px;
+  white-space: pre-line;
+}
+
+.post-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+
+.empty-posts {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.jobsite-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.jobsite-card {
+  display: block;
+  background: white;
+  border: 1px solid var(--border-blue);
+  border-radius: 20px;
+  padding: 22px;
+  text-decoration: none;
+  color: var(--text-dark);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  transition: all 0.2s ease;
+}
+
+.jobsite-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 32px rgba(20, 40, 160, 0.16);
+  border-color: var(--main-blue);
+}
+
+.jobsite-card h3 {
+  color: var(--main-blue);
+  margin-top: 0;
 }
 
 .danger-btn {
@@ -301,15 +349,33 @@ h2 {
   font-weight: 900;
 }
 
-.study-panel {
-  min-height: 360px;
+.pagination {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
 }
+
+.pagination button.active {
+  background: var(--dark-blue);
+}
+
 @media (max-width: 900px) {
-  .home-three-grid {
+  .home-three-grid,
+  .jobsite-list {
     grid-template-columns: 1fr;
   }
 
   .nav {
     flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 800px) {
+  .write-form form {
+    grid-template-columns: 1fr;
+  }
+
+  .post-card-header {
+    flex-direction: column;
   }
 }
