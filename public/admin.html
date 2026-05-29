@@ -141,28 +141,49 @@
   </section>
 
   <section class="card write-form">
-    <h2>Methodology Page Editor</h2>
-    <p>This saves one full Methodology page. It replaces the previous Methodology page.</p>
+  <h2>New Methodology Post</h2>
+  <p>Use this for methodology notes, workflows, tools, and reference links.</p>
 
-    <form onsubmit="saveMethodologyPage(event)">
-      <div>
-        <label>Admin Key</label>
-        <input id="methodologyAdminKey" type="password" placeholder="Enter admin key" required>
-      </div>
+  <form onsubmit="saveMethodologyPage(event)">
+    <div>
+      <label>Admin Key</label>
+      <input id="methodologyAdminKey" type="password" placeholder="Enter admin key" required>
+    </div>
 
-      <div>
-        <label>Page Title</label>
-        <input name="title" value="Methodology" placeholder="Methodology">
-      </div>
+    <div>
+      <label>Title</label>
+      <input name="title" required placeholder="Methodology post title">
+    </div>
 
-      <div class="full-row">
-        <label>Methodology Page Content</label>
-        <textarea name="body" rows="18" placeholder="Write your full methodology page here. You can include website links, notes, explanations, and organized resources."></textarea>
-      </div>
+    <div>
+      <label>Category</label>
+      <input name="category" placeholder="Single-cell, spatial, statistics...">
+    </div>
 
-      <button type="submit">Save Methodology Page</button>
-    </form>
-  </section>
+    <div>
+      <label>Tags</label>
+      <input name="tags" placeholder="Seurat, Scanpy, survival analysis">
+    </div>
+
+    <div>
+      <label>Source / Reference Link</label>
+      <input name="link" placeholder="https://...">
+    </div>
+
+    <div class="full-row">
+      <label>Content</label>
+      <textarea name="body" rows="14" placeholder="Write your methodology note here."></textarea>
+    </div>
+
+    <div class="full-row">
+      <label>Note</label>
+      <textarea name="note" placeholder="Optional admin note"></textarea>
+    </div>
+
+    <button type="submit">Save Methodology Post</button>
+  </form>
+</section>
+  
 
   <section class="card write-form">
     <h2>New Blog Post</h2>
