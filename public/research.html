@@ -21,36 +21,116 @@
 
 <main class="container">
   <h1>Research Paper</h1>
-  <p>Full research paper list. 10 papers per page.</p>
+  <p>Browse research papers uploaded by the admin.</p>
 
   <div class="toolbar">
-    <input class="search-input" id="paperSearch" placeholder="Search research papers...">
-    <button class="write-btn" onclick="searchPapers()">Search</button>
+    <input class="search-input" id="paperSearch" placeholder="Search papers..." oninput="filterPapers()">
   </div>
 
-  <section class="card">
-    <h2>Research Papers</h2>
-
-    <div id="paperList">
-      <p>No papers yet.</p>
-    </div>
-  </section>
+  <section id="researchList"></section>
+  <div id="pagination" class="pagination"></div>
 </main>
 
+<script src="/app.js"></script>
+
 <script>
-function searchPapers() {
+document.addEventListener("DOMContentLoaded", () => {
+  loadResearchPapers();
+});
+
+async function loadResearchPapers(page = 1) {
+  const res = await fetch("/api/posts?section=research&type=paper&page=" + page);
+  const data = await res.json();
+
+  const box = document.getElementById("researchList");
+  const pagination = document.getElementById("pagination");
+
+  if (!data.posts || data.posts.length === 0) {
+    box.innerHTML = `<p class="empty-posts">No research papers yet.</p>`;
+    return;
+  }
+
+  box.innerHTML = data.posts.map(renderResearchPaper).join("");
+
+  pagination.innerHTML = "";
+
+  for (let i = 1; i <= data.totalPages; i++) {
+    const btn = document.createElement("button");
+    btn.textContent = i;
+    if (i === data.page) btn.classList.add("active");
+    btn.onclick = () => loadResearchPapers(i);
+    pagination.appendChild(btn);
+  }
+}
+
+function renderResearchPaper(p) {
+  let info = {};
+
+  try {
+    info = JSON.parse(p.body || "{}");
+  } catch {
+    info = {};
+  }
+
+  const figures = String(info.figures || "")
+    .split("\n")
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  return `
+    <article class="post-card research-paper-card">
+      <div class="post-card-header">
+        <div>
+          <h3>${escapeHtml(p.title)}</h3>
+          <p class="post-meta">
+            ${escapeHtml(info.journal || "Research Paper")}
+            ${info.year ? " · " + escapeHtml(info.year) : ""}
+          </p>
+        </div>
+        <span class="post-badge">Research Paper</span>
+      </div>
+
+      ${info.authors ? `<p class="post-author">${escapeHtml(info.authors)}</p>` : ""}
+
+      ${info.abstract ? `
+        <p class="post-body">
+          ${escapeHtml(info.abstract)}
+        </p>
+      ` : ""}
+
+      ${figures.length ? `
+        <div class="research-figures">
+          ${figures.map(url => `
+            <img src="${escapeHtml(url)}" alt="Research figure">
+          `).join("")}
+        </div>
+      ` : ""}
+
+      <div class="post-actions">
+        ${p.link ? `<a class="btn" href="${safeUrl(p.link)}" target="_blank">Open Article</a>` : ""}
+        ${info.pdfLink ? `<a class="btn" href="${safeUrl(info.pdfLink)}" target="_blank">Open PDF / File</a>` : ""}
+      </div>
+
+      ${info.tags ? `<p class="post-meta">Tags: ${escapeHtml(info.tags)}</p>` : ""}
+    </article>
+  `;
+}
+
+function filterPapers() {
   const keyword = document.getElementById("paperSearch").value.toLowerCase();
-  const items = document.querySelectorAll(".paper-item");
+  const cards = document.querySelectorAll(".research-paper-card");
 
-  items.forEach(item => {
-    const text = item.textContent.toLowerCase();
-
-    if (text.includes(keyword)) {
-      item.style.display = "block";
-    } else {
-      item.style.display = "none";
-    }
+  cards.forEach(card => {
+    const text = card.textContent.toLowerCase();
+    card.style.display = text.includes(keyword) ? "block" : "none";
   });
+}
+
+function safeUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://")) return escapeHtml(url);
+  return escapeHtml("https://" + url);
 }
 </script>
 </body>
