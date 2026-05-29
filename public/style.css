@@ -408,3 +408,18 @@ textarea {
 .home-mini-post .post-actions {
   display: none;
 }
+
+.home-mini-card {
+  background: white;
+  border: 1px solid var(--border-blue);
+  border-radius: 20px;
+  padding: 20px;
+  margin-top: 18px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+.home-mini-card h3 {
+  margin: 0 0 12px;
+  color: var(--main-blue);
+  font-size: 22px;
+}
