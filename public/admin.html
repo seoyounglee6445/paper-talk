@@ -1,595 +1,302 @@
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin | Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
+</head>
 
-    if (url.pathname === "/auth/google") return googleLogin(request, env);
-    if (url.pathname === "/auth/google/callback") return googleCallback(request, env);
-    if (url.pathname === "/auth/logout") return logout();
-    if (url.pathname === "/api/me") return apiMe(request, env);
+<body>
+<header class="header">
+  <nav class="nav">
+    <div class="logo">Paper_Talk Admin</div>
+    <a href="/">Home</a>
+    <a href="/admin.html">Admin</a>
+  </nav>
+</header>
 
-    if (url.pathname === "/api/delete-account" && request.method === "POST") {
-      return deleteAccount(request, env);
-    }
+<main class="container">
+  <h1>Site Admin</h1>
+  <p>Manage research papers, submitted posts, approvals, and deletion.</p>
 
-    if (url.pathname === "/api/my/posts" && request.method === "GET") {
-      return myPosts(request, env);
-    }
+  <section class="card write-form">
+    <h2>New Research Paper</h2>
 
-    if (url.pathname === "/api/my/update" && request.method === "POST") {
-      return updateMyPost(request, env);
-    }
+    <form onsubmit="createResearchPaper(event)">
+      <div>
+        <label>Admin Key</label>
+        <input id="researchAdminKey" type="password" placeholder="Enter admin key" required>
+      </div>
 
-    if (url.pathname === "/api/my/delete" && request.method === "POST") {
-      return deleteMyPost(request, env);
-    }
+      <div>
+        <label>Title</label>
+        <input name="title" required placeholder="Paper title">
+      </div>
 
-    if (url.pathname === "/api/posts" && request.method === "GET") {
-      return listPosts(request, env);
-    }
+      <div>
+        <label>Year</label>
+        <input name="year" placeholder="2026">
+      </div>
 
-    if (url.pathname === "/api/posts" && request.method === "POST") {
-      return createPost(request, env);
-    }
+      <div>
+        <label>Authors</label>
+        <input name="authors" placeholder="Author names">
+      </div>
 
-    if (url.pathname === "/api/admin/posts" && request.method === "GET") {
-      return adminListPosts(request, env);
-    }
+      <div>
+        <label>Journal</label>
+        <input name="journal" placeholder="Journal name">
+      </div>
 
-    if (url.pathname === "/api/admin/approve" && request.method === "POST") {
-      return adminApprovePost(request, env);
-    }
+      <div>
+        <label>Category</label>
+        <input name="category" placeholder="Cancer genomics, single-cell, spatial...">
+      </div>
 
-    if (url.pathname === "/api/admin/delete" && request.method === "POST") {
-      return adminDeletePost(request, env);
-    }
+      <div class="full-row">
+        <label>Abstract</label>
+        <textarea name="abstract" placeholder="Paste abstract here"></textarea>
+      </div>
 
-    if (url.pathname === "/api/admin/research/create" && request.method === "POST") {
-      return adminCreateResearchPaper(request, env);
-    }
+      <div>
+        <label>Article Link</label>
+        <input name="articleLink" placeholder="https://doi.org/...">
+      </div>
 
-    if (url.pathname === "/admin") {
-      return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
-    }
+      <div>
+        <label>PDF / File Link</label>
+        <input name="pdfLink" placeholder="Google Drive, PDF, or file link">
+      </div>
 
-    if (url.pathname === "/research") {
-      return env.ASSETS.fetch(new Request(new URL("/research.html", request.url)));
-    }
+      <div class="full-row">
+        <label>Figure Image URLs</label>
+        <textarea name="figures" placeholder="One image URL per line"></textarea>
+      </div>
 
-    if (url.pathname === "/career") {
-      return env.ASSETS.fetch(new Request(new URL("/career.html", request.url)));
-    }
+      <div>
+        <label>Tags</label>
+        <input name="tags" placeholder="RNA velocity, single-cell, spatial">
+      </div>
 
-    if (url.pathname === "/study") {
-      return env.ASSETS.fetch(new Request(new URL("/study.html", request.url)));
-    }
+      <div class="full-row">
+        <label>Description</label>
+        <textarea name="description" placeholder="Optional description"></textarea>
+      </div>
 
-    if (url.pathname === "/community") {
-      return env.ASSETS.fetch(new Request(new URL("/community.html", request.url)));
-    }
+      <div class="full-row">
+        <label>Note</label>
+        <textarea name="note" placeholder="Optional note"></textarea>
+      </div>
 
-    if (env.ASSETS) return env.ASSETS.fetch(request);
+      <button type="submit">Save Research Paper</button>
+    </form>
+  </section>
 
-    return new Response("Not found", { status: 404 });
-  }
-};
+  <section class="card">
+    <h2>Manage Posts</h2>
 
-function json(data, status = 200, headers = {}) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      ...headers
-    }
-  });
+    <label>Admin Key</label>
+    <input id="adminKey" type="password" placeholder="Enter admin key">
+
+    <label>Section</label>
+    <select id="sectionFilter">
+      <option value="">All Sections</option>
+      <option value="research">Research Paper</option>
+      <option value="study">Study Materials</option>
+      <option value="community">Community</option>
+      <option value="career">Career</option>
+    </select>
+
+    <label>Category</label>
+    <select id="typeFilter">
+      <option value="">All Categories</option>
+      <option value="paper">Research Paper</option>
+      <option value="linkedin">LinkedIn Promotion</option>
+      <option value="job">Job Posting</option>
+      <option value="jobsite">Job Website</option>
+      <option value="collaboration">Collaboration Hub</option>
+      <option value="question">Question / Discussion</option>
+      <option value="conference_notice">Conference Notice</option>
+      <option value="study_post">Study</option>
+      <option value="methodology">Methodology</option>
+      <option value="blog">Blog</option>
+    </select>
+
+    <label>Status</label>
+    <select id="statusFilter">
+      <option value="">All Status</option>
+      <option value="pending">Pending</option>
+      <option value="published">Published</option>
+    </select>
+
+    <button onclick="loadAdminPosts()">Load Posts</button>
+  </section>
+
+  <h2>Posts</h2>
+  <div id="adminPostList"></div>
+</main>
+
+<script>
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
-function redirect(location, headers = {}) {
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: location,
-      ...headers
-    }
-  });
-}
-
-function getCookie(request, name) {
-  const cookie = request.headers.get("Cookie") || "";
-  const parts = cookie.split(";").map(v => v.trim());
-
-  for (const part of parts) {
-    if (part.startsWith(name + "=")) {
-      return decodeURIComponent(part.slice(name.length + 1));
-    }
-  }
-
-  return "";
-}
-
-async function sign(value, secret) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-
-  const sig = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(value)
-  );
-
-  return btoa(String.fromCharCode(...new Uint8Array(sig)));
-}
-
-async function createSessionCookie(user, env) {
-  const payload = btoa(JSON.stringify({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    picture: user.picture || "",
-    createdAt: Date.now()
-  }));
-
-  const signature = await sign(payload, env.SESSION_SECRET);
-  const value = `${payload}.${signature}`;
-
-  return `pt_session=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`;
-}
-
-async function getSession(request, env) {
-  const cookie = getCookie(request, "pt_session");
-  if (!cookie || !cookie.includes(".")) return null;
-
-  const [payload, signature] = cookie.split(".");
-  const expected = await sign(payload, env.SESSION_SECRET);
-
-  if (signature !== expected) return null;
-
+function parseResearchBody(body) {
   try {
-    return JSON.parse(atob(payload));
+    return JSON.parse(body || "{}");
   } catch {
-    return null;
+    return {};
   }
 }
 
-async function googleLogin(request, env) {
-  if (!env.GOOGLE_CLIENT_ID) {
-    return json({ ok: false, error: "GOOGLE_CLIENT_ID is missing." }, 500);
-  }
+async function createResearchPaper(e) {
+  e.preventDefault();
 
-  const origin = new URL(request.url).origin;
-  const redirectUri = `${origin}/auth/google/callback`;
+  const key = document.getElementById("researchAdminKey").value;
+  const form = new FormData(e.target);
+  const data = Object.fromEntries(form.entries());
 
-  const params = new URLSearchParams({
-    client_id: env.GOOGLE_CLIENT_ID,
-    redirect_uri: redirectUri,
-    response_type: "code",
-    scope: "openid email profile",
-    access_type: "online",
-    prompt: "select_account"
-  });
-
-  return redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params.toString());
-}
-
-async function googleCallback(request, env) {
-  const url = new URL(request.url);
-  const code = url.searchParams.get("code");
-
-  if (!code) return new Response("Missing code", { status: 400 });
-
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
-    return json({
-      ok: false,
-      error: "GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing."
-    }, 500);
-  }
-
-  const origin = new URL(request.url).origin;
-  const redirectUri = `${origin}/auth/google/callback`;
-
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+  const res = await fetch("/api/admin/research/create", {
     method: "POST",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
     },
-    body: new URLSearchParams({
-      code,
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: redirectUri,
-      grant_type: "authorization_code"
-    })
+    body: JSON.stringify(data)
   });
 
-  const token = await tokenRes.json();
+  const result = await res.json();
 
-  if (!token.access_token) {
-    return json({
-      ok: false,
-      error: "Google token exchange failed",
-      token
-    }, 400);
+  if (!result.ok) {
+    alert(result.error || "Save failed");
+    return;
   }
 
-  const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+  alert("Research paper saved.");
+  e.target.reset();
+  loadAdminPosts();
+}
+
+async function loadAdminPosts() {
+  const key = document.getElementById("adminKey").value || document.getElementById("researchAdminKey").value;
+  const section = document.getElementById("sectionFilter").value;
+  const type = document.getElementById("typeFilter").value;
+  const status = document.getElementById("statusFilter").value;
+
+  const params = new URLSearchParams({ key });
+
+  if (section) params.set("section", section);
+  if (type) params.set("type", type);
+  if (status) params.set("status", status);
+
+  const res = await fetch("/api/admin/posts?" + params.toString());
+  const data = await res.json();
+
+  const box = document.getElementById("adminPostList");
+
+  if (!data.ok) {
+    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed")}</p>`;
+    return;
+  }
+
+  if (!data.posts.length) {
+    box.innerHTML = "<p>No posts found.</p>";
+    return;
+  }
+
+  box.innerHTML = data.posts.map(post => {
+    const research = post.section === "research" ? parseResearchBody(post.body) : null;
+
+    return `
+      <article class="post-card">
+        <div class="post-card-header">
+          <div>
+            <h3>${escapeHtml(post.title)}</h3>
+            <p class="post-meta">
+              ${escapeHtml(post.section)} · ${escapeHtml(post.type)} · ${escapeHtml(post.status)}
+            </p>
+          </div>
+          <span class="post-badge">${escapeHtml(post.status)}</span>
+        </div>
+
+        ${
+          research
+            ? `
+              <p><strong>Year:</strong> ${escapeHtml(research.year)}</p>
+              <p><strong>Authors:</strong> ${escapeHtml(research.authors)}</p>
+              <p><strong>Journal:</strong> ${escapeHtml(research.journal)}</p>
+              <p class="post-body">${escapeHtml(research.abstract)}</p>
+            `
+            : `<p class="post-body">${escapeHtml(post.body)}</p>`
+        }
+
+        ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Article</a></p>` : ""}
+        ${research && research.pdfLink ? `<p><a class="btn" href="${escapeHtml(research.pdfLink)}" target="_blank">Open PDF/File</a></p>` : ""}
+        ${post.linkedin_url ? `<p><a class="btn" href="${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>` : ""}
+
+        <p><strong>Author:</strong> ${escapeHtml(post.author_name)}</p>
+        <p><strong>Email:</strong> ${escapeHtml(post.author_email)}</p>
+
+        <div class="post-actions">
+          ${post.status === "pending" ? `<button onclick="approvePost('${post.id}')">Approve</button>` : ""}
+          <button class="danger-btn" onclick="deletePost('${post.id}')">Delete</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+async function approvePost(id) {
+  const key = document.getElementById("adminKey").value || document.getElementById("researchAdminKey").value;
+
+  const res = await fetch("/api/admin/approve", {
+    method: "POST",
     headers: {
-      Authorization: `Bearer ${token.access_token}`
-    }
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({ id })
   });
 
-  const googleUser = await userRes.json();
+  const data = await res.json();
 
-  const user = {
-    id: googleUser.id,
-    name: googleUser.name || googleUser.email,
-    email: googleUser.email,
-    picture: googleUser.picture || ""
-  };
+  if (!data.ok) {
+    alert(data.error || "Approve failed");
+    return;
+  }
 
-  await env.DB.prepare(`
-    INSERT INTO users (id, name, email, created_at)
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(id) DO UPDATE SET
-      name = excluded.name,
-      email = excluded.email
-  `).bind(user.id, user.name, user.email).run();
+  loadAdminPosts();
+}
 
-  const cookie = await createSessionCookie(user, env);
+async function deletePost(id) {
+  if (!confirm("Delete this post?")) return;
 
-  return redirect("/", {
-    "Set-Cookie": cookie
+  const key = document.getElementById("adminKey").value || document.getElementById("researchAdminKey").value;
+
+  const res = await fetch("/api/admin/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({ id })
   });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Delete failed");
+    return;
+  }
+
+  loadAdminPosts();
 }
-
-function logout() {
-  return redirect("/", {
-    "Set-Cookie": "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
-  });
-}
-
-async function apiMe(request, env) {
-  const user = await getSession(request, env);
-  return json({ ok: !!user, user });
-}
-
-async function deleteAccount(request, env) {
-  const user = await getSession(request, env);
-
-  if (!user) {
-    return json({ ok: false, error: "Please sign in first." }, 401);
-  }
-
-  await env.DB.prepare(`
-    DELETE FROM users
-    WHERE id = ?
-  `).bind(user.id).run();
-
-  return json(
-    { ok: true },
-    200,
-    {
-      "Set-Cookie": "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
-    }
-  );
-}
-
-async function listPosts(request, env) {
-  const url = new URL(request.url);
-  const section = url.searchParams.get("section") || "research";
-  const type = url.searchParams.get("type") || "";
-  const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
-  const limit = 10;
-  const offset = (page - 1) * limit;
-
-  let where = "WHERE section = ? AND status = 'published'";
-  const params = [section];
-
-  if (type) {
-    where += " AND type = ?";
-    params.push(type);
-  }
-
-  const count = await env.DB.prepare(`
-    SELECT COUNT(*) AS total
-    FROM posts
-    ${where}
-  `).bind(...params).first();
-
-  const posts = await env.DB.prepare(`
-    SELECT *
-    FROM posts
-    ${where}
-    ORDER BY datetime(created_at) DESC
-    LIMIT ? OFFSET ?
-  `).bind(...params, limit, offset).all();
-
-  return json({
-    ok: true,
-    posts: posts.results,
-    page,
-    perPage: limit,
-    total: count ? count.total : 0,
-    totalPages: Math.ceil((count ? count.total : 0) / limit)
-  });
-}
-
-async function createPost(request, env) {
-  const user = await getSession(request, env);
-
-  if (!user) {
-    return json({
-      ok: false,
-      error: "Please sign in with Google before writing a post."
-    }, 401);
-  }
-
-  const data = await request.json();
-
-  const section = String(data.section || "").trim();
-  const type = String(data.type || "").trim();
-  const title = String(data.title || "").trim();
-
-  if (!section || !type || !title) {
-    return json({
-      ok: false,
-      error: "section, type, and title are required."
-    }, 400);
-  }
-
-  await env.DB.prepare(`
-    INSERT INTO posts (
-      id,
-      section,
-      type,
-      title,
-      body,
-      link,
-      author_name,
-      author_email,
-      linkedin_url,
-      status
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-  `).bind(
-    crypto.randomUUID(),
-    section,
-    type,
-    title,
-    data.body || "",
-    data.link || "",
-    user.name,
-    user.email,
-    data.linkedinUrl || ""
-  ).run();
-
-  return json({
-    ok: true,
-    message: "Submitted. Your post will be published after admin approval."
-  });
-}
-
-async function myPosts(request, env) {
-  const user = await getSession(request, env);
-
-  if (!user) {
-    return json({ ok: false, error: "Please sign in first." }, 401);
-  }
-
-  const posts = await env.DB.prepare(`
-    SELECT *
-    FROM posts
-    WHERE author_email = ?
-    ORDER BY datetime(created_at) DESC
-  `).bind(user.email).all();
-
-  return json({
-    ok: true,
-    posts: posts.results
-  });
-}
-
-async function updateMyPost(request, env) {
-  const user = await getSession(request, env);
-
-  if (!user) {
-    return json({ ok: false, error: "Please sign in first." }, 401);
-  }
-
-  const data = await request.json();
-  const title = String(data.title || "").trim();
-
-  if (!data.id || !title) {
-    return json({
-      ok: false,
-      error: "Post ID and title are required."
-    }, 400);
-  }
-
-  await env.DB.prepare(`
-    UPDATE posts
-    SET title = ?,
-        body = ?,
-        link = ?,
-        linkedin_url = ?,
-        status = 'pending'
-    WHERE id = ?
-      AND author_email = ?
-  `).bind(
-    title,
-    data.body || "",
-    data.link || "",
-    data.linkedinUrl || "",
-    data.id,
-    user.email
-  ).run();
-
-  return json({
-    ok: true,
-    message: "Updated. Your post needs admin approval again."
-  });
-}
-
-async function deleteMyPost(request, env) {
-  const user = await getSession(request, env);
-
-  if (!user) {
-    return json({ ok: false, error: "Please sign in first." }, 401);
-  }
-
-  const data = await request.json();
-
-  if (!data.id) {
-    return json({ ok: false, error: "Post ID is required." }, 400);
-  }
-
-  await env.DB.prepare(`
-    DELETE FROM posts
-    WHERE id = ?
-      AND author_email = ?
-  `).bind(data.id, user.email).run();
-
-  return json({ ok: true });
-}
-
-function isAdmin(request, env) {
-  const url = new URL(request.url);
-  const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
-
-  return Boolean(key && env.ADMIN_KEY && key === env.ADMIN_KEY);
-}
-
-async function adminListPosts(request, env) {
-  if (!isAdmin(request, env)) {
-    return json({ ok: false, error: "Unauthorized" }, 401);
-  }
-
-  const url = new URL(request.url);
-  const section = url.searchParams.get("section") || "";
-  const type = url.searchParams.get("type") || "";
-  const status = url.searchParams.get("status") || "";
-
-  let where = "WHERE 1=1";
-  const params = [];
-
-  if (section) {
-    where += " AND section = ?";
-    params.push(section);
-  }
-
-  if (type) {
-    where += " AND type = ?";
-    params.push(type);
-  }
-
-  if (status) {
-    where += " AND status = ?";
-    params.push(status);
-  }
-
-  const posts = await env.DB.prepare(`
-    SELECT *
-    FROM posts
-    ${where}
-    ORDER BY datetime(created_at) DESC
-  `).bind(...params).all();
-
-  return json({
-    ok: true,
-    posts: posts.results
-  });
-}
-
-async function adminApprovePost(request, env) {
-  if (!isAdmin(request, env)) {
-    return json({ ok: false, error: "Unauthorized" }, 401);
-  }
-
-  const data = await request.json();
-
-  if (!data.id) {
-    return json({ ok: false, error: "Post ID is required." }, 400);
-  }
-
-  await env.DB.prepare(`
-    UPDATE posts
-    SET status = 'published'
-    WHERE id = ?
-  `).bind(data.id).run();
-
-  return json({ ok: true });
-}
-
-async function adminDeletePost(request, env) {
-  if (!isAdmin(request, env)) {
-    return json({ ok: false, error: "Unauthorized" }, 401);
-  }
-
-  const data = await request.json();
-
-  if (!data.id) {
-    return json({ ok: false, error: "Post ID is required." }, 400);
-  }
-
-  await env.DB.prepare(`
-    DELETE FROM posts
-    WHERE id = ?
-  `).bind(data.id).run();
-
-  return json({ ok: true });
-}
-
-async function adminCreateResearchPaper(request, env) {
-  if (!isAdmin(request, env)) {
-    return json({ ok: false, error: "Unauthorized" }, 401);
-  }
-
-  const data = await request.json();
-  const title = String(data.title || "").trim();
-
-  if (!title) {
-    return json({ ok: false, error: "Title is required." }, 400);
-  }
-
-  const researchData = {
-    year: data.year || "",
-    authors: data.authors || "",
-    journal: data.journal || "",
-    abstract: data.abstract || "",
-    category: data.category || "",
-    figures: data.figures || "",
-    pdfLink: data.pdfLink || "",
-    tags: data.tags || "",
-    description: data.description || "",
-    note: data.note || ""
-  };
-
-  await env.DB.prepare(`
-    INSERT INTO posts (
-      id,
-      section,
-      type,
-      title,
-      body,
-      link,
-      author_name,
-      author_email,
-      linkedin_url,
-      status
-    )
-    VALUES (?, 'research', 'paper', ?, ?, ?, 'Admin', '', '', 'published')
-  `).bind(
-    crypto.randomUUID(),
-    title,
-    JSON.stringify(researchData),
-    data.articleLink || ""
-  ).run();
-
-  return json({
-    ok: true,
-    message: "Research paper saved."
-  });
-}
+</script>
+</body>
+</html>
