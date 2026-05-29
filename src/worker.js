@@ -15,10 +15,6 @@ export default {
     if (url.pathname === "/api/my/update" && request.method === "POST") return updateMyPost(request, env);
     if (url.pathname === "/api/my/delete" && request.method === "POST") return deleteMyPost(request, env);
 
-    if (url.pathname === "/admin" || url.pathname === "/admin.html") {
-      return html(adminPage());
-    }
-
     if (url.pathname === "/api/posts" && request.method === "GET") return listPosts(request, env);
     if (url.pathname === "/api/posts" && request.method === "POST") return createPost(request, env);
 
