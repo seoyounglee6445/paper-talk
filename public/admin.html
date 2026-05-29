@@ -3,170 +3,105 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin | Paper_Talk</title>
+<title>Paper_Talk</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 
 <body>
 <header class="header">
   <nav class="nav">
-    <div class="logo">Paper_Talk Admin</div>
+    <div class="logo">Paper_Talk</div>
     <a href="/">Home</a>
-    <a href="/admin.html">Admin</a>
+    <a href="/research.html">Research Paper</a>
+    <a href="/study.html">Study Materials</a>
+    <a href="/community.html">Community</a>
+    <a href="/career.html">Career</a>
   </nav>
 </header>
 
 <main class="container">
-  <h1>Admin Dashboard</h1>
-  <p>Manage posts by section, category, and status.</p>
+  <h1>Paper_Talk</h1>
+  <p>Research paper, conference notice, and LinkedIn networking platform.</p>
 
-<section class="card">
-  <h2>Admin Filter</h2>
+  <section class="home-three-grid">
+    <div class="home-column">
+      <h2>Latest Papers</h2>
+      <div id="homePapers"></div>
+    </div>
 
-  <label>Admin Key</label>
-  <input id="adminKey" type="password" placeholder="Enter admin key">
+    <div class="home-column">
+      <h2>Conference Notices</h2>
+      <div id="homeConference"></div>
+    </div>
 
-  <label>Section</label>
-  <select id="sectionFilter">
-    <option value="">All Sections</option>
-    <option value="research">Research Paper</option>
-    <option value="study">Study Materials</option>
-    <option value="community">Community</option>
-    <option value="career">Career</option>
-  </select>
-
-  <label>Category</label>
-  <select id="typeFilter">
-    <option value="">All Categories</option>
-    <option value="linkedin">LinkedIn Promotion</option>
-    <option value="job">Job Posting</option>
-    <option value="jobsite">Job Website</option>
-    <option value="collaboration">Collaboration Hub</option>
-  </select>
-
-  <label>Status</label>
-  <select id="statusFilter">
-    <option value="">All Status</option>
-    <option value="pending">Pending</option>
-    <option value="published">Published</option>
-  </select>
-
-  <button onclick="loadAdminPosts()">Load Posts</button>
-</section>
-
-  <h2>Posts</h2>
-  <div id="adminPostList"></div>
+    <div class="home-column">
+      <h2>LinkedIn</h2>
+      <div id="homeLinkedin"></div>
+    </div>
+  </section>
 </main>
 
+<script src="/app.js"></script>
+
 <script>
-function escapeHtml(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+document.addEventListener("DOMContentLoaded", () => {
+  loadHomePapers();
+  loadHomeConference();
+  loadHomeLinkedIn();
+});
 
-async function loadAdminPosts() {
-  const key = document.getElementById("adminKey").value;
-  const section = document.getElementById("sectionFilter").value;
-  const type = document.getElementById("typeFilter").value;
-  const status = document.getElementById("statusFilter").value;
-
-  const params = new URLSearchParams({ key });
-
-  if (section) params.set("section", section);
-  if (type) params.set("type", type);
-  if (status) params.set("status", status);
-
-  const res = await fetch("/api/admin/posts?" + params.toString());
+async function loadHomePapers() {
+  const res = await fetch("/api/posts?section=research&type=paper&page=1");
   const data = await res.json();
+  const box = document.getElementById("homePapers");
 
-  const box = document.getElementById("adminPostList");
-
-  if (!data.ok) {
-    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed")}</p>`;
+  if (!data.posts || data.posts.length === 0) {
+    box.innerHTML = `<p class="empty-posts">No papers yet.</p>`;
     return;
   }
 
-  if (!data.posts.length) {
-    box.innerHTML = "<p>No posts found.</p>";
-    return;
-  }
-
-  box.innerHTML = data.posts.map(post => `
-    <article class="post-card">
-      <div class="post-card-header">
-        <div>
-          <h3>${escapeHtml(post.title)}</h3>
-          <p class="post-meta">
-            ${escapeHtml(post.section)} · ${escapeHtml(post.type)} · ${escapeHtml(post.status)}
-          </p>
-        </div>
-        <span class="post-badge">${escapeHtml(post.status)}</span>
-      </div>
-
-      <p class="post-body">${escapeHtml(post.body)}</p>
-
-      ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>` : ""}
-      ${post.linkedin_url ? `<p><a class="btn" href="${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>` : ""}
-
-      <p><strong>Author:</strong> ${escapeHtml(post.author_name)}</p>
-      <p><strong>Email:</strong> ${escapeHtml(post.author_email)}</p>
-
-      <div class="post-actions">
-        ${post.status === "pending" ? `<button onclick="approvePost('${post.id}')">Approve</button>` : ""}
-        <button class="danger-btn" onclick="deletePost('${post.id}')">Delete</button>
-      </div>
-    </article>
+  box.innerHTML = data.posts.slice(0, 10).map(p => `
+    <div class="home-list-item">
+      <h3>${escapeHtml(p.title)}</h3>
+      <p>Research Paper · ${new Date(p.created_at).toLocaleDateString()}</p>
+    </div>
   `).join("");
 }
 
-async function approvePost(id) {
-  const key = document.getElementById("adminKey").value;
-
-  const res = await fetch("/api/admin/approve", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Admin-Key": key
-    },
-    body: JSON.stringify({ id })
-  });
-
+async function loadHomeConference() {
+  const res = await fetch("/api/posts?section=community&type=conference_notice&page=1");
   const data = await res.json();
+  const box = document.getElementById("homeConference");
 
-  if (!data.ok) {
-    alert(data.error || "Approve failed");
+  if (!data.posts || data.posts.length === 0) {
+    box.innerHTML = `<p class="empty-posts">No conference notices yet.</p>`;
     return;
   }
 
-  loadAdminPosts();
+  box.innerHTML = data.posts.slice(0, 10).map(p => `
+    <div class="home-list-item">
+      <h3>${escapeHtml(p.title)}</h3>
+      <p>Conference Notice · ${new Date(p.created_at).toLocaleDateString()}</p>
+    </div>
+  `).join("");
 }
 
-async function deletePost(id) {
-  if (!confirm("Delete this post?")) return;
-
-  const key = document.getElementById("adminKey").value;
-
-  const res = await fetch("/api/admin/delete", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Admin-Key": key
-    },
-    body: JSON.stringify({ id })
-  });
-
+async function loadHomeLinkedIn() {
+  const res = await fetch("/api/posts?section=career&type=linkedin&page=1");
   const data = await res.json();
+  const box = document.getElementById("homeLinkedin");
 
-  if (!data.ok) {
-    alert(data.error || "Delete failed");
+  if (!data.posts || data.posts.length === 0) {
+    box.innerHTML = `<p class="empty-posts">No LinkedIn posts yet.</p>`;
     return;
   }
 
-  loadAdminPosts();
+  box.innerHTML = data.posts.slice(0, 10).map(p => `
+    <div class="home-list-item">
+      <h3>${escapeHtml(p.title)}</h3>
+      <p>LinkedIn Promotion · ${new Date(p.created_at).toLocaleDateString()}</p>
+    </div>
+  `).join("");
 }
 </script>
 </body>
