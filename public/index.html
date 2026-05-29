@@ -56,12 +56,36 @@ document.addEventListener("DOMContentLoaded", () => {
     target: "homeConference"
   });
 
-  loadPosts({
-    section: "career",
-    type: "linkedin",
-    target: "homeLinkedin"
-  });
+  loadHomeLinkedIn();
 });
+
+async function loadHomeLinkedIn() {
+  const res = await fetch("/api/posts?section=career&type=linkedin");
+  const data = await res.json();
+
+  const box = document.getElementById("homeLinkedin");
+  if (!box) return;
+
+  if (!data.posts || data.posts.length === 0) {
+    box.innerHTML = `<p class="empty-posts">No LinkedIn posts yet.</p>`;
+    return;
+  }
+
+  box.innerHTML = data.posts.map(p => `
+    <article class="post-card home-mini-post">
+      <div class="post-card-header">
+        <h3>${escapeHtml(p.title)}</h3>
+        <span class="post-badge">LinkedIn Promotion</span>
+      </div>
+
+      <p class="post-meta">
+        LinkedIn Promotion · ${new Date(p.created_at).toLocaleDateString()}
+      </p>
+
+      <p class="post-author">By ${escapeHtml(p.author_name)}</p>
+    </article>
+  `).join("");
+}
 </script>
 </body>
 </html>
