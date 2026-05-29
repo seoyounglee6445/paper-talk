@@ -19,8 +19,18 @@ export default {
     if (url.pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
     if (url.pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
     if (url.pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
-    if (url.pathname === "/api/admin/research/create" && request.method === "POST") return adminCreateResearchPaper(request, env);
-    if (url.pathname === "/api/admin/study/create" && request.method === "POST") return adminCreateStudyContent(request, env);
+
+    if (url.pathname === "/api/admin/research/create" && request.method === "POST") {
+      return adminCreateResearchPaper(request, env);
+    }
+
+    if (url.pathname === "/api/admin/methodology/save" && request.method === "POST") {
+      return adminSaveMethodologyPage(request, env);
+    }
+
+    if (url.pathname === "/api/admin/blog/create" && request.method === "POST") {
+      return adminCreateBlogPost(request, env);
+    }
 
     if (url.pathname === "/admin" || url.pathname === "/admin.html") {
       return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
@@ -30,16 +40,16 @@ export default {
       return env.ASSETS.fetch(new Request(new URL("/research.html", request.url)));
     }
 
-    if (url.pathname === "/career") {
-      return env.ASSETS.fetch(new Request(new URL("/career.html", request.url)));
-    }
-
     if (url.pathname === "/study") {
       return env.ASSETS.fetch(new Request(new URL("/study.html", request.url)));
     }
 
     if (url.pathname === "/community") {
       return env.ASSETS.fetch(new Request(new URL("/community.html", request.url)));
+    }
+
+    if (url.pathname === "/career") {
+      return env.ASSETS.fetch(new Request(new URL("/career.html", request.url)));
     }
 
     if (env.ASSETS) return env.ASSETS.fetch(request);
@@ -569,29 +579,68 @@ async function adminCreateResearchPaper(request, env) {
   });
 }
 
-async function adminCreateStudyContent(request, env) {
+async function adminSaveMethodologyPage(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json();
+  const title = String(data.title || "Methodology").trim();
+  const body = String(data.body || "").trim();
+
+  if (!body) {
+    return json({ ok: false, error: "Methodology content is required." }, 400);
+  }
+
+  await env.DB.prepare(`
+    DELETE FROM posts
+    WHERE section = 'study'
+      AND type = 'methodology_page'
+  `).run();
+
+  await env.DB.prepare(`
+    INSERT INTO posts (
+      id,
+      section,
+      type,
+      title,
+      body,
+      link,
+      author_name,
+      author_email,
+      linkedin_url,
+      status
+    )
+    VALUES (?, 'study', 'methodology_page', ?, ?, '', 'Admin', '', '', 'published')
+  `).bind(
+    crypto.randomUUID(),
+    title,
+    body
+  ).run();
+
+  return json({
+    ok: true,
+    message: "Methodology page saved."
+  });
+}
+
+async function adminCreateBlogPost(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
   const data = await request.json();
 
-  const type = String(data.type || "").trim();
   const title = String(data.title || "").trim();
-
-  if (!["methodology", "blog"].includes(type)) {
-    return json({ ok: false, error: "Invalid study type." }, 400);
-  }
 
   if (!title) {
     return json({ ok: false, error: "Title is required." }, 400);
   }
 
-  const bodyData = {
+  const blogData = {
     websiteName: data.websiteName || "",
     author: data.author || "",
     summary: data.summary || "",
-    sourceUrl: data.sourceUrl || "",
     tags: data.tags || "",
     note: data.note || ""
   };
@@ -609,17 +658,16 @@ async function adminCreateStudyContent(request, env) {
       linkedin_url,
       status
     )
-    VALUES (?, 'study', ?, ?, ?, ?, 'Admin', '', '', 'published')
+    VALUES (?, 'study', 'blog', ?, ?, ?, 'Admin', '', '', 'published')
   `).bind(
     crypto.randomUUID(),
-    type,
     title,
-    JSON.stringify(bodyData),
+    JSON.stringify(blogData),
     data.sourceUrl || ""
   ).run();
 
   return json({
     ok: true,
-    message: "Study content saved."
+    message: "Blog post saved."
   });
 }
