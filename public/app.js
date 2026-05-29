@@ -1,170 +1,89 @@
-async function loadAuth() {
-  const res = await fetch("/api/me");
+async function loadMyPosts() {
+  const res = await fetch("/api/my/posts");
   const data = await res.json();
 
-  const box = document.getElementById("authBox");
+  const box = document.getElementById("myPosts");
   if (!box) return;
 
-  if (data.ok && data.user) {
-    box.innerHTML = `
-      <span class="auth-name">Signed in as ${escapeHtml(data.user.name)}</span>
-      <a class="btn" href="/auth/logout">Logout</a>
-      <button class="danger-btn" onclick="deleteAccount()">Delete Account</button>
-    `;
-  } else {
-    box.innerHTML = `<a class="btn" href="/auth/google">Sign in with Google</a>`;
+  if (!data.ok) {
+    box.innerHTML = `<p class="empty-posts">${escapeHtml(data.error || "Please sign in first.")}</p>`;
+    return;
   }
-}
 
-document.addEventListener("DOMContentLoaded", loadAuth);
-
-async function loadPosts({ section, type = "", page = 1, target = "postList" }) {
-  const params = new URLSearchParams({ section, page });
-
-  if (type) params.set("type", type);
-
-  const res = await fetch("/api/posts?" + params.toString());
-  const data = await res.json();
-
-  const box = document.getElementById(target);
-  if (!box) return;
-
-  if (!data.posts || data.posts.length === 0) {
+  if (!data.posts.length) {
     box.innerHTML = `<p class="empty-posts">No posts yet.</p>`;
     return;
   }
 
-  box.innerHTML = data.posts.map(renderPost).join("");
-
-  const pagination = document.getElementById("pagination");
-
-  if (pagination) {
-    pagination.innerHTML = "";
-
-    for (let i = 1; i <= data.totalPages; i++) {
-      const btn = document.createElement("button");
-      btn.textContent = i;
-
-      if (i === data.page) {
-        btn.classList.add("active");
-      }
-
-      btn.onclick = () => loadPosts({ section, type, page: i, target });
-      pagination.appendChild(btn);
-    }
-  }
-}
-
-function renderPost(p) {
-  const linkUrl = safeUrl(p.link);
-  const linkedinUrl = safeUrl(p.linkedin_url);
-
-  return `
+  box.innerHTML = data.posts.map(post => `
     <article class="post-card">
-      <div class="post-card-header">
-        <div>
-          <h3>${escapeHtml(p.title)}</h3>
-          <p class="post-meta">
-            ${labelType(p.type)} · ${formatDate(p.created_at)}
-          </p>
-        </div>
+      <h3>${escapeHtml(post.title)}</h3>
+      <p class="post-meta">${labelType(post.type)} · ${escapeHtml(post.status)}</p>
 
-        <span class="post-badge">${labelType(p.type)}</span>
-      </div>
+      <label>Title</label>
+      <input id="title-${post.id}" value="${escapeHtml(post.title)}">
 
-      ${p.author_name ? `<p class="post-author">By ${escapeHtml(p.author_name)}</p>` : ""}
+      <label>Body</label>
+      <textarea id="body-${post.id}">${escapeHtml(post.body)}</textarea>
 
-      ${p.body ? `<p class="post-body">${escapeHtml(p.body)}</p>` : ""}
+      <label>Link</label>
+      <input id="link-${post.id}" value="${escapeHtml(post.link)}">
+
+      <label>LinkedIn URL</label>
+      <input id="linkedin-${post.id}" value="${escapeHtml(post.linkedin_url)}">
 
       <div class="post-actions">
-        ${linkUrl ? `<a class="btn" href="${linkUrl}" target="_blank" rel="noopener noreferrer">Open Link</a>` : ""}
-        ${linkedinUrl ? `<a class="btn" href="${linkedinUrl}" target="_blank" rel="noopener noreferrer">LinkedIn Profile</a>` : ""}
+        <button onclick="updateMyPost('${post.id}')">Update</button>
+        <button class="danger-btn" onclick="deleteMyPost('${post.id}')">Delete</button>
       </div>
     </article>
-  `;
+  `).join("");
 }
 
-function safeUrl(value) {
-  const url = String(value || "").trim();
-  if (!url) return "";
-
-  if (url.startsWith("http://") || url.startsWith("https://")) {
-    return escapeHtml(url);
-  }
-
-  return escapeHtml("https://" + url);
-}
-
-function labelType(type) {
-  const labels = {
-    linkedin: "LinkedIn Promotion",
-    job: "Job Posting",
-    jobsite: "Job Website",
-    question: "Question / Discussion",
-    conference_notice: "Conference Notice",
-    paper: "Research Paper",
-    study_post: "Study",
-    methodology: "Methodology",
-    blog: "Blog"
-  };
-
-  return labels[type] || escapeHtml(type);
-}
-
-function formatDate(value) {
-  if (!value) return "";
-  return new Date(value).toLocaleDateString();
-}
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-async function submitPost(e) {
-  e.preventDefault();
-
-  const form = new FormData(e.target);
-  const data = Object.fromEntries(form.entries());
-
-  const res = await fetch("/api/posts", {
+async function updateMyPost(id) {
+  const res = await fetch("/api/my/update", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(data)
-  });
-
-  const result = await res.json();
-
-  if (!result.ok) {
-    alert(result.error || "Submit failed");
-    return;
-  }
-
-  alert("Submitted! Your post will be published after admin approval.");
-  e.target.reset();
-  location.reload();
-}
-
-async function deleteAccount() {
-  if (!confirm("Delete your account? This cannot be undone.")) return;
-
-  const res = await fetch("/api/delete-account", {
-    method: "POST"
+    body: JSON.stringify({
+      id,
+      title: document.getElementById(`title-${id}`).value,
+      body: document.getElementById(`body-${id}`).value,
+      link: document.getElementById(`link-${id}`).value,
+      linkedinUrl: document.getElementById(`linkedin-${id}`).value
+    })
   });
 
   const data = await res.json();
 
   if (!data.ok) {
-    alert(data.error || "Failed to delete account.");
+    alert(data.error || "Update failed");
     return;
   }
 
-  alert("Your account has been deleted.");
-  location.href = "/";
+  alert("Updated. It will be shown after admin approval.");
+  loadMyPosts();
+}
+
+async function deleteMyPost(id) {
+  if (!confirm("Delete this post?")) return;
+
+  const res = await fetch("/api/my/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ id })
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Delete failed");
+    return;
+  }
+
+  alert("Deleted.");
+  loadMyPosts();
 }
