@@ -24,6 +24,10 @@ export default {
       return adminCreateResearchPaper(request, env);
     }
 
+    if (url.pathname === "/api/admin/study/create" && request.method === "POST") {
+      return adminCreateStudyPost(request, env);
+    }
+
     if (url.pathname === "/api/admin/methodology/save" && request.method === "POST") {
       return adminSaveMethodologyPage(request, env);
     }
@@ -608,6 +612,53 @@ async function adminCreateResearchPaper(request, env) {
   return json({
     ok: true,
     message: "Research paper saved."
+  });
+}
+
+async function adminCreateStudyPost(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json();
+  const title = String(data.title || "").trim();
+
+  if (!title) {
+    return json({ ok: false, error: "Title is required." }, 400);
+  }
+
+  const studyData = {
+    category: data.category || "",
+    tags: data.tags || "",
+    body: data.body || "",
+    note: data.note || "",
+    link: data.link || ""
+  };
+
+  await env.DB.prepare(`
+    INSERT INTO posts (
+      id,
+      section,
+      type,
+      title,
+      body,
+      link,
+      author_name,
+      author_email,
+      linkedin_url,
+      status
+    )
+    VALUES (?, 'study', 'study_post', ?, ?, ?, 'Admin', '', '', 'published')
+  `).bind(
+    crypto.randomUUID(),
+    title,
+    JSON.stringify(studyData),
+    data.link || ""
+  ).run();
+
+  return json({
+    ok: true,
+    message: "Study post saved."
   });
 }
 
