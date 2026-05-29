@@ -78,6 +78,31 @@ function redirect(location, headers = {}) {
   });
 }
 
+function isBlockedAI(request) {
+  const ua = request.headers.get("User-Agent") || "";
+
+  const blocked = [
+    "GPTBot",
+    "ChatGPT-User",
+    "Google-Extended",
+    "CCBot",
+    "ClaudeBot",
+    "PerplexityBot",
+    "anthropic-ai",
+    "Bytespider",
+    "Amazonbot",
+    "Applebot-Extended",
+    "Meta-ExternalAgent",
+    "FacebookBot",
+    "Diffbot",
+    "cohere-ai",
+    "omgili",
+    "YouBot"
+  ];
+
+  return blocked.some(bot => ua.toLowerCase().includes(bot.toLowerCase()));
+}
+
 function getCookie(request, name) {
   const cookie = request.headers.get("Cookie") || "";
   const parts = cookie.split(";").map(v => v.trim());
@@ -269,6 +294,13 @@ async function listPosts(request, env) {
   const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
   const limit = 20;
   const offset = (page - 1) * limit;
+
+  if (section === "research" && isBlockedAI(request)) {
+    return json({
+      ok: false,
+      error: "Access denied."
+    }, 403);
+  }
 
   let where = "WHERE section = ? AND status = 'published'";
   const params = [section];
@@ -630,7 +662,6 @@ async function adminCreateBlogPost(request, env) {
   }
 
   const data = await request.json();
-
   const title = String(data.title || "").trim();
 
   if (!title) {
