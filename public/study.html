@@ -25,7 +25,7 @@
 
   <div class="category-tabs">
     <button class="tab-btn active" onclick="showStudyCategory('study_post', this)">Study</button>
-    <button class="tab-btn" onclick="showStudyCategory('methodology', this)">Methodology</button>
+    <button class="tab-btn" onclick="showStudyCategory('methodology_page', this)">Methodology</button>
     <button class="tab-btn" onclick="showStudyCategory('blog', this)">Blog</button>
   </div>
 
@@ -51,6 +51,10 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function formatText(value) {
+  return escapeHtml(value).replaceAll("\n", "<br>");
+}
+
 function parseJsonBody(body) {
   try {
     return JSON.parse(body || "{}");
@@ -73,7 +77,7 @@ function showStudyCategory(type, button) {
     description.textContent = "General study materials and learning posts will be organized here.";
   }
 
-  if (type === "methodology") {
+  if (type === "methodology_page") {
     title.textContent = "Methodology";
     description.textContent = "Curated methodology notes, useful websites, workflows, and reference links.";
   }
@@ -104,28 +108,40 @@ async function loadPosts() {
   }
 
   if (!data.posts.length) {
-    box.innerHTML = "<p>No posts yet.</p>";
+    box.innerHTML = "<p>No content yet.</p>";
+    return;
+  }
+
+  if (currentType === "methodology_page") {
+    const page = data.posts[0];
+
+    box.innerHTML = `
+      <article class="card">
+        <h2>${escapeHtml(page.title || "Methodology")}</h2>
+        <div class="post-body">${formatText(page.body)}</div>
+      </article>
+    `;
     return;
   }
 
   box.innerHTML = data.posts.map(post => {
-    const info = parseJsonBody(post.body);
+    if (post.type === "blog") {
+      const info = parseJsonBody(post.body);
 
-    if (post.type === "methodology" || post.type === "blog") {
       return `
         <article class="post-card">
           <div class="post-card-header">
             <div>
               <h3>${escapeHtml(post.title)}</h3>
               <p class="post-meta">
-                ${escapeHtml(post.type)} · ${escapeHtml(info.websiteName)} · ${escapeHtml(info.author)}
+                ${escapeHtml(info.websiteName)} · ${escapeHtml(info.author)}
               </p>
             </div>
-            <span class="post-badge">${escapeHtml(post.type)}</span>
+            <span class="post-badge">Blog</span>
           </div>
 
           ${info.tags ? `<p><strong>Tags:</strong> ${escapeHtml(info.tags)}</p>` : ""}
-          ${info.summary ? `<p class="post-body">${escapeHtml(info.summary)}</p>` : ""}
+          ${info.summary ? `<p class="post-body">${formatText(info.summary)}</p>` : ""}
           ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Original Link</a></p>` : ""}
         </article>
       `;
@@ -136,12 +152,12 @@ async function loadPosts() {
         <div class="post-card-header">
           <div>
             <h3>${escapeHtml(post.title)}</h3>
-            <p class="post-meta">${escapeHtml(post.author_name)} · ${escapeHtml(post.type)}</p>
+            <p class="post-meta">${escapeHtml(post.author_name)} · Study</p>
           </div>
-          <span class="post-badge">${escapeHtml(post.type)}</span>
+          <span class="post-badge">Study</span>
         </div>
 
-        <p class="post-body">${escapeHtml(post.body)}</p>
+        <p class="post-body">${formatText(post.body)}</p>
         ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>` : ""}
       </article>
     `;
