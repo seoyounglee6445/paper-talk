@@ -21,7 +21,7 @@
 
 <main class="container">
   <h1>Site Admin</h1>
-  <p>Manage research papers, methodology page, blog posts, approvals, and deletion.</p>
+  <p>Manage research papers, study posts, methodology page, blog posts, approvals, and deletion.</p>
 
   <section class="card write-form">
     <h2>New Research Paper</h2>
@@ -93,6 +93,50 @@
       </div>
 
       <button type="submit">Save Research Paper</button>
+    </form>
+  </section>
+
+  <section class="card write-form">
+    <h2>New Study Post</h2>
+    <p>Use this for general study materials and learning posts.</p>
+
+    <form onsubmit="createStudyPost(event)">
+      <div>
+        <label>Admin Key</label>
+        <input id="studyAdminKey" type="password" placeholder="Enter admin key" required>
+      </div>
+
+      <div>
+        <label>Title</label>
+        <input name="title" required placeholder="Study post title">
+      </div>
+
+      <div>
+        <label>Category</label>
+        <input name="category" placeholder="Statistics, R, Python, genomics...">
+      </div>
+
+      <div>
+        <label>Tags</label>
+        <input name="tags" placeholder="survival analysis, RNA-seq, single-cell">
+      </div>
+
+      <div>
+        <label>Source / Reference Link</label>
+        <input name="link" placeholder="https://...">
+      </div>
+
+      <div class="full-row">
+        <label>Content</label>
+        <textarea name="body" rows="14" placeholder="Write your study material here."></textarea>
+      </div>
+
+      <div class="full-row">
+        <label>Note</label>
+        <textarea name="note" placeholder="Optional admin note"></textarea>
+      </div>
+
+      <button type="submit">Save Study Post</button>
     </form>
   </section>
 
@@ -235,6 +279,7 @@ function getAnyAdminKey() {
   return (
     document.getElementById("adminKey").value ||
     document.getElementById("researchAdminKey").value ||
+    document.getElementById("studyAdminKey").value ||
     document.getElementById("methodologyAdminKey").value ||
     document.getElementById("blogAdminKey").value
   );
@@ -264,6 +309,34 @@ async function createResearchPaper(e) {
   }
 
   alert("Research paper saved.");
+  e.target.reset();
+  loadAdminPosts();
+}
+
+async function createStudyPost(e) {
+  e.preventDefault();
+
+  const key = document.getElementById("studyAdminKey").value;
+  const form = new FormData(e.target);
+  const data = Object.fromEntries(form.entries());
+
+  const res = await fetch("/api/admin/study/create", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify(data)
+  });
+
+  const result = await res.json();
+
+  if (!result.ok) {
+    alert(result.error || "Save failed");
+    return;
+  }
+
+  alert("Study post saved.");
   e.target.reset();
   loadAdminPosts();
 }
@@ -352,7 +425,11 @@ async function loadAdminPosts() {
   }
 
   box.innerHTML = data.posts.map(post => {
-    const isJsonType = post.type === "paper" || post.type === "blog";
+    const isJsonType =
+      post.type === "paper" ||
+      post.type === "blog" ||
+      post.type === "study_post";
+
     const parsed = isJsonType ? parseJsonBody(post.body) : null;
 
     return `
@@ -374,6 +451,16 @@ async function loadAdminPosts() {
               <p><strong>Authors:</strong> ${escapeHtml(parsed.authors)}</p>
               <p><strong>Journal:</strong> ${escapeHtml(parsed.journal)}</p>
               <p class="post-body">${escapeHtml(parsed.abstract)}</p>
+            `
+            : ""
+        }
+
+        ${
+          post.type === "study_post" && parsed
+            ? `
+              <p><strong>Category:</strong> ${escapeHtml(parsed.category)}</p>
+              <p><strong>Tags:</strong> ${escapeHtml(parsed.tags)}</p>
+              <p class="post-body">${escapeHtml(parsed.body).replaceAll("\\n", "<br>")}</p>
             `
             : ""
         }
@@ -401,8 +488,29 @@ async function loadAdminPosts() {
             : ""
         }
 
-        ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>` : ""}
-        ${parsed && parsed.pdfLink ? `<p><a class="btn" href="${escapeHtml(parsed.pdfLink)}" target="_blank">Open PDF/File</a></p>` : ""}
+        ${
+          post.link
+            ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>`
+            : ""
+        }
+
+        ${
+          parsed && parsed.link
+            ? `<p><a class="btn" href="${escapeHtml(parsed.link)}" target="_blank">Open Link</a></p>`
+            : ""
+        }
+
+        ${
+          parsed && parsed.sourceUrl
+            ? `<p><a class="btn" href="${escapeHtml(parsed.sourceUrl)}" target="_blank">Open Source</a></p>`
+            : ""
+        }
+
+        ${
+          parsed && parsed.pdfLink
+            ? `<p><a class="btn" href="${escapeHtml(parsed.pdfLink)}" target="_blank">Open PDF/File</a></p>`
+            : ""
+        }
 
         <p><strong>Author:</strong> ${escapeHtml(post.author_name)}</p>
         <p><strong>Email:</strong> ${escapeHtml(post.author_email)}</p>
