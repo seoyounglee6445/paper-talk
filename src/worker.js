@@ -8,6 +8,7 @@ export default {
     if (url.pathname === "/api/me") return apiMe(request, env);
 
     if (url.pathname === "/api/delete-account" && request.method === "POST") return deleteAccount(request, env);
+
     if (url.pathname === "/api/my/posts" && request.method === "GET") return myPosts(request, env);
     if (url.pathname === "/api/my/update" && request.method === "POST") return updateMyPost(request, env);
     if (url.pathname === "/api/my/delete" && request.method === "POST") return deleteMyPost(request, env);
@@ -19,24 +20,30 @@ export default {
     if (url.pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
     if (url.pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
     if (url.pathname === "/api/admin/research/create" && request.method === "POST") return adminCreateResearchPaper(request, env);
+    if (url.pathname === "/api/admin/study/create" && request.method === "POST") return adminCreateStudyContent(request, env);
 
     if (url.pathname === "/admin" || url.pathname === "/admin.html") {
       return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
     }
+
     if (url.pathname === "/research") {
       return env.ASSETS.fetch(new Request(new URL("/research.html", request.url)));
     }
+
     if (url.pathname === "/career") {
       return env.ASSETS.fetch(new Request(new URL("/career.html", request.url)));
     }
+
     if (url.pathname === "/study") {
       return env.ASSETS.fetch(new Request(new URL("/study.html", request.url)));
     }
+
     if (url.pathname === "/community") {
       return env.ASSETS.fetch(new Request(new URL("/community.html", request.url)));
     }
 
     if (env.ASSETS) return env.ASSETS.fetch(request);
+
     return new Response("Not found", { status: 404 });
   }
 };
@@ -161,7 +168,9 @@ async function googleCallback(request, env) {
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
     body: new URLSearchParams({
       code,
       client_id: env.GOOGLE_CLIENT_ID,
@@ -174,11 +183,17 @@ async function googleCallback(request, env) {
   const token = await tokenRes.json();
 
   if (!token.access_token) {
-    return json({ ok: false, error: "Google token exchange failed", token }, 400);
+    return json({
+      ok: false,
+      error: "Google token exchange failed",
+      token
+    }, 400);
   }
 
   const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-    headers: { Authorization: `Bearer ${token.access_token}` }
+    headers: {
+      Authorization: `Bearer ${token.access_token}`
+    }
   });
 
   const googleUser = await userRes.json();
@@ -199,7 +214,10 @@ async function googleCallback(request, env) {
   `).bind(user.id, user.name, user.email).run();
 
   const cookie = await createSessionCookie(user, env);
-  return redirect("/", { "Set-Cookie": cookie });
+
+  return redirect("/", {
+    "Set-Cookie": cookie
+  });
 }
 
 function logout() {
@@ -215,14 +233,22 @@ async function apiMe(request, env) {
 
 async function deleteAccount(request, env) {
   const user = await getSession(request, env);
-  if (!user) return json({ ok: false, error: "Please sign in first." }, 401);
 
-  await env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(user.id).run();
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  await env.DB.prepare(`
+    DELETE FROM users
+    WHERE id = ?
+  `).bind(user.id).run();
 
   return json(
     { ok: true },
     200,
-    { "Set-Cookie": "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0" }
+    {
+      "Set-Cookie": "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+    }
   );
 }
 
@@ -231,7 +257,7 @@ async function listPosts(request, env) {
   const section = url.searchParams.get("section") || "research";
   const type = url.searchParams.get("type") || "";
   const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
-  const limit = 10;
+  const limit = 20;
   const offset = (page - 1) * limit;
 
   let where = "WHERE section = ? AND status = 'published'";
@@ -243,11 +269,14 @@ async function listPosts(request, env) {
   }
 
   const count = await env.DB.prepare(`
-    SELECT COUNT(*) AS total FROM posts ${where}
+    SELECT COUNT(*) AS total
+    FROM posts
+    ${where}
   `).bind(...params).first();
 
   const posts = await env.DB.prepare(`
-    SELECT * FROM posts
+    SELECT *
+    FROM posts
     ${where}
     ORDER BY datetime(created_at) DESC
     LIMIT ? OFFSET ?
@@ -265,23 +294,39 @@ async function listPosts(request, env) {
 
 async function createPost(request, env) {
   const user = await getSession(request, env);
+
   if (!user) {
-    return json({ ok: false, error: "Please sign in with Google before writing a post." }, 401);
+    return json({
+      ok: false,
+      error: "Please sign in with Google before writing a post."
+    }, 401);
   }
 
   const data = await request.json();
+
   const section = String(data.section || "").trim();
   const type = String(data.type || "").trim();
   const title = String(data.title || "").trim();
 
   if (!section || !type || !title) {
-    return json({ ok: false, error: "section, type, and title are required." }, 400);
+    return json({
+      ok: false,
+      error: "section, type, and title are required."
+    }, 400);
   }
 
   await env.DB.prepare(`
     INSERT INTO posts (
-      id, section, type, title, body, link,
-      author_name, author_email, linkedin_url, status
+      id,
+      section,
+      type,
+      title,
+      body,
+      link,
+      author_name,
+      author_email,
+      linkedin_url,
+      status
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
   `).bind(
@@ -296,37 +341,58 @@ async function createPost(request, env) {
     data.linkedinUrl || ""
   ).run();
 
-  return json({ ok: true, message: "Submitted. Your post will be published after admin approval." });
+  return json({
+    ok: true,
+    message: "Submitted. Your post will be published after admin approval."
+  });
 }
 
 async function myPosts(request, env) {
   const user = await getSession(request, env);
-  if (!user) return json({ ok: false, error: "Please sign in first." }, 401);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
 
   const posts = await env.DB.prepare(`
-    SELECT * FROM posts
+    SELECT *
+    FROM posts
     WHERE author_email = ?
     ORDER BY datetime(created_at) DESC
   `).bind(user.email).all();
 
-  return json({ ok: true, posts: posts.results });
+  return json({
+    ok: true,
+    posts: posts.results
+  });
 }
 
 async function updateMyPost(request, env) {
   const user = await getSession(request, env);
-  if (!user) return json({ ok: false, error: "Please sign in first." }, 401);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
 
   const data = await request.json();
   const title = String(data.title || "").trim();
 
   if (!data.id || !title) {
-    return json({ ok: false, error: "Post ID and title are required." }, 400);
+    return json({
+      ok: false,
+      error: "Post ID and title are required."
+    }, 400);
   }
 
   await env.DB.prepare(`
     UPDATE posts
-    SET title = ?, body = ?, link = ?, linkedin_url = ?, status = 'pending'
-    WHERE id = ? AND author_email = ?
+    SET title = ?,
+        body = ?,
+        link = ?,
+        linkedin_url = ?,
+        status = 'pending'
+    WHERE id = ?
+      AND author_email = ?
   `).bind(
     title,
     data.body || "",
@@ -336,19 +402,29 @@ async function updateMyPost(request, env) {
     user.email
   ).run();
 
-  return json({ ok: true, message: "Updated. Your post needs admin approval again." });
+  return json({
+    ok: true,
+    message: "Updated. Your post needs admin approval again."
+  });
 }
 
 async function deleteMyPost(request, env) {
   const user = await getSession(request, env);
-  if (!user) return json({ ok: false, error: "Please sign in first." }, 401);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
 
   const data = await request.json();
-  if (!data.id) return json({ ok: false, error: "Post ID is required." }, 400);
+
+  if (!data.id) {
+    return json({ ok: false, error: "Post ID is required." }, 400);
+  }
 
   await env.DB.prepare(`
     DELETE FROM posts
-    WHERE id = ? AND author_email = ?
+    WHERE id = ?
+      AND author_email = ?
   `).bind(data.id, user.email).run();
 
   return json({ ok: true });
@@ -357,11 +433,14 @@ async function deleteMyPost(request, env) {
 function isAdmin(request, env) {
   const url = new URL(request.url);
   const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
+
   return Boolean(key && env.ADMIN_KEY && key === env.ADMIN_KEY);
 }
 
 async function adminListPosts(request, env) {
-  if (!isAdmin(request, env)) return json({ ok: false, error: "Unauthorized" }, 401);
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
 
   const url = new URL(request.url);
   const section = url.searchParams.get("section") || "";
@@ -387,22 +466,32 @@ async function adminListPosts(request, env) {
   }
 
   const posts = await env.DB.prepare(`
-    SELECT * FROM posts
+    SELECT *
+    FROM posts
     ${where}
     ORDER BY datetime(created_at) DESC
   `).bind(...params).all();
 
-  return json({ ok: true, posts: posts.results });
+  return json({
+    ok: true,
+    posts: posts.results
+  });
 }
 
 async function adminApprovePost(request, env) {
-  if (!isAdmin(request, env)) return json({ ok: false, error: "Unauthorized" }, 401);
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
 
   const data = await request.json();
-  if (!data.id) return json({ ok: false, error: "Post ID is required." }, 400);
+
+  if (!data.id) {
+    return json({ ok: false, error: "Post ID is required." }, 400);
+  }
 
   await env.DB.prepare(`
-    UPDATE posts SET status = 'published'
+    UPDATE posts
+    SET status = 'published'
     WHERE id = ?
   `).bind(data.id).run();
 
@@ -410,10 +499,15 @@ async function adminApprovePost(request, env) {
 }
 
 async function adminDeletePost(request, env) {
-  if (!isAdmin(request, env)) return json({ ok: false, error: "Unauthorized" }, 401);
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
 
   const data = await request.json();
-  if (!data.id) return json({ ok: false, error: "Post ID is required." }, 400);
+
+  if (!data.id) {
+    return json({ ok: false, error: "Post ID is required." }, 400);
+  }
 
   await env.DB.prepare(`
     DELETE FROM posts
@@ -424,12 +518,16 @@ async function adminDeletePost(request, env) {
 }
 
 async function adminCreateResearchPaper(request, env) {
-  if (!isAdmin(request, env)) return json({ ok: false, error: "Unauthorized" }, 401);
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
 
   const data = await request.json();
   const title = String(data.title || "").trim();
 
-  if (!title) return json({ ok: false, error: "Title is required." }, 400);
+  if (!title) {
+    return json({ ok: false, error: "Title is required." }, 400);
+  }
 
   const researchData = {
     year: data.year || "",
@@ -446,8 +544,16 @@ async function adminCreateResearchPaper(request, env) {
 
   await env.DB.prepare(`
     INSERT INTO posts (
-      id, section, type, title, body, link,
-      author_name, author_email, linkedin_url, status
+      id,
+      section,
+      type,
+      title,
+      body,
+      link,
+      author_name,
+      author_email,
+      linkedin_url,
+      status
     )
     VALUES (?, 'research', 'paper', ?, ?, ?, 'Admin', '', '', 'published')
   `).bind(
@@ -457,5 +563,63 @@ async function adminCreateResearchPaper(request, env) {
     data.articleLink || ""
   ).run();
 
-  return json({ ok: true, message: "Research paper saved." });
+  return json({
+    ok: true,
+    message: "Research paper saved."
+  });
+}
+
+async function adminCreateStudyContent(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json();
+
+  const type = String(data.type || "").trim();
+  const title = String(data.title || "").trim();
+
+  if (!["methodology", "blog"].includes(type)) {
+    return json({ ok: false, error: "Invalid study type." }, 400);
+  }
+
+  if (!title) {
+    return json({ ok: false, error: "Title is required." }, 400);
+  }
+
+  const bodyData = {
+    websiteName: data.websiteName || "",
+    author: data.author || "",
+    summary: data.summary || "",
+    sourceUrl: data.sourceUrl || "",
+    tags: data.tags || "",
+    note: data.note || ""
+  };
+
+  await env.DB.prepare(`
+    INSERT INTO posts (
+      id,
+      section,
+      type,
+      title,
+      body,
+      link,
+      author_name,
+      author_email,
+      linkedin_url,
+      status
+    )
+    VALUES (?, 'study', ?, ?, ?, ?, 'Admin', '', '', 'published')
+  `).bind(
+    crypto.randomUUID(),
+    type,
+    title,
+    JSON.stringify(bodyData),
+    data.sourceUrl || ""
+  ).run();
+
+  return json({
+    ok: true,
+    message: "Study content saved."
+  });
 }
