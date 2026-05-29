@@ -45,19 +45,50 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  loadPosts({
-    section: "research",
-    target: "homePapers"
-  });
-
-  loadPosts({
-    section: "community",
-    type: "conference_notice",
-    target: "homeConference"
-  });
-
+  loadHomePapers();
+  loadHomeConference();
   loadHomeLinkedIn();
 });
+
+async function loadHomePapers() {
+  const res = await fetch("/api/posts?section=research&type=paper&page=1");
+  const data = await res.json();
+
+  const box = document.getElementById("homePapers");
+  if (!box) return;
+
+  if (!data.posts || data.posts.length === 0) {
+    box.innerHTML = `<p class="empty-posts">No papers yet.</p>`;
+    return;
+  }
+
+  box.innerHTML = data.posts.slice(0, 10).map(p => `
+    <div class="home-list-item">
+      <h3>${escapeHtml(p.title)}</h3>
+      <p>Research Paper · ${new Date(p.created_at).toLocaleDateString()}</p>
+    </div>
+  `).join("");
+}
+
+async function loadHomeConference() {
+  const res = await fetch("/api/posts?section=community&type=conference_notice&page=1");
+  const data = await res.json();
+
+  const box = document.getElementById("homeConference");
+  if (!box) return;
+
+  if (!data.posts || data.posts.length === 0) {
+    box.innerHTML = `<p class="empty-posts">No conference notices yet.</p>`;
+    return;
+  }
+
+  box.innerHTML = data.posts.slice(0, 10).map(p => `
+    <div class="home-list-item">
+      <h3>${escapeHtml(p.title)}</h3>
+      <p>Conference Notice · ${new Date(p.created_at).toLocaleDateString()}</p>
+    </div>
+  `).join("");
+}
 
 async function loadHomeLinkedIn() {
   const res = await fetch("/api/posts?section=career&type=linkedin&page=1");
@@ -71,9 +102,7 @@ async function loadHomeLinkedIn() {
     return;
   }
 
-  const posts = data.posts.slice(0, 10);
-
-  box.innerHTML = posts.map(p => `
+  box.innerHTML = data.posts.slice(0, 10).map(p => `
     <div class="home-list-item">
       <h3>${escapeHtml(p.title)}</h3>
       <p>LinkedIn Promotion · ${new Date(p.created_at).toLocaleDateString()}</p>
