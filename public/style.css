@@ -395,3 +395,16 @@ textarea {
   font-weight: 900;
   color: var(--main-blue);
 }
+
+.home-mini-post {
+  padding: 22px;
+}
+
+.home-mini-post h3 {
+  font-size: 22px;
+}
+
+.home-mini-post .post-body,
+.home-mini-post .post-actions {
+  display: none;
+}
