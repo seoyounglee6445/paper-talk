@@ -21,17 +21,25 @@
 
 <main class="container">
   <h1>Site Admin</h1>
-  <p>Manage research papers, study posts, methodology page, blog posts, approvals, and deletion.</p>
+  <p>Manage research papers, study posts, methodology posts, blog posts, approvals, and deletion.</p>
+
+  <section class="card">
+    <h2>Admin Access</h2>
+    <p>Enter your admin key once. It will be saved for 1 hour.</p>
+
+    <label>Admin Key</label>
+    <input id="globalAdminKey" type="password" placeholder="Enter admin key">
+
+    <button onclick="saveAdminKey()">Save Admin Key</button>
+    <button class="danger-btn" onclick="clearAdminKey()">Clear Admin Key</button>
+
+    <p id="adminKeyStatus"></p>
+  </section>
 
   <section class="card write-form">
     <h2>New Research Paper</h2>
 
     <form onsubmit="createResearchPaper(event)">
-      <div>
-        <label>Admin Key</label>
-        <input id="researchAdminKey" type="password" placeholder="Enter admin key" required>
-      </div>
-
       <div>
         <label>Title</label>
         <input name="title" required placeholder="Paper title">
@@ -98,14 +106,8 @@
 
   <section class="card write-form">
     <h2>New Study Post</h2>
-    <p>Use this for general study materials and learning posts.</p>
 
     <form onsubmit="createStudyPost(event)">
-      <div>
-        <label>Admin Key</label>
-        <input id="studyAdminKey" type="password" placeholder="Enter admin key" required>
-      </div>
-
       <div>
         <label>Title</label>
         <input name="title" required placeholder="Study post title">
@@ -141,60 +143,47 @@
   </section>
 
   <section class="card write-form">
-  <h2>New Methodology Post</h2>
-  <p>Use this for methodology notes, workflows, tools, and reference links.</p>
+    <h2>New Methodology Post</h2>
 
-  <form onsubmit="saveMethodologyPage(event)">
-    <div>
-      <label>Admin Key</label>
-      <input id="methodologyAdminKey" type="password" placeholder="Enter admin key" required>
-    </div>
+    <form onsubmit="saveMethodologyPage(event)">
+      <div>
+        <label>Title</label>
+        <input name="title" required placeholder="Methodology post title">
+      </div>
 
-    <div>
-      <label>Title</label>
-      <input name="title" required placeholder="Methodology post title">
-    </div>
+      <div>
+        <label>Category</label>
+        <input name="category" placeholder="Single-cell, spatial, statistics...">
+      </div>
 
-    <div>
-      <label>Category</label>
-      <input name="category" placeholder="Single-cell, spatial, statistics...">
-    </div>
+      <div>
+        <label>Tags</label>
+        <input name="tags" placeholder="Seurat, Scanpy, survival analysis">
+      </div>
 
-    <div>
-      <label>Tags</label>
-      <input name="tags" placeholder="Seurat, Scanpy, survival analysis">
-    </div>
+      <div>
+        <label>Source / Reference Link</label>
+        <input name="link" placeholder="https://...">
+      </div>
 
-    <div>
-      <label>Source / Reference Link</label>
-      <input name="link" placeholder="https://...">
-    </div>
+      <div class="full-row">
+        <label>Content</label>
+        <textarea name="body" rows="14" placeholder="Write your methodology note here."></textarea>
+      </div>
 
-    <div class="full-row">
-      <label>Content</label>
-      <textarea name="body" rows="14" placeholder="Write your methodology note here."></textarea>
-    </div>
+      <div class="full-row">
+        <label>Note</label>
+        <textarea name="note" placeholder="Optional admin note"></textarea>
+      </div>
 
-    <div class="full-row">
-      <label>Note</label>
-      <textarea name="note" placeholder="Optional admin note"></textarea>
-    </div>
-
-    <button type="submit">Save Methodology Post</button>
-  </form>
-</section>
-  
+      <button type="submit">Save Methodology Post</button>
+    </form>
+  </section>
 
   <section class="card write-form">
     <h2>New Blog Post</h2>
-    <p>Use this for external blog/web articles.</p>
 
     <form onsubmit="createBlogPost(event)">
-      <div>
-        <label>Admin Key</label>
-        <input id="blogAdminKey" type="password" placeholder="Enter admin key" required>
-      </div>
-
       <div>
         <label>Title</label>
         <input name="title" required placeholder="Blog post title">
@@ -237,9 +226,6 @@
   <section class="card">
     <h2>Manage Posts</h2>
 
-    <label>Admin Key</label>
-    <input id="adminKey" type="password" placeholder="Enter admin key">
-
     <label>Section</label>
     <select id="sectionFilter">
       <option value="">All Sections</option>
@@ -254,7 +240,7 @@
       <option value="">All Categories</option>
       <option value="paper">Research Paper</option>
       <option value="study_post">Study</option>
-      <option value="methodology_page">Methodology Page</option>
+      <option value="methodology_page">Methodology</option>
       <option value="blog">Blog</option>
       <option value="linkedin">LinkedIn Promotion</option>
       <option value="job">Job Posting</option>
@@ -279,6 +265,10 @@
 </main>
 
 <script>
+const ADMIN_KEY_STORAGE = "paperTalkAdminKey";
+const ADMIN_KEY_EXPIRES = "paperTalkAdminKeyExpires";
+const ONE_HOUR = 60 * 60 * 1000;
+
 function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -296,20 +286,71 @@ function parseJsonBody(body) {
   }
 }
 
-function getAnyAdminKey() {
-  return (
-    document.getElementById("adminKey").value ||
-    document.getElementById("researchAdminKey").value ||
-    document.getElementById("studyAdminKey").value ||
-    document.getElementById("methodologyAdminKey").value ||
-    document.getElementById("blogAdminKey").value
-  );
+function saveAdminKey() {
+  const key = document.getElementById("globalAdminKey").value.trim();
+
+  if (!key) {
+    alert("Please enter admin key.");
+    return;
+  }
+
+  localStorage.setItem(ADMIN_KEY_STORAGE, key);
+  localStorage.setItem(ADMIN_KEY_EXPIRES, String(Date.now() + ONE_HOUR));
+
+  updateAdminKeyStatus();
+  alert("Admin key saved for 1 hour.");
+}
+
+function clearAdminKey() {
+  localStorage.removeItem(ADMIN_KEY_STORAGE);
+  localStorage.removeItem(ADMIN_KEY_EXPIRES);
+  document.getElementById("globalAdminKey").value = "";
+  updateAdminKeyStatus();
+}
+
+function getAdminKey() {
+  const key = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
+  const expires = Number(localStorage.getItem(ADMIN_KEY_EXPIRES) || 0);
+
+  if (!key || Date.now() > expires) {
+    clearAdminKey();
+    return "";
+  }
+
+  return key;
+}
+
+function requireAdminKey() {
+  const key = getAdminKey();
+
+  if (!key) {
+    alert("Please save your admin key first.");
+    return "";
+  }
+
+  return key;
+}
+
+function updateAdminKeyStatus() {
+  const status = document.getElementById("adminKeyStatus");
+  const key = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
+  const expires = Number(localStorage.getItem(ADMIN_KEY_EXPIRES) || 0);
+
+  if (!key || Date.now() > expires) {
+    status.textContent = "Admin key is not saved.";
+    return;
+  }
+
+  const minutesLeft = Math.max(Math.ceil((expires - Date.now()) / 60000), 0);
+  status.textContent = `Admin key saved. Expires in about ${minutesLeft} minutes.`;
 }
 
 async function createResearchPaper(e) {
   e.preventDefault();
 
-  const key = document.getElementById("researchAdminKey").value;
+  const key = requireAdminKey();
+  if (!key) return;
+
   const form = new FormData(e.target);
   const data = Object.fromEntries(form.entries());
 
@@ -337,7 +378,9 @@ async function createResearchPaper(e) {
 async function createStudyPost(e) {
   e.preventDefault();
 
-  const key = document.getElementById("studyAdminKey").value;
+  const key = requireAdminKey();
+  if (!key) return;
+
   const form = new FormData(e.target);
   const data = Object.fromEntries(form.entries());
 
@@ -365,7 +408,9 @@ async function createStudyPost(e) {
 async function saveMethodologyPage(e) {
   e.preventDefault();
 
-  const key = document.getElementById("methodologyAdminKey").value;
+  const key = requireAdminKey();
+  if (!key) return;
+
   const form = new FormData(e.target);
   const data = Object.fromEntries(form.entries());
 
@@ -385,14 +430,17 @@ async function saveMethodologyPage(e) {
     return;
   }
 
-  alert("Methodology page saved.");
+  alert("Methodology post saved.");
+  e.target.reset();
   loadAdminPosts();
 }
 
 async function createBlogPost(e) {
   e.preventDefault();
 
-  const key = document.getElementById("blogAdminKey").value;
+  const key = requireAdminKey();
+  if (!key) return;
+
   const form = new FormData(e.target);
   const data = Object.fromEntries(form.entries());
 
@@ -418,7 +466,8 @@ async function createBlogPost(e) {
 }
 
 async function loadAdminPosts() {
-  const key = getAnyAdminKey();
+  const key = requireAdminKey();
+  if (!key) return;
 
   const section = document.getElementById("sectionFilter").value;
   const type = document.getElementById("typeFilter").value;
@@ -449,7 +498,8 @@ async function loadAdminPosts() {
     const isJsonType =
       post.type === "paper" ||
       post.type === "blog" ||
-      post.type === "study_post";
+      post.type === "study_post" ||
+      post.type === "methodology_page";
 
     const parsed = isJsonType ? parseJsonBody(post.body) : null;
 
@@ -477,7 +527,7 @@ async function loadAdminPosts() {
         }
 
         ${
-          post.type === "study_post" && parsed
+          (post.type === "study_post" || post.type === "methodology_page") && parsed
             ? `
               <p><strong>Category:</strong> ${escapeHtml(parsed.category)}</p>
               <p><strong>Tags:</strong> ${escapeHtml(parsed.tags)}</p>
@@ -498,13 +548,7 @@ async function loadAdminPosts() {
         }
 
         ${
-          post.type === "methodology_page"
-            ? `<p class="post-body">${escapeHtml(post.body).replaceAll("\\n", "<br>")}</p>`
-            : ""
-        }
-
-        ${
-          !isJsonType && post.type !== "methodology_page"
+          !isJsonType
             ? `<p class="post-body">${escapeHtml(post.body)}</p>`
             : ""
         }
@@ -546,7 +590,8 @@ async function loadAdminPosts() {
 }
 
 async function approvePost(id) {
-  const key = getAnyAdminKey();
+  const key = requireAdminKey();
+  if (!key) return;
 
   const res = await fetch("/api/admin/approve", {
     method: "POST",
@@ -570,7 +615,8 @@ async function approvePost(id) {
 async function deletePost(id) {
   if (!confirm("Delete this post?")) return;
 
-  const key = getAnyAdminKey();
+  const key = requireAdminKey();
+  if (!key) return;
 
   const res = await fetch("/api/admin/delete", {
     method: "POST",
@@ -590,6 +636,16 @@ async function deletePost(id) {
 
   loadAdminPosts();
 }
+
+window.addEventListener("load", () => {
+  const key = getAdminKey();
+
+  if (key) {
+    document.getElementById("globalAdminKey").value = key;
+  }
+
+  updateAdminKeyStatus();
+});
 </script>
 </body>
 </html>
