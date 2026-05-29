@@ -43,6 +43,10 @@ export default {
       return adminDeletePost(request, env);
     }
 
+    if (url.pathname === "/api/admin/research/create" && request.method === "POST") {
+      return adminCreateResearchPaper(request, env);
+    }
+
     if (env.ASSETS) return env.ASSETS.fetch(request);
 
     return new Response("Not found", { status: 404 });
@@ -517,4 +521,56 @@ async function adminDeletePost(request, env) {
   `).bind(data.id).run();
 
   return json({ ok: true });
+}
+
+async function adminCreateResearchPaper(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json();
+  const title = String(data.title || "").trim();
+
+  if (!title) {
+    return json({ ok: false, error: "Title is required." }, 400);
+  }
+
+  const researchData = {
+    year: data.year || "",
+    authors: data.authors || "",
+    journal: data.journal || "",
+    abstract: data.abstract || "",
+    category: data.category || "",
+    figures: data.figures || "",
+    pdfLink: data.pdfLink || "",
+    tags: data.tags || "",
+    description: data.description || "",
+    note: data.note || ""
+  };
+
+  await env.DB.prepare(`
+    INSERT INTO posts (
+      id,
+      section,
+      type,
+      title,
+      body,
+      link,
+      author_name,
+      author_email,
+      linkedin_url,
+      status
+    )
+    VALUES (?, 'research', 'paper', ?, ?, ?, 'Admin', '', '', 'published')
+  `).bind(
+    crypto.randomUUID(),
+    title,
+    JSON.stringify(researchData),
+    data.articleLink || ""
+  ).run();
+
+  return json({
+    ok: true,
+    message: "Research paper saved."
+  });
 }
