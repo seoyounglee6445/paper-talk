@@ -23,20 +23,13 @@
   <div id="authBox" class="auth-box"></div>
 
   <h1>Career</h1>
-  <p>LinkedIn promotion, job postings, and curated job search websites.</p>
+  <p>LinkedIn promotion, job postings, job websites, and research collaboration matching.</p>
 
   <div class="mini-tabs">
-    <button class="mini-tab active" onclick="showCareer('linkedin', this)">
-      LinkedIn Promotion
-    </button>
-
-    <button class="mini-tab" onclick="showCareer('job', this)">
-      Job Posting
-    </button>
-
-    <button class="mini-tab" onclick="showCareer('jobsites', this)">
-      Job Websites
-    </button>
+    <button class="mini-tab active" onclick="showCareer('linkedin', this)">LinkedIn Promotion</button>
+    <button class="mini-tab" onclick="showCareer('job', this)">Job Posting</button>
+    <button class="mini-tab" onclick="showCareer('jobsites', this)">Job Websites</button>
+    <button class="mini-tab" onclick="showCareer('collaboration', this)">Collaboration Hub</button>
   </div>
 
   <div class="toolbar">
@@ -56,6 +49,7 @@
           <option value="linkedin">LinkedIn Promotion</option>
           <option value="job">Job Posting</option>
           <option value="jobsite">Job Website</option>
+          <option value="collaboration">Collaboration Hub</option>
         </select>
       </div>
 
@@ -123,6 +117,12 @@
 
     <div id="jobsitePosts"></div>
   </section>
+
+  <section class="card career-panel" id="collaboration" style="display:none;">
+    <h2>Collaboration Hub</h2>
+    <p>Find research collaborators, project partners, journal club members, and analysis teammates.</p>
+    <div id="collaborationPosts"></div>
+  </section>
 </main>
 
 <script>
@@ -154,7 +154,9 @@ function toggleLinkedInField() {
 
 function filterCareerPosts() {
   const keyword = document.getElementById("careerSearch").value.toLowerCase();
-  const cards = document.querySelectorAll("#linkedinPosts .card, #jobPosts .card, #jobsitePosts .card");
+  const cards = document.querySelectorAll(
+    "#linkedinPosts .post-card, #jobPosts .post-card, #jobsitePosts .post-card, #collaborationPosts .post-card"
+  );
 
   cards.forEach(card => {
     const text = card.textContent.toLowerCase();
@@ -181,6 +183,12 @@ document.addEventListener("DOMContentLoaded", () => {
     section: "career",
     type: "jobsite",
     target: "jobsitePosts"
+  });
+
+  loadPosts({
+    section: "career",
+    type: "collaboration",
+    target: "collaborationPosts"
   });
 });
 </script>
