@@ -9,6 +9,7 @@ async function loadAuth() {
     box.innerHTML = `
       <span class="auth-name">Signed in as ${escapeHtml(data.user.name)}</span>
       <a class="btn" href="/auth/logout">Logout</a>
+      <button class="danger-btn" onclick="deleteAccount()">Delete Account</button>
     `;
   } else {
     box.innerHTML = `<a class="btn" href="/auth/google">Sign in with Google</a>`;
@@ -26,11 +27,10 @@ async function loadPosts({ section, type = "", page = 1, target = "postList" }) 
   const data = await res.json();
 
   const box = document.getElementById(target);
-
   if (!box) return;
 
   if (!data.posts || data.posts.length === 0) {
-    box.innerHTML = "<p>No posts yet.</p>";
+    box.innerHTML = `<p class="empty-posts">No posts yet.</p>`;
     return;
   }
 
@@ -56,30 +56,64 @@ async function loadPosts({ section, type = "", page = 1, target = "postList" }) 
 }
 
 function renderPost(p) {
+  const linkUrl = safeUrl(p.link);
+  const linkedinUrl = safeUrl(p.linkedin_url);
+
   return `
-    <article class="card">
-      <h3>${escapeHtml(p.title)}</h3>
+    <article class="post-card">
+      <div class="post-card-header">
+        <div>
+          <h3>${escapeHtml(p.title)}</h3>
+          <p class="post-meta">
+            ${labelType(p.type)} · ${formatDate(p.created_at)}
+          </p>
+        </div>
 
-      <p class="meta">
-        ${escapeHtml(p.type)} · ${new Date(p.created_at).toLocaleDateString()}
-      </p>
+        <span class="post-badge">${labelType(p.type)}</span>
+      </div>
 
-      ${p.author_name ? `<p>By ${escapeHtml(p.author_name)}</p>` : ""}
-      ${p.body ? `<p>${escapeHtml(p.body)}</p>` : ""}
+      ${p.author_name ? `<p class="post-author">By ${escapeHtml(p.author_name)}</p>` : ""}
 
-      ${
-        p.link
-          ? `<p><a class="btn" href="${escapeHtml(p.link)}" target="_blank">Open Link</a></p>`
-          : ""
-      }
+      ${p.body ? `<p class="post-body">${escapeHtml(p.body)}</p>` : ""}
 
-      ${
-        p.linkedin_url
-          ? `<p><a class="btn" href="${escapeHtml(p.linkedin_url)}" target="_blank">LinkedIn Profile</a></p>`
-          : ""
-      }
+      <div class="post-actions">
+        ${linkUrl ? `<a class="btn" href="${linkUrl}" target="_blank" rel="noopener noreferrer">Open Link</a>` : ""}
+        ${linkedinUrl ? `<a class="btn" href="${linkedinUrl}" target="_blank" rel="noopener noreferrer">LinkedIn Profile</a>` : ""}
+      </div>
     </article>
   `;
+}
+
+function safeUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return escapeHtml(url);
+  }
+
+  return escapeHtml("https://" + url);
+}
+
+function labelType(type) {
+  const labels = {
+    linkedin: "LinkedIn Promotion",
+    job: "Job Posting",
+    jobsite: "Job Website",
+    question: "Question / Discussion",
+    conference_notice: "Conference Notice",
+    paper: "Research Paper",
+    study_post: "Study",
+    methodology: "Methodology",
+    blog: "Blog"
+  };
+
+  return labels[type] || escapeHtml(type);
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleDateString();
 }
 
 function escapeHtml(value) {
@@ -115,4 +149,22 @@ async function submitPost(e) {
   alert("Submitted! Your post will be published after admin approval.");
   e.target.reset();
   location.reload();
+}
+
+async function deleteAccount() {
+  if (!confirm("Delete your account? This cannot be undone.")) return;
+
+  const res = await fetch("/api/delete-account", {
+    method: "POST"
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Failed to delete account.");
+    return;
+  }
+
+  alert("Your account has been deleted.");
+  location.href = "/";
 }
