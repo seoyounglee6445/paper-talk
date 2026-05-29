@@ -113,52 +113,34 @@ async function loadPosts() {
     return;
   }
 
-  return `
-    <article class="post-card">
-      <div class="post-card-header">
-        <div>
-          <h3>${escapeHtml(post.title)}</h3>
-          <p class="post-meta">${escapeHtml(post.author_name || "Admin")} · Methodology</p>
-        </div>
-        <span class="post-badge">Methodology</span>
-      </div>
-
-      ${info.category ? `<p><strong>Category:</strong> ${escapeHtml(info.category)}</p>` : ""}
-      ${info.tags ? `<p><strong>Tags:</strong> ${escapeHtml(info.tags)}</p>` : ""}
-      ${methodologyBody ? `<p class="post-body">${formatText(methodologyBody)}</p>` : ""}
-      ${methodologyLink ? `<p><a class="btn" href="${escapeHtml(methodologyLink)}" target="_blank">Open Link</a></p>` : ""}
-    </article>
-  `;
-}
-
   box.innerHTML = data.posts.map(post => {
-     if (post.type === "methodology_page") {
-    const info = parseJsonBody(post.body);
+    if (post.type === "study_post" || post.type === "methodology_page") {
+      const info = parseJsonBody(post.body);
 
-    const methodologyBody = info.body || "";
-    const methodologyLink = info.link || post.link || "";
+      const label = post.type === "study_post" ? "Study" : "Methodology";
+      const bodyText = info.body || "";
+      const link = info.link || post.link || "";
 
-    return `
-      <article class="post-card">
-        <div class="post-card-header">
-          <div>
-            <h3>${escapeHtml(post.title)}</h3>
-            <p class="post-meta">
-              ${escapeHtml(post.author_name || "Admin")} · Methodology
-            </p>
+      return `
+        <article class="post-card">
+          <div class="post-card-header">
+            <div>
+              <h3>${escapeHtml(post.title)}</h3>
+              <p class="post-meta">
+                ${escapeHtml(post.author_name || "Admin")} · ${label}
+              </p>
+            </div>
+            <span class="post-badge">${label}</span>
           </div>
-          <span class="post-badge">Methodology</span>
-        </div>
 
-        ${info.category ? `<p><strong>Category:</strong> ${escapeHtml(info.category)}</p>` : ""}
-        ${info.tags ? `<p><strong>Tags:</strong> ${escapeHtml(info.tags)}</p>` : ""}
-        ${methodologyBody ? `<p class="post-body">${formatText(methodologyBody)}</p>` : ""}
-        ${methodologyLink ? `<p><a class="btn" href="${escapeHtml(methodologyLink)}" target="_blank">Open Link</a></p>` : ""}
-      </article>
-    `;
-  }
+          ${info.category ? `<p><strong>Category:</strong> ${escapeHtml(info.category)}</p>` : ""}
+          ${info.tags ? `<p><strong>Tags:</strong> ${escapeHtml(info.tags)}</p>` : ""}
+          ${bodyText ? `<p class="post-body">${formatText(bodyText)}</p>` : ""}
+          ${link ? `<p><a class="btn" href="${escapeHtml(link)}" target="_blank">Open Link</a></p>` : ""}
+        </article>
+      `;
+    }
 
-    
     if (post.type === "blog") {
       const info = parseJsonBody(post.body);
 
@@ -177,29 +159,6 @@ async function loadPosts() {
           ${info.tags ? `<p><strong>Tags:</strong> ${escapeHtml(info.tags)}</p>` : ""}
           ${info.summary ? `<p class="post-body">${formatText(info.summary)}</p>` : ""}
           ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Original Link</a></p>` : ""}
-        </article>
-      `;
-    }
-
-    if (post.type === "study_post") {
-      const info = parseJsonBody(post.body);
-      const studyBody = info.body || "";
-      const studyLink = info.link || post.link || "";
-
-      return `
-        <article class="post-card">
-          <div class="post-card-header">
-            <div>
-              <h3>${escapeHtml(post.title)}</h3>
-              <p class="post-meta">${escapeHtml(post.author_name || "Admin")} · Study</p>
-            </div>
-            <span class="post-badge">Study</span>
-          </div>
-
-          ${info.category ? `<p><strong>Category:</strong> ${escapeHtml(info.category)}</p>` : ""}
-          ${info.tags ? `<p><strong>Tags:</strong> ${escapeHtml(info.tags)}</p>` : ""}
-          ${studyBody ? `<p class="post-body">${formatText(studyBody)}</p>` : ""}
-          ${studyLink ? `<p><a class="btn" href="${escapeHtml(studyLink)}" target="_blank">Open Link</a></p>` : ""}
         </article>
       `;
     }
