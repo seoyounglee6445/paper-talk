@@ -379,3 +379,19 @@ textarea {
     flex-direction: column;
   }
 }
+
+.edit-box {
+  margin-top: 22px;
+  padding: 22px;
+  border-radius: 22px;
+  background: #f8fbff;
+  border: 1px solid var(--border-blue);
+}
+
+.edit-box label {
+  display: block;
+  margin-top: 14px;
+  margin-bottom: 8px;
+  font-weight: 900;
+  color: var(--main-blue);
+}
