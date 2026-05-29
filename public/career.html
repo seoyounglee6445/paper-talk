@@ -23,7 +23,7 @@
   <div id="authBox" class="auth-box"></div>
 
   <h1>Career</h1>
-  <p>LinkedIn promotion, job postings, job websites, and research collaboration matching.</p>
+  <p>LinkedIn promotion, job postings, job websites, and collaboration matching.</p>
 
   <div class="mini-tabs">
     <button class="mini-tab active" onclick="showCareer('linkedin', this)">LinkedIn Promotion</button>
@@ -120,7 +120,7 @@
 
   <section class="card career-panel" id="collaboration" style="display:none;">
     <h2>Collaboration Hub</h2>
-    <p>Find research collaborators, project partners, journal club members, and analysis teammates.</p>
+    <p>Find collaborators, project partners, journal club members, and analysis teammates.</p>
     <div id="collaborationPosts"></div>
   </section>
 </main>
@@ -154,6 +154,7 @@ function toggleLinkedInField() {
 
 function filterCareerPosts() {
   const keyword = document.getElementById("careerSearch").value.toLowerCase();
+
   const cards = document.querySelectorAll(
     "#linkedinPosts .post-card, #jobPosts .post-card, #jobsitePosts .post-card, #collaborationPosts .post-card"
   );
