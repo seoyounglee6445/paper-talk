@@ -113,17 +113,28 @@ async function loadPosts() {
     return;
   }
 
-  if (currentType === "methodology_page") {
-    const page = data.posts[0];
+  if (post.type === "methodology_page") {
+  const info = parseJsonBody(post.body);
+  const methodologyBody = info.body || post.body || "";
+  const methodologyLink = info.link || post.link || "";
 
-    box.innerHTML = `
-      <article class="card">
-        <h2>${escapeHtml(page.title || "Methodology")}</h2>
-        <div class="post-body">${formatText(page.body)}</div>
-      </article>
-    `;
-    return;
-  }
+  return `
+    <article class="post-card">
+      <div class="post-card-header">
+        <div>
+          <h3>${escapeHtml(post.title)}</h3>
+          <p class="post-meta">${escapeHtml(post.author_name || "Admin")} · Methodology</p>
+        </div>
+        <span class="post-badge">Methodology</span>
+      </div>
+
+      ${info.category ? `<p><strong>Category:</strong> ${escapeHtml(info.category)}</p>` : ""}
+      ${info.tags ? `<p><strong>Tags:</strong> ${escapeHtml(info.tags)}</p>` : ""}
+      ${methodologyBody ? `<p class="post-body">${formatText(methodologyBody)}</p>` : ""}
+      ${methodologyLink ? `<p><a class="btn" href="${escapeHtml(methodologyLink)}" target="_blank">Open Link</a></p>` : ""}
+    </article>
+  `;
+}
 
   box.innerHTML = data.posts.map(post => {
     if (post.type === "blog") {
