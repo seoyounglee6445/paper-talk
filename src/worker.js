@@ -7,6 +7,14 @@ export default {
     if (url.pathname === "/auth/logout") return logout();
     if (url.pathname === "/api/me") return apiMe(request, env);
 
+    if (url.pathname === "/api/delete-account" && request.method === "POST") {
+      return deleteAccount(request, env);
+    }
+
+    if (url.pathname === "/api/my/posts" && request.method === "GET") return myPosts(request, env);
+    if (url.pathname === "/api/my/update" && request.method === "POST") return updateMyPost(request, env);
+    if (url.pathname === "/api/my/delete" && request.method === "POST") return deleteMyPost(request, env);
+
     if (url.pathname === "/admin" || url.pathname === "/admin.html") {
       return html(adminPage());
     }
@@ -189,6 +197,27 @@ async function apiMe(request, env) {
   return json({ ok: !!user, user });
 }
 
+async function deleteAccount(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  await env.DB.prepare(`
+    DELETE FROM users
+    WHERE id = ?
+  `).bind(user.id).run();
+
+  return json(
+    { ok: true },
+    200,
+    {
+      "Set-Cookie": "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+    }
+  );
+}
+
 async function listPosts(request, env) {
   const url = new URL(request.url);
   const section = url.searchParams.get("section") || "research";
@@ -270,6 +299,74 @@ async function createPost(request, env) {
   });
 }
 
+async function myPosts(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  const posts = await env.DB.prepare(`
+    SELECT *
+    FROM posts
+    WHERE author_email = ?
+    ORDER BY datetime(created_at) DESC
+  `).bind(user.email).all();
+
+  return json({ ok: true, posts: posts.results });
+}
+
+async function updateMyPost(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  const data = await request.json();
+
+  await env.DB.prepare(`
+    UPDATE posts
+    SET title = ?,
+        body = ?,
+        link = ?,
+        linkedin_url = ?,
+        status = 'pending'
+    WHERE id = ?
+      AND author_email = ?
+  `).bind(
+    data.title || "",
+    data.body || "",
+    data.link || "",
+    data.linkedinUrl || "",
+    data.id,
+    user.email
+  ).run();
+
+  return json({
+    ok: true,
+    message: "Updated. Your post needs admin approval again."
+  });
+}
+
+async function deleteMyPost(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  const data = await request.json();
+
+  await env.DB.prepare(`
+    DELETE FROM posts
+    WHERE id = ?
+      AND author_email = ?
+  `).bind(data.id, user.email).run();
+
+  return json({ ok: true });
+}
+
 function isAdmin(request, env) {
   const url = new URL(request.url);
   const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
@@ -281,12 +378,35 @@ async function adminListPosts(request, env) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
+  const url = new URL(request.url);
+  const section = url.searchParams.get("section") || "";
+  const type = url.searchParams.get("type") || "";
+  const status = url.searchParams.get("status") || "";
+
+  let where = "WHERE 1=1";
+  const params = [];
+
+  if (section) {
+    where += " AND section = ?";
+    params.push(section);
+  }
+
+  if (type) {
+    where += " AND type = ?";
+    params.push(type);
+  }
+
+  if (status) {
+    where += " AND status = ?";
+    params.push(status);
+  }
+
   const posts = await env.DB.prepare(`
     SELECT *
     FROM posts
-    WHERE status = 'pending'
+    ${where}
     ORDER BY datetime(created_at) DESC
-  `).all();
+  `).bind(...params).all();
 
   return json({ ok: true, posts: posts.results });
 }
@@ -343,16 +463,58 @@ function adminPage() {
 
 <main class="container">
   <h1>Admin Dashboard</h1>
-  <p>Approve or delete submitted posts.</p>
+  <p>Manage posts by section, category, and status.</p>
 
-  <section class="card">
-    <label>Admin Key</label>
-    <input id="adminKey" type="password" placeholder="Enter admin key">
-    <button onclick="loadPendingPosts()">Load Pending Posts</button>
+  <section class="card write-form">
+    <h2>Admin Filter</h2>
+
+    <div>
+      <label>Admin Key</label>
+      <input id="adminKey" type="password" placeholder="Enter admin key">
+    </div>
+
+    <div>
+      <label>Section</label>
+      <select id="sectionFilter">
+        <option value="">All Sections</option>
+        <option value="research">Research Paper</option>
+        <option value="study">Study Materials</option>
+        <option value="community">Community</option>
+        <option value="career">Career</option>
+      </select>
+    </div>
+
+    <div>
+      <label>Category</label>
+      <select id="typeFilter">
+        <option value="">All Categories</option>
+        <option value="paper">Research Paper</option>
+        <option value="study_post">Study</option>
+        <option value="methodology">Methodology</option>
+        <option value="blog">Blog</option>
+        <option value="question">Question / Discussion</option>
+        <option value="conference_notice">Conference Notice</option>
+        <option value="linkedin">LinkedIn Promotion</option>
+        <option value="job">Job Posting</option>
+        <option value="jobsite">Job Website</option>
+        <option value="collaboration">Research Collaboration</option>
+      </select>
+    </div>
+
+    <div>
+      <label>Status</label>
+      <select id="statusFilter">
+        <option value="">All Status</option>
+        <option value="pending">Pending</option>
+        <option value="published">Published</option>
+      </select>
+    </div>
+
+    <button onclick="loadAdminPosts()">Load Posts</button>
   </section>
 
-  <h2>Pending Posts</h2>
-  <div id="pendingList"></div>
+  <h2>Posts</h2>
+  <div id="adminPostList"></div>
 </main>
 
 <script>
@@ -365,13 +527,22 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-async function loadPendingPosts() {
+async function loadAdminPosts() {
   const key = document.getElementById("adminKey").value;
+  const section = document.getElementById("sectionFilter").value;
+  const type = document.getElementById("typeFilter").value;
+  const status = document.getElementById("statusFilter").value;
 
-  const res = await fetch("/api/admin/posts?key=" + encodeURIComponent(key));
+  const params = new URLSearchParams({ key });
+
+  if (section) params.set("section", section);
+  if (type) params.set("type", type);
+  if (status) params.set("status", status);
+
+  const res = await fetch("/api/admin/posts?" + params.toString());
   const data = await res.json();
 
-  const box = document.getElementById("pendingList");
+  const box = document.getElementById("adminPostList");
 
   if (!data.ok) {
     box.innerHTML = "<p class='error'>" + escapeHtml(data.error || "Failed") + "</p>";
@@ -379,14 +550,14 @@ async function loadPendingPosts() {
   }
 
   if (!data.posts.length) {
-    box.innerHTML = "<p>No pending posts.</p>";
+    box.innerHTML = "<p>No posts found.</p>";
     return;
   }
 
   box.innerHTML = data.posts.map(post => \`
     <article class="card admin-post">
       <h3>\${escapeHtml(post.title)}</h3>
-      <p class="meta">\${escapeHtml(post.section)} · \${escapeHtml(post.type)}</p>
+      <p class="meta">\${escapeHtml(post.section)} · \${escapeHtml(post.type)} · \${escapeHtml(post.status)}</p>
       <p>\${escapeHtml(post.body)}</p>
 
       \${post.link ? \`<p><a class="btn" href="\${escapeHtml(post.link)}" target="_blank">Open Link</a></p>\` : ""}
@@ -395,8 +566,10 @@ async function loadPendingPosts() {
       <p><strong>Author:</strong> \${escapeHtml(post.author_name)}</p>
       <p><strong>Email:</strong> \${escapeHtml(post.author_email)}</p>
 
-      <button onclick="approvePost('\${post.id}')">Approve</button>
-      <button class="danger-btn" onclick="deletePost('\${post.id}')">Delete</button>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        \${post.status === "pending" ? \`<button onclick="approvePost('\${post.id}')">Approve</button>\` : ""}
+        <button class="danger-btn" onclick="deletePost('\${post.id}')">Delete</button>
+      </div>
     </article>
   \`).join("");
 }
@@ -413,7 +586,7 @@ async function approvePost(id) {
     body: JSON.stringify({ id })
   });
 
-  loadPendingPosts();
+  loadAdminPosts();
 }
 
 async function deletePost(id) {
@@ -430,7 +603,7 @@ async function deletePost(id) {
     body: JSON.stringify({ id })
   });
 
-  loadPendingPosts();
+  loadAdminPosts();
 }
 </script>
 </body>
