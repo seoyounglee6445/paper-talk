@@ -26,19 +26,42 @@
   <section class="home-three-grid">
     <div class="home-column">
       <h2>Latest Papers</h2>
-      <p>No papers yet.</p>
+      <div id="homePapers"></div>
     </div>
 
     <div class="home-column">
       <h2>Conference Notices</h2>
-      <p>No conference notices yet.</p>
+      <div id="homeConference"></div>
     </div>
 
     <div class="home-column">
       <h2>LinkedIn</h2>
-      <p>No LinkedIn posts yet.</p>
+      <div id="homeLinkedin"></div>
     </div>
   </section>
 </main>
+
+<script src="/app.js"></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  loadPosts({
+    section: "research",
+    target: "homePapers"
+  });
+
+  loadPosts({
+    section: "community",
+    type: "conference_notice",
+    target: "homeConference"
+  });
+
+  loadPosts({
+    section: "career",
+    type: "linkedin",
+    target: "homeLinkedin"
+  });
+});
+</script>
 </body>
 </html>
