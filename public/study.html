@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Study Materials | Paper_Talk</title>
-<link rel="stylesheet" href="/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Study Materials | Paper_Talk</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 
 <body>
@@ -12,10 +12,10 @@
   <nav class="nav">
     <div class="logo">Paper_Talk</div>
     <a href="/">Home</a>
-    <a href="/research.html">Research Paper</a>
-    <a href="/study.html">Study Materials</a>
-    <a href="/community.html">Community</a>
-    <a href="/career.html">Career</a>
+    <a href="/research">Research Paper</a>
+    <a href="/study">Study Materials</a>
+    <a href="/community">Community</a>
+    <a href="/career">Career</a>
   </nav>
 </header>
 
@@ -23,42 +23,132 @@
   <h1>Study Materials</h1>
   <p>Choose a study category.</p>
 
-  <div class="mini-tabs">
-    <button class="mini-tab active" onclick="showStudyTab('study', this)">Study</button>
-    <button class="mini-tab" onclick="showStudyTab('methodology', this)">Methodology</button>
-    <button class="mini-tab" onclick="showStudyTab('blog', this)">Blog</button>
+  <div class="category-tabs">
+    <button class="tab-btn active" onclick="showStudyCategory('study_post', this)">Study</button>
+    <button class="tab-btn" onclick="showStudyCategory('methodology', this)">Methodology</button>
+    <button class="tab-btn" onclick="showStudyCategory('blog', this)">Blog</button>
   </div>
 
-  <section class="card study-panel" id="study">
-    <h2>Study</h2>
-    <p>Personal study notes, curated resources, tutorials, and learning materials will be organized here.</p>
+  <section class="card">
+    <h2 id="categoryTitle">Study</h2>
+    <p id="categoryDescription">
+      General study materials and learning posts will be organized here.
+    </p>
   </section>
 
-  <section class="card study-panel" id="methodology" style="display:none;">
-    <h2>Methodology</h2>
-    <p>Experimental design, sequencing workflows, computational pipelines, statistical analysis, and reproducible research methodology will be organized here.</p>
-  </section>
-
-  <section class="card study-panel" id="blog" style="display:none;">
-    <h2>Blog</h2>
-    <p>Research insights, project updates, scientific opinions, conference reflections, and technical writing will be organized here.</p>
-  </section>
+  <section id="postList"></section>
 </main>
 
 <script>
-function showStudyTab(id, button) {
-  document.querySelectorAll(".study-panel").forEach(panel => {
-    panel.style.display = "none";
-  });
+let currentType = "study_post";
 
-  document.getElementById(id).style.display = "block";
-
-  document.querySelectorAll(".mini-tab").forEach(tab => {
-    tab.classList.remove("active");
-  });
-
-  button.classList.add("active");
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
+
+function parseJsonBody(body) {
+  try {
+    return JSON.parse(body || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function showStudyCategory(type, button) {
+  currentType = type;
+
+  document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+  button.classList.add("active");
+
+  const title = document.getElementById("categoryTitle");
+  const description = document.getElementById("categoryDescription");
+
+  if (type === "study_post") {
+    title.textContent = "Study";
+    description.textContent = "General study materials and learning posts will be organized here.";
+  }
+
+  if (type === "methodology") {
+    title.textContent = "Methodology";
+    description.textContent = "Curated methodology notes, useful websites, workflows, and reference links.";
+  }
+
+  if (type === "blog") {
+    title.textContent = "Blog";
+    description.textContent = "Curated external blog posts and web articles related to research.";
+  }
+
+  loadPosts();
+}
+
+async function loadPosts() {
+  const box = document.getElementById("postList");
+  box.innerHTML = "<p>Loading...</p>";
+
+  const params = new URLSearchParams({
+    section: "study",
+    type: currentType
+  });
+
+  const res = await fetch("/api/posts?" + params.toString());
+  const data = await res.json();
+
+  if (!data.ok) {
+    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load posts.")}</p>`;
+    return;
+  }
+
+  if (!data.posts.length) {
+    box.innerHTML = "<p>No posts yet.</p>";
+    return;
+  }
+
+  box.innerHTML = data.posts.map(post => {
+    const info = parseJsonBody(post.body);
+
+    if (post.type === "methodology" || post.type === "blog") {
+      return `
+        <article class="post-card">
+          <div class="post-card-header">
+            <div>
+              <h3>${escapeHtml(post.title)}</h3>
+              <p class="post-meta">
+                ${escapeHtml(post.type)} · ${escapeHtml(info.websiteName)} · ${escapeHtml(info.author)}
+              </p>
+            </div>
+            <span class="post-badge">${escapeHtml(post.type)}</span>
+          </div>
+
+          ${info.tags ? `<p><strong>Tags:</strong> ${escapeHtml(info.tags)}</p>` : ""}
+          ${info.summary ? `<p class="post-body">${escapeHtml(info.summary)}</p>` : ""}
+          ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Original Link</a></p>` : ""}
+        </article>
+      `;
+    }
+
+    return `
+      <article class="post-card">
+        <div class="post-card-header">
+          <div>
+            <h3>${escapeHtml(post.title)}</h3>
+            <p class="post-meta">${escapeHtml(post.author_name)} · ${escapeHtml(post.type)}</p>
+          </div>
+          <span class="post-badge">${escapeHtml(post.type)}</span>
+        </div>
+
+        <p class="post-body">${escapeHtml(post.body)}</p>
+        ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>` : ""}
+      </article>
+    `;
+  }).join("");
+}
+
+loadPosts();
 </script>
 </body>
 </html>
