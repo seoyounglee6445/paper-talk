@@ -245,7 +245,6 @@ textarea {
   color: var(--main-blue);
 }
 
-/* Pretty published post cards */
 .post-card {
   background: white;
   border: 1px solid var(--border-blue);
@@ -359,6 +358,64 @@ textarea {
   background: var(--dark-blue);
 }
 
+.edit-box {
+  margin-top: 22px;
+  padding: 22px;
+  border-radius: 22px;
+  background: #f8fbff;
+  border: 1px solid var(--border-blue);
+}
+
+.edit-box label {
+  display: block;
+  margin-top: 14px;
+  margin-bottom: 8px;
+  font-weight: 900;
+  color: var(--main-blue);
+}
+
+/* Home mini cards */
+.home-mini-card {
+  background: white;
+  border: 1px solid var(--border-blue);
+  border-radius: 20px;
+  padding: 20px;
+  margin-top: 18px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+.home-mini-card h3 {
+  margin: 0 0 12px;
+  color: var(--main-blue);
+  font-size: 22px;
+}
+
+.home-mini-card .post-body,
+.home-mini-card .post-actions,
+.home-mini-card .post-badge {
+  display: none !important;
+}
+
+/* Force Home LinkedIn to hide long content even if post-card is loaded */
+#homeLinkedin .post-body,
+#homeLinkedin .post-actions,
+#homeLinkedin .post-badge {
+  display: none !important;
+}
+
+#homeLinkedin .post-card {
+  padding: 20px !important;
+  margin-top: 18px;
+}
+
+#homeLinkedin .post-card h3 {
+  font-size: 22px;
+}
+
+#homeLinkedin .post-card-header {
+  display: block;
+}
+
 @media (max-width: 900px) {
   .home-three-grid,
   .jobsite-list {
@@ -378,48 +435,4 @@ textarea {
   .post-card-header {
     flex-direction: column;
   }
-}
-
-.edit-box {
-  margin-top: 22px;
-  padding: 22px;
-  border-radius: 22px;
-  background: #f8fbff;
-  border: 1px solid var(--border-blue);
-}
-
-.edit-box label {
-  display: block;
-  margin-top: 14px;
-  margin-bottom: 8px;
-  font-weight: 900;
-  color: var(--main-blue);
-}
-
-.home-mini-post {
-  padding: 22px;
-}
-
-.home-mini-post h3 {
-  font-size: 22px;
-}
-
-.home-mini-post .post-body,
-.home-mini-post .post-actions {
-  display: none;
-}
-
-.home-mini-card {
-  background: white;
-  border: 1px solid var(--border-blue);
-  border-radius: 20px;
-  padding: 20px;
-  margin-top: 18px;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-}
-
-.home-mini-card h3 {
-  margin: 0 0 12px;
-  color: var(--main-blue);
-  font-size: 22px;
 }
