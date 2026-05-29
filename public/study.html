@@ -113,11 +113,6 @@ async function loadPosts() {
     return;
   }
 
-  if (post.type === "methodology_page") {
-  const info = parseJsonBody(post.body);
-  const methodologyBody = info.body || post.body || "";
-  const methodologyLink = info.link || post.link || "";
-
   return `
     <article class="post-card">
       <div class="post-card-header">
