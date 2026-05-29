@@ -135,7 +135,7 @@ async function loadPosts() {
             <div>
               <h3>${escapeHtml(post.title)}</h3>
               <p class="post-meta">
-                ${escapeHtml(info.websiteName)} · ${escapeHtml(info.author)}
+                ${escapeHtml(info.websiteName || "Blog")} ${info.author ? "· " + escapeHtml(info.author) : ""}
               </p>
             </div>
             <span class="post-badge">Blog</span>
@@ -148,20 +148,30 @@ async function loadPosts() {
       `;
     }
 
-    return `
-      <article class="post-card">
-        <div class="post-card-header">
-          <div>
-            <h3>${escapeHtml(post.title)}</h3>
-            <p class="post-meta">${escapeHtml(post.author_name)} · Study</p>
-          </div>
-          <span class="post-badge">Study</span>
-        </div>
+    if (post.type === "study_post") {
+      const info = parseJsonBody(post.body);
+      const studyBody = info.body || "";
+      const studyLink = info.link || post.link || "";
 
-        <p class="post-body">${formatText(post.body)}</p>
-        ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>` : ""}
-      </article>
-    `;
+      return `
+        <article class="post-card">
+          <div class="post-card-header">
+            <div>
+              <h3>${escapeHtml(post.title)}</h3>
+              <p class="post-meta">${escapeHtml(post.author_name || "Admin")} · Study</p>
+            </div>
+            <span class="post-badge">Study</span>
+          </div>
+
+          ${info.category ? `<p><strong>Category:</strong> ${escapeHtml(info.category)}</p>` : ""}
+          ${info.tags ? `<p><strong>Tags:</strong> ${escapeHtml(info.tags)}</p>` : ""}
+          ${studyBody ? `<p class="post-body">${formatText(studyBody)}</p>` : ""}
+          ${studyLink ? `<p><a class="btn" href="${escapeHtml(studyLink)}" target="_blank">Open Link</a></p>` : ""}
+        </article>
+      `;
+    }
+
+    return "";
   }).join("");
 }
 
