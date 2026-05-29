@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin | Paper_Talk</title>
-<link rel="stylesheet" href="/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin | Paper_Talk</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 
 <body>
@@ -12,7 +12,7 @@
   <nav class="nav">
     <div class="logo">Paper_Talk Admin</div>
     <a href="/">Home</a>
-    <a href="/admin.html">Admin</a>
+    <a href="/admin">Admin</a>
   </nav>
 </header>
 
@@ -184,7 +184,10 @@ async function createResearchPaper(e) {
 }
 
 async function loadAdminPosts() {
-  const key = document.getElementById("adminKey").value || document.getElementById("researchAdminKey").value;
+  const key =
+    document.getElementById("adminKey").value ||
+    document.getElementById("researchAdminKey").value;
+
   const section = document.getElementById("sectionFilter").value;
   const type = document.getElementById("typeFilter").value;
   const status = document.getElementById("statusFilter").value;
@@ -253,7 +256,9 @@ async function loadAdminPosts() {
 }
 
 async function approvePost(id) {
-  const key = document.getElementById("adminKey").value || document.getElementById("researchAdminKey").value;
+  const key =
+    document.getElementById("adminKey").value ||
+    document.getElementById("researchAdminKey").value;
 
   const res = await fetch("/api/admin/approve", {
     method: "POST",
@@ -277,7 +282,9 @@ async function approvePost(id) {
 async function deletePost(id) {
   if (!confirm("Delete this post?")) return;
 
-  const key = document.getElementById("adminKey").value || document.getElementById("researchAdminKey").value;
+  const key =
+    document.getElementById("adminKey").value ||
+    document.getElementById("researchAdminKey").value;
 
   const res = await fetch("/api/admin/delete", {
     method: "POST",
