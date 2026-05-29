@@ -72,11 +72,8 @@ async function loadHomeLinkedIn() {
   }
 
   box.innerHTML = data.posts.map(p => `
-    <article class="post-card home-mini-post">
-      <div class="post-card-header">
-        <h3>${escapeHtml(p.title)}</h3>
-        <span class="post-badge">LinkedIn Promotion</span>
-      </div>
+    <article class="home-mini-card">
+      <h3>${escapeHtml(p.title)}</h3>
 
       <p class="post-meta">
         LinkedIn Promotion · ${new Date(p.created_at).toLocaleDateString()}
