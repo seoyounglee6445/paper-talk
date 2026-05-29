@@ -21,7 +21,7 @@
 
 <main class="container">
   <h1>Site Admin</h1>
-  <p>Manage research papers, study materials, methodology links, blog posts, approvals, and deletion.</p>
+  <p>Manage research papers, methodology page, blog posts, approvals, and deletion.</p>
 
   <section class="card write-form">
     <h2>New Research Paper</h2>
@@ -97,26 +97,42 @@
   </section>
 
   <section class="card write-form">
-    <h2>New Study Content</h2>
-    <p>Use this for Methodology and Blog pages.</p>
+    <h2>Methodology Page Editor</h2>
+    <p>This saves one full Methodology page. It replaces the previous Methodology page.</p>
 
-    <form onsubmit="createStudyContent(event)">
+    <form onsubmit="saveMethodologyPage(event)">
       <div>
         <label>Admin Key</label>
-        <input id="studyAdminKey" type="password" placeholder="Enter admin key" required>
+        <input id="methodologyAdminKey" type="password" placeholder="Enter admin key" required>
       </div>
 
       <div>
-        <label>Type</label>
-        <select name="type" required>
-          <option value="methodology">Methodology</option>
-          <option value="blog">Blog</option>
-        </select>
+        <label>Page Title</label>
+        <input name="title" value="Methodology" placeholder="Methodology">
+      </div>
+
+      <div class="full-row">
+        <label>Methodology Page Content</label>
+        <textarea name="body" rows="18" placeholder="Write your full methodology page here. You can include website links, notes, explanations, and organized resources."></textarea>
+      </div>
+
+      <button type="submit">Save Methodology Page</button>
+    </form>
+  </section>
+
+  <section class="card write-form">
+    <h2>New Blog Post</h2>
+    <p>Use this for external blog/web articles.</p>
+
+    <form onsubmit="createBlogPost(event)">
+      <div>
+        <label>Admin Key</label>
+        <input id="blogAdminKey" type="password" placeholder="Enter admin key" required>
       </div>
 
       <div>
         <label>Title</label>
-        <input name="title" required placeholder="Title">
+        <input name="title" required placeholder="Blog post title">
       </div>
 
       <div>
@@ -140,16 +156,16 @@
       </div>
 
       <div class="full-row">
-        <label>Summary / Organized Notes</label>
-        <textarea name="summary" placeholder="Write your organized methodology notes or blog summary here"></textarea>
+        <label>Summary / Notes</label>
+        <textarea name="summary" placeholder="Write your summary or notes here"></textarea>
       </div>
 
       <div class="full-row">
         <label>Note</label>
-        <textarea name="note" placeholder="Optional note"></textarea>
+        <textarea name="note" placeholder="Optional admin note"></textarea>
       </div>
 
-      <button type="submit">Save Study Content</button>
+      <button type="submit">Save Blog Post</button>
     </form>
   </section>
 
@@ -172,15 +188,15 @@
     <select id="typeFilter">
       <option value="">All Categories</option>
       <option value="paper">Research Paper</option>
+      <option value="study_post">Study</option>
+      <option value="methodology_page">Methodology Page</option>
+      <option value="blog">Blog</option>
       <option value="linkedin">LinkedIn Promotion</option>
       <option value="job">Job Posting</option>
       <option value="jobsite">Job Website</option>
       <option value="collaboration">Collaboration Hub</option>
       <option value="question">Question / Discussion</option>
       <option value="conference_notice">Conference Notice</option>
-      <option value="study_post">Study</option>
-      <option value="methodology">Methodology</option>
-      <option value="blog">Blog</option>
     </select>
 
     <label>Status</label>
@@ -215,6 +231,15 @@ function parseJsonBody(body) {
   }
 }
 
+function getAnyAdminKey() {
+  return (
+    document.getElementById("adminKey").value ||
+    document.getElementById("researchAdminKey").value ||
+    document.getElementById("methodologyAdminKey").value ||
+    document.getElementById("blogAdminKey").value
+  );
+}
+
 async function createResearchPaper(e) {
   e.preventDefault();
 
@@ -243,14 +268,14 @@ async function createResearchPaper(e) {
   loadAdminPosts();
 }
 
-async function createStudyContent(e) {
+async function saveMethodologyPage(e) {
   e.preventDefault();
 
-  const key = document.getElementById("studyAdminKey").value;
+  const key = document.getElementById("methodologyAdminKey").value;
   const form = new FormData(e.target);
   const data = Object.fromEntries(form.entries());
 
-  const res = await fetch("/api/admin/study/create", {
+  const res = await fetch("/api/admin/methodology/save", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -266,16 +291,40 @@ async function createStudyContent(e) {
     return;
   }
 
-  alert("Study content saved.");
+  alert("Methodology page saved.");
+  loadAdminPosts();
+}
+
+async function createBlogPost(e) {
+  e.preventDefault();
+
+  const key = document.getElementById("blogAdminKey").value;
+  const form = new FormData(e.target);
+  const data = Object.fromEntries(form.entries());
+
+  const res = await fetch("/api/admin/blog/create", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify(data)
+  });
+
+  const result = await res.json();
+
+  if (!result.ok) {
+    alert(result.error || "Save failed");
+    return;
+  }
+
+  alert("Blog post saved.");
   e.target.reset();
   loadAdminPosts();
 }
 
 async function loadAdminPosts() {
-  const key =
-    document.getElementById("adminKey").value ||
-    document.getElementById("researchAdminKey").value ||
-    document.getElementById("studyAdminKey").value;
+  const key = getAnyAdminKey();
 
   const section = document.getElementById("sectionFilter").value;
   const type = document.getElementById("typeFilter").value;
@@ -303,7 +352,8 @@ async function loadAdminPosts() {
   }
 
   box.innerHTML = data.posts.map(post => {
-    const parsed = ["research", "study"].includes(post.section) ? parseJsonBody(post.body) : null;
+    const isJsonType = post.type === "paper" || post.type === "blog";
+    const parsed = isJsonType ? parseJsonBody(post.body) : null;
 
     return `
       <article class="post-card">
@@ -318,7 +368,7 @@ async function loadAdminPosts() {
         </div>
 
         ${
-          post.section === "research" && parsed
+          post.type === "paper" && parsed
             ? `
               <p><strong>Year:</strong> ${escapeHtml(parsed.year)}</p>
               <p><strong>Authors:</strong> ${escapeHtml(parsed.authors)}</p>
@@ -329,7 +379,7 @@ async function loadAdminPosts() {
         }
 
         ${
-          post.section === "study" && parsed
+          post.type === "blog" && parsed
             ? `
               <p><strong>Website:</strong> ${escapeHtml(parsed.websiteName)}</p>
               <p><strong>Original Author:</strong> ${escapeHtml(parsed.author)}</p>
@@ -340,7 +390,13 @@ async function loadAdminPosts() {
         }
 
         ${
-          !parsed
+          post.type === "methodology_page"
+            ? `<p class="post-body">${escapeHtml(post.body).replaceAll("\\n", "<br>")}</p>`
+            : ""
+        }
+
+        ${
+          !isJsonType && post.type !== "methodology_page"
             ? `<p class="post-body">${escapeHtml(post.body)}</p>`
             : ""
         }
@@ -361,10 +417,7 @@ async function loadAdminPosts() {
 }
 
 async function approvePost(id) {
-  const key =
-    document.getElementById("adminKey").value ||
-    document.getElementById("researchAdminKey").value ||
-    document.getElementById("studyAdminKey").value;
+  const key = getAnyAdminKey();
 
   const res = await fetch("/api/admin/approve", {
     method: "POST",
@@ -388,10 +441,7 @@ async function approvePost(id) {
 async function deletePost(id) {
   if (!confirm("Delete this post?")) return;
 
-  const key =
-    document.getElementById("adminKey").value ||
-    document.getElementById("researchAdminKey").value ||
-    document.getElementById("studyAdminKey").value;
+  const key = getAnyAdminKey();
 
   const res = await fetch("/api/admin/delete", {
     method: "POST",
