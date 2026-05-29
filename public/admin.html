@@ -12,13 +12,16 @@
   <nav class="nav">
     <div class="logo">Paper_Talk Admin</div>
     <a href="/">Home</a>
-    <a href="/admin">Admin</a>
+    <a href="/research">Research Paper</a>
+    <a href="/study">Study Materials</a>
+    <a href="/community">Community</a>
+    <a href="/career">Career</a>
   </nav>
 </header>
 
 <main class="container">
   <h1>Site Admin</h1>
-  <p>Manage research papers, submitted posts, approvals, and deletion.</p>
+  <p>Manage research papers, study materials, methodology links, blog posts, approvals, and deletion.</p>
 
   <section class="card write-form">
     <h2>New Research Paper</h2>
@@ -93,6 +96,63 @@
     </form>
   </section>
 
+  <section class="card write-form">
+    <h2>New Study Content</h2>
+    <p>Use this for Methodology and Blog pages.</p>
+
+    <form onsubmit="createStudyContent(event)">
+      <div>
+        <label>Admin Key</label>
+        <input id="studyAdminKey" type="password" placeholder="Enter admin key" required>
+      </div>
+
+      <div>
+        <label>Type</label>
+        <select name="type" required>
+          <option value="methodology">Methodology</option>
+          <option value="blog">Blog</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Title</label>
+        <input name="title" required placeholder="Title">
+      </div>
+
+      <div>
+        <label>Website / Blog Name</label>
+        <input name="websiteName" placeholder="Website or blog name">
+      </div>
+
+      <div>
+        <label>Original Author</label>
+        <input name="author" placeholder="Author name">
+      </div>
+
+      <div>
+        <label>Source URL</label>
+        <input name="sourceUrl" placeholder="https://...">
+      </div>
+
+      <div>
+        <label>Tags</label>
+        <input name="tags" placeholder="pipeline, statistics, single-cell">
+      </div>
+
+      <div class="full-row">
+        <label>Summary / Organized Notes</label>
+        <textarea name="summary" placeholder="Write your organized methodology notes or blog summary here"></textarea>
+      </div>
+
+      <div class="full-row">
+        <label>Note</label>
+        <textarea name="note" placeholder="Optional note"></textarea>
+      </div>
+
+      <button type="submit">Save Study Content</button>
+    </form>
+  </section>
+
   <section class="card">
     <h2>Manage Posts</h2>
 
@@ -147,7 +207,7 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function parseResearchBody(body) {
+function parseJsonBody(body) {
   try {
     return JSON.parse(body || "{}");
   } catch {
@@ -183,10 +243,39 @@ async function createResearchPaper(e) {
   loadAdminPosts();
 }
 
+async function createStudyContent(e) {
+  e.preventDefault();
+
+  const key = document.getElementById("studyAdminKey").value;
+  const form = new FormData(e.target);
+  const data = Object.fromEntries(form.entries());
+
+  const res = await fetch("/api/admin/study/create", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify(data)
+  });
+
+  const result = await res.json();
+
+  if (!result.ok) {
+    alert(result.error || "Save failed");
+    return;
+  }
+
+  alert("Study content saved.");
+  e.target.reset();
+  loadAdminPosts();
+}
+
 async function loadAdminPosts() {
   const key =
     document.getElementById("adminKey").value ||
-    document.getElementById("researchAdminKey").value;
+    document.getElementById("researchAdminKey").value ||
+    document.getElementById("studyAdminKey").value;
 
   const section = document.getElementById("sectionFilter").value;
   const type = document.getElementById("typeFilter").value;
@@ -214,7 +303,7 @@ async function loadAdminPosts() {
   }
 
   box.innerHTML = data.posts.map(post => {
-    const research = post.section === "research" ? parseResearchBody(post.body) : null;
+    const parsed = ["research", "study"].includes(post.section) ? parseJsonBody(post.body) : null;
 
     return `
       <article class="post-card">
@@ -229,19 +318,35 @@ async function loadAdminPosts() {
         </div>
 
         ${
-          research
+          post.section === "research" && parsed
             ? `
-              <p><strong>Year:</strong> ${escapeHtml(research.year)}</p>
-              <p><strong>Authors:</strong> ${escapeHtml(research.authors)}</p>
-              <p><strong>Journal:</strong> ${escapeHtml(research.journal)}</p>
-              <p class="post-body">${escapeHtml(research.abstract)}</p>
+              <p><strong>Year:</strong> ${escapeHtml(parsed.year)}</p>
+              <p><strong>Authors:</strong> ${escapeHtml(parsed.authors)}</p>
+              <p><strong>Journal:</strong> ${escapeHtml(parsed.journal)}</p>
+              <p class="post-body">${escapeHtml(parsed.abstract)}</p>
             `
-            : `<p class="post-body">${escapeHtml(post.body)}</p>`
+            : ""
         }
 
-        ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Article</a></p>` : ""}
-        ${research && research.pdfLink ? `<p><a class="btn" href="${escapeHtml(research.pdfLink)}" target="_blank">Open PDF/File</a></p>` : ""}
-        ${post.linkedin_url ? `<p><a class="btn" href="${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>` : ""}
+        ${
+          post.section === "study" && parsed
+            ? `
+              <p><strong>Website:</strong> ${escapeHtml(parsed.websiteName)}</p>
+              <p><strong>Original Author:</strong> ${escapeHtml(parsed.author)}</p>
+              <p><strong>Tags:</strong> ${escapeHtml(parsed.tags)}</p>
+              <p class="post-body">${escapeHtml(parsed.summary)}</p>
+            `
+            : ""
+        }
+
+        ${
+          !parsed
+            ? `<p class="post-body">${escapeHtml(post.body)}</p>`
+            : ""
+        }
+
+        ${post.link ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>` : ""}
+        ${parsed && parsed.pdfLink ? `<p><a class="btn" href="${escapeHtml(parsed.pdfLink)}" target="_blank">Open PDF/File</a></p>` : ""}
 
         <p><strong>Author:</strong> ${escapeHtml(post.author_name)}</p>
         <p><strong>Email:</strong> ${escapeHtml(post.author_email)}</p>
@@ -258,7 +363,8 @@ async function loadAdminPosts() {
 async function approvePost(id) {
   const key =
     document.getElementById("adminKey").value ||
-    document.getElementById("researchAdminKey").value;
+    document.getElementById("researchAdminKey").value ||
+    document.getElementById("studyAdminKey").value;
 
   const res = await fetch("/api/admin/approve", {
     method: "POST",
@@ -284,7 +390,8 @@ async function deletePost(id) {
 
   const key =
     document.getElementById("adminKey").value ||
-    document.getElementById("researchAdminKey").value;
+    document.getElementById("researchAdminKey").value ||
+    document.getElementById("studyAdminKey").value;
 
   const res = await fetch("/api/admin/delete", {
     method: "POST",
