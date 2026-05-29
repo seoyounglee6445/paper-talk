@@ -60,7 +60,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function loadHomeLinkedIn() {
-  const res = await fetch("/api/posts?section=career&type=linkedin");
+  const res = await fetch("/api/posts?section=career&type=linkedin&page=1");
   const data = await res.json();
 
   const box = document.getElementById("homeLinkedin");
@@ -71,16 +71,13 @@ async function loadHomeLinkedIn() {
     return;
   }
 
-  box.innerHTML = data.posts.map(p => `
-    <article class="home-mini-card">
+  const posts = data.posts.slice(0, 10);
+
+  box.innerHTML = posts.map(p => `
+    <div class="home-list-item">
       <h3>${escapeHtml(p.title)}</h3>
-
-      <p class="post-meta">
-        LinkedIn Promotion · ${new Date(p.created_at).toLocaleDateString()}
-      </p>
-
-      <p class="post-author">By ${escapeHtml(p.author_name)}</p>
-    </article>
+      <p>LinkedIn Promotion · ${new Date(p.created_at).toLocaleDateString()}</p>
+    </div>
   `).join("");
 }
 </script>
