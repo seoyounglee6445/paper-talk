@@ -11,28 +11,43 @@ export default {
       return deleteAccount(request, env);
     }
 
-    if (url.pathname === "/api/my/posts" && request.method === "GET") return myPosts(request, env);
-    if (url.pathname === "/api/my/update" && request.method === "POST") return updateMyPost(request, env);
-    if (url.pathname === "/api/my/delete" && request.method === "POST") return deleteMyPost(request, env);
+    if (url.pathname === "/api/my/posts" && request.method === "GET") {
+      return myPosts(request, env);
+    }
 
-    if (url.pathname === "/api/posts" && request.method === "GET") return listPosts(request, env);
-    if (url.pathname === "/api/posts" && request.method === "POST") return createPost(request, env);
+    if (url.pathname === "/api/my/update" && request.method === "POST") {
+      return updateMyPost(request, env);
+    }
 
-    if (url.pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
-    if (url.pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
-    if (url.pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
+    if (url.pathname === "/api/my/delete" && request.method === "POST") {
+      return deleteMyPost(request, env);
+    }
+
+    if (url.pathname === "/api/posts" && request.method === "GET") {
+      return listPosts(request, env);
+    }
+
+    if (url.pathname === "/api/posts" && request.method === "POST") {
+      return createPost(request, env);
+    }
+
+    if (url.pathname === "/api/admin/posts" && request.method === "GET") {
+      return adminListPosts(request, env);
+    }
+
+    if (url.pathname === "/api/admin/approve" && request.method === "POST") {
+      return adminApprovePost(request, env);
+    }
+
+    if (url.pathname === "/api/admin/delete" && request.method === "POST") {
+      return adminDeletePost(request, env);
+    }
 
     if (env.ASSETS) return env.ASSETS.fetch(request);
 
     return new Response("Not found", { status: 404 });
   }
 };
-
-function html(content) {
-  return new Response(content, {
-    headers: { "Content-Type": "text/html; charset=utf-8" }
-  });
-}
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -47,7 +62,10 @@ function json(data, status = 200, headers = {}) {
 function redirect(location, headers = {}) {
   return new Response(null, {
     status: 302,
-    headers: { Location: location, ...headers }
+    headers: {
+      Location: location,
+      ...headers
+    }
   });
 }
 
@@ -114,6 +132,10 @@ async function getSession(request, env) {
 }
 
 async function googleLogin(request, env) {
+  if (!env.GOOGLE_CLIENT_ID) {
+    return json({ ok: false, error: "GOOGLE_CLIENT_ID is missing." }, 500);
+  }
+
   const origin = new URL(request.url).origin;
   const redirectUri = `${origin}/auth/google/callback`;
 
@@ -135,12 +157,21 @@ async function googleCallback(request, env) {
 
   if (!code) return new Response("Missing code", { status: 400 });
 
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return json({
+      ok: false,
+      error: "GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing."
+    }, 500);
+  }
+
   const origin = new URL(request.url).origin;
   const redirectUri = `${origin}/auth/google/callback`;
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
     body: new URLSearchParams({
       code,
       client_id: env.GOOGLE_CLIENT_ID,
@@ -153,11 +184,17 @@ async function googleCallback(request, env) {
   const token = await tokenRes.json();
 
   if (!token.access_token) {
-    return json({ ok: false, error: "Google token exchange failed", token }, 400);
+    return json({
+      ok: false,
+      error: "Google token exchange failed",
+      token
+    }, 400);
   }
 
   const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-    headers: { Authorization: `Bearer ${token.access_token}` }
+    headers: {
+      Authorization: `Bearer ${token.access_token}`
+    }
   });
 
   const googleUser = await userRes.json();
@@ -179,7 +216,9 @@ async function googleCallback(request, env) {
 
   const cookie = await createSessionCookie(user, env);
 
-  return redirect("/", { "Set-Cookie": cookie });
+  return redirect("/", {
+    "Set-Cookie": cookie
+  });
 }
 
 function logout() {
@@ -230,9 +269,11 @@ async function listPosts(request, env) {
     params.push(type);
   }
 
-  const count = await env.DB.prepare(
-    `SELECT COUNT(*) AS total FROM posts ${where}`
-  ).bind(...params).first();
+  const count = await env.DB.prepare(`
+    SELECT COUNT(*) AS total
+    FROM posts
+    ${where}
+  `).bind(...params).first();
 
   const posts = await env.DB.prepare(`
     SELECT *
@@ -246,8 +287,9 @@ async function listPosts(request, env) {
     ok: true,
     posts: posts.results,
     page,
-    total: count.total,
-    totalPages: Math.ceil(count.total / limit)
+    perPage: limit,
+    total: count ? count.total : 0,
+    totalPages: Math.ceil((count ? count.total : 0) / limit)
   });
 }
 
@@ -268,13 +310,24 @@ async function createPost(request, env) {
   const title = String(data.title || "").trim();
 
   if (!section || !type || !title) {
-    return json({ ok: false, error: "section, type, and title are required." }, 400);
+    return json({
+      ok: false,
+      error: "section, type, and title are required."
+    }, 400);
   }
 
   await env.DB.prepare(`
     INSERT INTO posts (
-      id, section, type, title, body, link,
-      author_name, author_email, linkedin_url, status
+      id,
+      section,
+      type,
+      title,
+      body,
+      link,
+      author_name,
+      author_email,
+      linkedin_url,
+      status
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
   `).bind(
@@ -309,7 +362,10 @@ async function myPosts(request, env) {
     ORDER BY datetime(created_at) DESC
   `).bind(user.email).all();
 
-  return json({ ok: true, posts: posts.results });
+  return json({
+    ok: true,
+    posts: posts.results
+  });
 }
 
 async function updateMyPost(request, env) {
@@ -321,6 +377,15 @@ async function updateMyPost(request, env) {
 
   const data = await request.json();
 
+  const title = String(data.title || "").trim();
+
+  if (!data.id || !title) {
+    return json({
+      ok: false,
+      error: "Post ID and title are required."
+    }, 400);
+  }
+
   await env.DB.prepare(`
     UPDATE posts
     SET title = ?,
@@ -331,7 +396,7 @@ async function updateMyPost(request, env) {
     WHERE id = ?
       AND author_email = ?
   `).bind(
-    data.title || "",
+    title,
     data.body || "",
     data.link || "",
     data.linkedinUrl || "",
@@ -354,6 +419,10 @@ async function deleteMyPost(request, env) {
 
   const data = await request.json();
 
+  if (!data.id) {
+    return json({ ok: false, error: "Post ID is required." }, 400);
+  }
+
   await env.DB.prepare(`
     DELETE FROM posts
     WHERE id = ?
@@ -366,7 +435,8 @@ async function deleteMyPost(request, env) {
 function isAdmin(request, env) {
   const url = new URL(request.url);
   const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
-  return key && env.ADMIN_KEY && key === env.ADMIN_KEY;
+
+  return Boolean(key && env.ADMIN_KEY && key === env.ADMIN_KEY);
 }
 
 async function adminListPosts(request, env) {
@@ -404,7 +474,10 @@ async function adminListPosts(request, env) {
     ORDER BY datetime(created_at) DESC
   `).bind(...params).all();
 
-  return json({ ok: true, posts: posts.results });
+  return json({
+    ok: true,
+    posts: posts.results
+  });
 }
 
 async function adminApprovePost(request, env) {
@@ -413,6 +486,10 @@ async function adminApprovePost(request, env) {
   }
 
   const data = await request.json();
+
+  if (!data.id) {
+    return json({ ok: false, error: "Post ID is required." }, 400);
+  }
 
   await env.DB.prepare(`
     UPDATE posts
@@ -430,95 +507,14 @@ async function adminDeletePost(request, env) {
 
   const data = await request.json();
 
+  if (!data.id) {
+    return json({ ok: false, error: "Post ID is required." }, 400);
+  }
+
   await env.DB.prepare(`
     DELETE FROM posts
     WHERE id = ?
   `).bind(data.id).run();
 
   return json({ ok: true });
-}
-
-
-async function loadAdminPosts() {
-  const key = document.getElementById("adminKey").value;
-  const section = document.getElementById("sectionFilter").value;
-  const type = document.getElementById("typeFilter").value;
-  const status = document.getElementById("statusFilter").value;
-
-  const params = new URLSearchParams({ key });
-
-  if (section) params.set("section", section);
-  if (type) params.set("type", type);
-  if (status) params.set("status", status);
-
-  const res = await fetch("/api/admin/posts?" + params.toString());
-  const data = await res.json();
-
-  const box = document.getElementById("adminPostList");
-
-  if (!data.ok) {
-    box.innerHTML = "<p class='error'>" + escapeHtml(data.error || "Failed") + "</p>";
-    return;
-  }
-
-  if (!data.posts.length) {
-    box.innerHTML = "<p>No posts found.</p>";
-    return;
-  }
-
-  box.innerHTML = data.posts.map(post => \`
-    <article class="card admin-post">
-      <h3>\${escapeHtml(post.title)}</h3>
-      <p class="meta">\${escapeHtml(post.section)} · \${escapeHtml(post.type)} · \${escapeHtml(post.status)}</p>
-      <p>\${escapeHtml(post.body)}</p>
-
-      \${post.link ? \`<p><a class="btn" href="\${escapeHtml(post.link)}" target="_blank">Open Link</a></p>\` : ""}
-      \${post.linkedin_url ? \`<p><a class="btn" href="\${escapeHtml(post.linkedin_url)}" target="_blank">LinkedIn</a></p>\` : ""}
-
-      <p><strong>Author:</strong> \${escapeHtml(post.author_name)}</p>
-      <p><strong>Email:</strong> \${escapeHtml(post.author_email)}</p>
-
-      <div style="display:flex; gap:10px; flex-wrap:wrap;">
-        \${post.status === "pending" ? \`<button onclick="approvePost('\${post.id}')">Approve</button>\` : ""}
-        <button class="danger-btn" onclick="deletePost('\${post.id}')">Delete</button>
-      </div>
-    </article>
-  \`).join("");
-}
-
-async function approvePost(id) {
-  const key = document.getElementById("adminKey").value;
-
-  await fetch("/api/admin/approve", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Admin-Key": key
-    },
-    body: JSON.stringify({ id })
-  });
-
-  loadAdminPosts();
-}
-
-async function deletePost(id) {
-  if (!confirm("Delete this post?")) return;
-
-  const key = document.getElementById("adminKey").value;
-
-  await fetch("/api/admin/delete", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Admin-Key": key
-    },
-    body: JSON.stringify({ id })
-  });
-
-  loadAdminPosts();
-}
-</script>
-</body>
-</html>
-`;
 }
