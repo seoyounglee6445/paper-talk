@@ -21,6 +21,12 @@
 </header>
 
 <main class="container">
+  <div class="auth-box" style="text-align:right; margin-bottom:20px;">
+    <span id="userInfo"></span>
+    <a id="loginBtn" class="btn" href="/auth/google">Sign in with Google</a>
+    <a id="logoutBtn" class="btn danger-btn" href="/auth/logout" style="display:none;">Logout</a>
+  </div>
+
   <h1>Research Paper</h1>
   <p>Browse research papers uploaded by the admin.</p>
 
@@ -35,33 +41,88 @@
 <script src="/app.js"></script>
 
 <script>
-document.addEventListener("DOMContentLoaded", () => {
-  loadResearchPapers();
+let currentPage = 1;
+let isLoggedIn = false;
+
+document.addEventListener("DOMContentLoaded", async () => {
+  await checkLoginStatus();
+  loadResearchPapers(1);
 });
 
+async function checkLoginStatus() {
+  const res = await fetch("/api/me");
+  const data = await res.json();
+
+  isLoggedIn = data.ok;
+
+  const userInfo = document.getElementById("userInfo");
+  const loginBtn = document.getElementById("loginBtn");
+  const logoutBtn = document.getElementById("logoutBtn");
+
+  if (isLoggedIn) {
+    userInfo.textContent = `${data.user.name} `;
+    loginBtn.style.display = "none";
+    logoutBtn.style.display = "inline-block";
+  } else {
+    userInfo.textContent = "Sign in to view all papers. ";
+    loginBtn.style.display = "inline-block";
+    logoutBtn.style.display = "none";
+  }
+}
+
 async function loadResearchPapers(page = 1) {
+  currentPage = page;
+
   const res = await fetch("/api/posts?section=research&type=paper&page=" + page);
   const data = await res.json();
 
   const box = document.getElementById("researchList");
-  const pagination = document.getElementById("pagination");
+
+  if (!data.ok) {
+    box.innerHTML = `<p class="empty-posts">${escapeHtml(data.error || "Failed to load papers.")}</p>`;
+    return;
+  }
 
   if (!data.posts || data.posts.length === 0) {
     box.innerHTML = `<p class="empty-posts">No research papers yet.</p>`;
+    renderPagination(data);
     return;
   }
 
   box.innerHTML = data.posts.map(renderResearchPaper).join("");
+  renderPagination(data);
+}
 
-  pagination.innerHTML = "";
+function renderPagination(data) {
+  const pagination = document.getElementById("pagination");
+  if (!pagination) return;
 
-  for (let i = 1; i <= data.totalPages; i++) {
-    const btn = document.createElement("button");
-    btn.textContent = i;
-    if (i === data.page) btn.classList.add("active");
-    btn.onclick = () => loadResearchPapers(i);
-    pagination.appendChild(btn);
+  if (!data.isLoggedIn) {
+    pagination.innerHTML = `
+      <p class="empty-posts">
+        Sign in with Google to view older papers.
+      </p>
+    `;
+    return;
   }
+
+  if (!data.totalPages || data.totalPages <= 1) {
+    pagination.innerHTML = "";
+    return;
+  }
+
+  pagination.innerHTML = Array.from({ length: data.totalPages }, (_, i) => {
+    const page = i + 1;
+
+    return `
+      <button
+        class="page-btn ${page === data.page ? "active" : ""}"
+        onclick="loadResearchPapers(${page})"
+      >
+        ${page}
+      </button>
+    `;
+  }).join("");
 }
 
 function renderResearchPaper(p) {
