@@ -295,8 +295,17 @@ async function listPosts(request, env) {
   const url = new URL(request.url);
   const section = url.searchParams.get("section") || "research";
   const type = url.searchParams.get("type") || "";
-  const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
+
+  const user = await getSession(request, env);
+  const isLoggedIn = !!user;
+
+  let page = Math.max(Number(url.searchParams.get("page") || 1), 1);
   const limit = 10;
+
+  if (!isLoggedIn && (section === "research" || section === "study")) {
+    page = 1;
+  }
+
   const offset = (page - 1) * limit;
 
   if (section === "research" && isBlockedAI(request)) {
@@ -320,7 +329,11 @@ async function listPosts(request, env) {
     ${where}
   `).bind(...params).first();
 
-  const total = count ? count.total : 0;
+  const realTotal = count ? count.total : 0;
+  const visibleTotal =
+    !isLoggedIn && (section === "research" || section === "study")
+      ? Math.min(realTotal, 10)
+      : realTotal;
 
   const posts = await env.DB.prepare(`
     SELECT *
@@ -335,8 +348,9 @@ async function listPosts(request, env) {
     posts: posts.results,
     page,
     perPage: limit,
-    total,
-    totalPages: Math.ceil(total / limit)
+    total: visibleTotal,
+    totalPages: Math.max(Math.ceil(visibleTotal / limit), 1),
+    isLoggedIn
   });
 }
 
