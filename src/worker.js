@@ -17,6 +17,7 @@ export default {
     if (url.pathname === "/api/posts" && request.method === "POST") return createPost(request, env);
 
     if (url.pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
+    if (url.pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
     if (url.pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
     if (url.pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
 
@@ -309,10 +310,7 @@ async function listPosts(request, env) {
   const offset = (page - 1) * limit;
 
   if (section === "research" && isBlockedAI(request)) {
-    return json({
-      ok: false,
-      error: "Access denied."
-    }, 403);
+    return json({ ok: false, error: "Access denied." }, 403);
   }
 
   let where = "WHERE section = ? AND status = 'published'";
@@ -497,6 +495,22 @@ function isAdmin(request, env) {
   const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
 
   return Boolean(key && env.ADMIN_KEY && key === env.ADMIN_KEY);
+}
+
+async function adminUserCount(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const result = await env.DB.prepare(`
+    SELECT COUNT(*) AS total
+    FROM users
+  `).first();
+
+  return json({
+    ok: true,
+    total: result ? result.total : 0
+  });
 }
 
 async function adminListPosts(request, env) {
