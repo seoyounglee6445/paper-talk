@@ -296,7 +296,7 @@ async function listPosts(request, env) {
   const section = url.searchParams.get("section") || "research";
   const type = url.searchParams.get("type") || "";
   const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
-  const limit = 20;
+  const limit = 10;
   const offset = (page - 1) * limit;
 
   if (section === "research" && isBlockedAI(request)) {
@@ -320,6 +320,8 @@ async function listPosts(request, env) {
     ${where}
   `).bind(...params).first();
 
+  const total = count ? count.total : 0;
+
   const posts = await env.DB.prepare(`
     SELECT *
     FROM posts
@@ -333,8 +335,8 @@ async function listPosts(request, env) {
     posts: posts.results,
     page,
     perPage: limit,
-    total: count ? count.total : 0,
-    totalPages: Math.ceil((count ? count.total : 0) / limit)
+    total,
+    totalPages: Math.ceil(total / limit)
   });
 }
 
@@ -668,18 +670,19 @@ async function adminSaveMethodologyPage(request, env) {
   }
 
   const data = await request.json();
-  const title = String(data.title || "Methodology").trim();
-  const body = String(data.body || "").trim();
+  const title = String(data.title || "").trim();
 
-  if (!body) {
-    return json({ ok: false, error: "Methodology content is required." }, 400);
+  if (!title) {
+    return json({ ok: false, error: "Title is required." }, 400);
   }
 
-  await env.DB.prepare(`
-    DELETE FROM posts
-    WHERE section = 'study'
-      AND type = 'methodology_page'
-  `).run();
+  const methodologyData = {
+    category: data.category || "",
+    tags: data.tags || "",
+    body: data.body || "",
+    note: data.note || "",
+    link: data.link || ""
+  };
 
   await env.DB.prepare(`
     INSERT INTO posts (
@@ -694,16 +697,17 @@ async function adminSaveMethodologyPage(request, env) {
       linkedin_url,
       status
     )
-    VALUES (?, 'study', 'methodology_page', ?, ?, '', 'Admin', '', '', 'published')
+    VALUES (?, 'study', 'methodology_page', ?, ?, ?, 'Admin', '', '', 'published')
   `).bind(
     crypto.randomUUID(),
     title,
-    body
+    JSON.stringify(methodologyData),
+    data.link || ""
   ).run();
 
   return json({
     ok: true,
-    message: "Methodology page saved."
+    message: "Methodology post saved."
   });
 }
 
