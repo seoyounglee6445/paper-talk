@@ -21,6 +21,12 @@
 </header>
 
 <main class="container">
+  <div class="auth-box" style="text-align:right; margin-bottom:20px;">
+    <span id="userInfo"></span>
+    <a id="loginBtn" class="btn" href="/auth/google">Sign in with Google</a>
+    <a id="logoutBtn" class="btn danger-btn" href="/auth/logout" style="display:none;">Logout</a>
+  </div>
+
   <h1>Study Materials</h1>
   <p>Choose a study category.</p>
 
@@ -38,10 +44,18 @@
   </section>
 
   <section id="postList"></section>
+  <div id="pagination" class="pagination"></div>
 </main>
 
 <script>
 let currentType = "study_post";
+let currentPage = 1;
+let isLoggedIn = false;
+
+document.addEventListener("DOMContentLoaded", async () => {
+  await checkLoginStatus();
+  loadPosts(1);
+});
 
 function escapeHtml(value) {
   return String(value || "")
@@ -64,8 +78,30 @@ function parseJsonBody(body) {
   }
 }
 
+async function checkLoginStatus() {
+  const res = await fetch("/api/me");
+  const data = await res.json();
+
+  isLoggedIn = data.ok;
+
+  const userInfo = document.getElementById("userInfo");
+  const loginBtn = document.getElementById("loginBtn");
+  const logoutBtn = document.getElementById("logoutBtn");
+
+  if (isLoggedIn) {
+    userInfo.textContent = `${data.user.name} `;
+    loginBtn.style.display = "none";
+    logoutBtn.style.display = "inline-block";
+  } else {
+    userInfo.textContent = "Sign in to view all study materials. ";
+    loginBtn.style.display = "inline-block";
+    logoutBtn.style.display = "none";
+  }
+}
+
 function showStudyCategory(type, button) {
   currentType = type;
+  currentPage = 1;
 
   document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
   button.classList.add("active");
@@ -88,16 +124,19 @@ function showStudyCategory(type, button) {
     description.textContent = "Curated external blog posts and web articles related to research.";
   }
 
-  loadPosts();
+  loadPosts(1);
 }
 
-async function loadPosts() {
+async function loadPosts(page = 1) {
+  currentPage = page;
+
   const box = document.getElementById("postList");
   box.innerHTML = "<p>Loading...</p>";
 
   const params = new URLSearchParams({
     section: "study",
-    type: currentType
+    type: currentType,
+    page: currentPage
   });
 
   const res = await fetch("/api/posts?" + params.toString());
@@ -105,11 +144,13 @@ async function loadPosts() {
 
   if (!data.ok) {
     box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load posts.")}</p>`;
+    renderPagination(data);
     return;
   }
 
-  if (!data.posts.length) {
+  if (!data.posts || !data.posts.length) {
     box.innerHTML = "<p>No content yet.</p>";
+    renderPagination(data);
     return;
   }
 
@@ -165,9 +206,41 @@ async function loadPosts() {
 
     return "";
   }).join("");
+
+  renderPagination(data);
 }
 
-loadPosts();
+function renderPagination(data) {
+  const pagination = document.getElementById("pagination");
+  if (!pagination) return;
+
+  if (!data.isLoggedIn) {
+    pagination.innerHTML = `
+      <p class="empty-posts">
+        Sign in with Google to view older study materials.
+      </p>
+    `;
+    return;
+  }
+
+  if (!data.totalPages || data.totalPages <= 1) {
+    pagination.innerHTML = "";
+    return;
+  }
+
+  pagination.innerHTML = Array.from({ length: data.totalPages }, (_, i) => {
+    const page = i + 1;
+
+    return `
+      <button
+        class="page-btn ${page === data.page ? "active" : ""}"
+        onclick="loadPosts(${page})"
+      >
+        ${page}
+      </button>
+    `;
+  }).join("");
+}
 </script>
 </body>
 </html>
