@@ -21,7 +21,7 @@
 
 <main class="container">
   <h1>Site Admin</h1>
-  <p>Manage research papers, study posts, methodology posts, blog posts, approvals, and deletion.</p>
+  <p>Manage research papers, study posts, methodology posts, blog posts, users, approvals, and deletion.</p>
 
   <section class="card">
     <h2>Admin Access</h2>
@@ -34,6 +34,13 @@
     <button class="danger-btn" onclick="clearAdminKey()">Clear Admin Key</button>
 
     <p id="adminKeyStatus"></p>
+  </section>
+
+  <section class="card">
+    <h2>Users</h2>
+    <p>Check how many users have signed in with Google.</p>
+    <button onclick="loadUserCount()">Show User Count</button>
+    <p id="userCountBox"></p>
   </section>
 
   <section class="card write-form">
@@ -343,6 +350,23 @@ function updateAdminKeyStatus() {
 
   const minutesLeft = Math.max(Math.ceil((expires - Date.now()) / 60000), 0);
   status.textContent = `Admin key saved. Expires in about ${minutesLeft} minutes.`;
+}
+
+async function loadUserCount() {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const res = await fetch("/api/admin/users/count?key=" + encodeURIComponent(key));
+  const data = await res.json();
+
+  const box = document.getElementById("userCountBox");
+
+  if (!data.ok) {
+    box.textContent = data.error || "Failed to load user count.";
+    return;
+  }
+
+  box.textContent = `Total registered users: ${data.total}`;
 }
 
 async function createResearchPaper(e) {
