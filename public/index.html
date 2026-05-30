@@ -45,11 +45,18 @@
 <script src="/app.js"></script>
 
 <script>
+const HOME_LIMIT = 10;
+
 document.addEventListener("DOMContentLoaded", () => {
   loadHomePapers();
   loadHomeConference();
   loadHomeLinkedIn();
 });
+
+function formatDate(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleDateString();
+}
 
 async function loadHomePapers() {
   const res = await fetch("/api/posts?section=research&type=paper&page=1");
@@ -58,15 +65,17 @@ async function loadHomePapers() {
   const box = document.getElementById("homePapers");
   if (!box) return;
 
-  if (!data.posts || data.posts.length === 0) {
+  const posts = (data.posts || []).slice(0, HOME_LIMIT);
+
+  if (posts.length === 0) {
     box.innerHTML = `<p class="empty-posts">No papers yet.</p>`;
     return;
   }
 
-  box.innerHTML = data.posts.slice(0, 10).map(p => `
+  box.innerHTML = posts.map(p => `
     <div class="home-list-item">
       <h3>${escapeHtml(p.title)}</h3>
-      <p>Research Paper · ${new Date(p.created_at).toLocaleDateString()}</p>
+      <p>Research Paper · ${formatDate(p.created_at)}</p>
     </div>
   `).join("");
 }
@@ -78,15 +87,17 @@ async function loadHomeConference() {
   const box = document.getElementById("homeConference");
   if (!box) return;
 
-  if (!data.posts || data.posts.length === 0) {
+  const posts = (data.posts || []).slice(0, HOME_LIMIT);
+
+  if (posts.length === 0) {
     box.innerHTML = `<p class="empty-posts">No conference notices yet.</p>`;
     return;
   }
 
-  box.innerHTML = data.posts.slice(0, 10).map(p => `
+  box.innerHTML = posts.map(p => `
     <div class="home-list-item">
       <h3>${escapeHtml(p.title)}</h3>
-      <p>Conference Notice · ${new Date(p.created_at).toLocaleDateString()}</p>
+      <p>Conference Notice · ${formatDate(p.created_at)}</p>
     </div>
   `).join("");
 }
@@ -98,15 +109,17 @@ async function loadHomeLinkedIn() {
   const box = document.getElementById("homeLinkedin");
   if (!box) return;
 
-  if (!data.posts || data.posts.length === 0) {
+  const posts = (data.posts || []).slice(0, HOME_LIMIT);
+
+  if (posts.length === 0) {
     box.innerHTML = `<p class="empty-posts">No LinkedIn posts yet.</p>`;
     return;
   }
 
-  box.innerHTML = data.posts.slice(0, 10).map(p => `
+  box.innerHTML = posts.map(p => `
     <div class="home-list-item">
       <h3>${escapeHtml(p.title)}</h3>
-      <p>LinkedIn Promotion · ${new Date(p.created_at).toLocaleDateString()}</p>
+      <p>LinkedIn Promotion · ${formatDate(p.created_at)}</p>
     </div>
   `).join("");
 }
