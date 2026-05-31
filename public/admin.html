@@ -45,6 +45,14 @@
     <p id="userCountBox"></p>
   </section>
 
+
+  <section class="card">
+    <h2>Reindex Research Papers</h2>
+    <p>Rebuild the Paper_Talk GPT knowledge base from all published Research Paper posts. Use this after deploying a new Worker or after deleting rows from research_knowledge.</p>
+    <button onclick="reindexResearchPapers()">Reindex Research Papers</button>
+    <p id="reindexStatus"></p>
+  </section>
+
   <section class="card write-form">
     <h2>New Research Paper</h2>
 
@@ -367,6 +375,40 @@ function updateAdminKeyStatus() {
 
   const minutesLeft = Math.max(Math.ceil((expires - Date.now()) / 60000), 0);
   status.textContent = `Admin key saved. Expires in about ${minutesLeft} minutes.`;
+}
+
+
+async function reindexResearchPapers() {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const status = document.getElementById("reindexStatus");
+  status.textContent = "Reindexing research papers... Please wait.";
+
+  try {
+    const res = await fetch("/api/admin/research/reindex", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      }
+    });
+
+    const data = await res.json();
+
+    if (!data.ok) {
+      status.textContent = data.error || "Reindex failed.";
+      alert(data.error || "Reindex failed.");
+      return;
+    }
+
+    const message = data.message || `Reindexed ${data.indexed || 0} research papers. Failed: ${data.failed || 0}`;
+    status.textContent = message;
+    alert(message);
+  } catch (error) {
+    status.textContent = error?.message || "Reindex request failed.";
+    alert(status.textContent);
+  }
 }
 
 async function loadUserCount() {
