@@ -1116,7 +1116,7 @@ async function gptChat(request, env) {
   if (quotaBefore.used >= quotaBefore.limit) {
     return json({
       ok: false,
-      error: "이번 달 질문 횟수 10회를 모두 사용했습니다. 1인당 매월 10회씩 다시 충전됩니다.",
+     error: "Monthly limit reached. You have used all 10 questions for this month. Your quota will reset automatically next month.",
       quota: {
         used: quotaBefore.used,
         limit: quotaBefore.limit,
