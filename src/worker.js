@@ -1234,12 +1234,25 @@ async function gptChat(request, env) {
 }
 
 async function getMonthlyGptQuota(userId, env) {
+  const now = new Date();
+  const monthKey = now.toISOString().slice(0, 7);
   const monthlyLimit = 10;
 
+  const result = await env.DB.prepare(`
+    SELECT COUNT(*) AS used
+    FROM gpt_messages
+    WHERE user_id = ?
+      AND role = 'user'
+      AND substr(created_at, 1, 7) = ?
+  `).bind(userId, monthKey).first();
+
+  const used = result ? Number(result.used || 0) : 0;
+
   return {
-    used: 0,
+    used,
     limit: monthlyLimit,
-    remaining: monthlyLimit
+    remaining: Math.max(monthlyLimit - used, 0),
+    monthKey
   };
 }
 
