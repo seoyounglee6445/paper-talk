@@ -55,6 +55,10 @@ export default {
       return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
     }
 
+    if (url.pathname === "/admin-gpt" || url.pathname === "/admin-gpt.html") {
+      return env.ASSETS.fetch(new Request(new URL("/admin-gpt.html", request.url)));
+    }
+
     if (url.pathname === "/research") {
       return env.ASSETS.fetch(new Request(new URL("/research.html", request.url)));
     }
@@ -1176,7 +1180,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, recentMessages }, 
     {
       role: "system",
       content: `
-You are Paper_Talk Visium GPT, a research assistant for cancer genomics, bioinformatics, spatial transcriptomics, and Visium-related research.
+You are Paper_Talk Vision GPT, a research assistant for cancer genomics, bioinformatics, spatial transcriptomics, and Visium-related research.
 
 Rules:
 - Use the provided Paper_Talk research knowledge base when relevant.
@@ -1201,26 +1205,40 @@ Rules:
     }
   ];
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: env.OPENAI_MODEL || "gpt-4o-mini",
-      messages,
-      temperature: 0.3
-    })
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
 
-  const data = await res.json();
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        messages,
+        temperature: 0.3
+      })
+    });
 
-  if (!res.ok) {
-    return `OpenAI API error: ${data.error?.message || "Unknown error"}`;
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      return `OpenAI API error: ${data.error?.message || `HTTP ${res.status}`}`;
+    }
+
+    return data.choices?.[0]?.message?.content || "No answer was generated.";
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      return "OpenAI API timeout. Please try again.";
+    }
+
+    return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return data.choices?.[0]?.message?.content || "No answer was generated.";
 }
 
 async function adminListGptThreads(request, env) {
