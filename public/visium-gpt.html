@@ -112,14 +112,14 @@ button {
 </header>
 
 <main class="container">
-  <h1>Paper_Talk Visium GPT</h1>
-  <p>Private GPT workspace for signed-in Paper_Talk users. It answers using Research Paper knowledge added by the admin.</p>
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:16px;">
+    <div>
+      <h1>Paper_Talk Visium GPT</h1>
+      <p>Private GPT workspace for signed-in Paper_Talk users. It answers using Research Paper knowledge added by the admin.</p>
+    </div>
 
-  <div id="loginBox" class="login-box" style="display:none;">
-    <h2>Login required</h2>
-    <p>Please sign in with Google to use Paper_Talk Visium GPT.</p>
-    <a href="/auth/google">
-      <button>Sign in with Google</button>
+    <a id="logoutBtn" href="/auth/logout" style="display:none;">
+      <button>Logout</button>
     </a>
   </div>
 
