@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPT Usage | Paper_Talk Admin</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+<header class="header">
+  <nav class="nav">
+    <div class="logo">Paper_Talk Admin</div>
+    <a href="/">Home</a>
+    <a href="/admin.html">Admin</a>
+    <a href="/admin-gpt.html">GPT Usage</a>
+    <a href="/research">Research Paper</a>
+    <a href="/study">Study Materials</a>
+    <a href="/community">Community</a>
+    <a href="/career">Career</a>
+  </nav>
+</header>
+
+<main class="container">
+  <h1>GPT Usage</h1>
+  <p>View all Paper_Talk Vision GPT chats created by signed-in users.</p>
+
+  <section class="card">
+    <h2>Admin Access</h2>
+    <label>Admin Key</label>
+    <input id="adminKey" type="password" placeholder="Enter admin key">
+    <button onclick="saveKey()">Save Key</button>
+    <button onclick="loadThreads()">Load GPT Chats</button>
+    <p id="status"></p>
+  </section>
+
+  <section class="card">
+    <h2>GPT Chat Threads</h2>
+    <div id="threadList"></div>
+  </section>
+
+  <section class="card">
+    <h2>Messages</h2>
+    <div id="messageList"></div>
+  </section>
+</main>
+
+<script>
+const KEY_NAME = "paperTalkAdminKey";
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function saveKey() {
+  const key = document.getElementById("adminKey").value.trim();
+  if (!key) {
+    alert("Please enter admin key.");
+    return;
+  }
+  localStorage.setItem(KEY_NAME, key);
+  document.getElementById("status").textContent = "Admin key saved.";
+}
+
+function getKey() {
+  return localStorage.getItem(KEY_NAME) || document.getElementById("adminKey").value.trim();
+}
+
+async function loadThreads() {
+  const key = getKey();
+  if (!key) {
+    alert("Please enter admin key.");
+    return;
+  }
+
+  const res = await fetch("/api/admin/gpt/threads?key=" + encodeURIComponent(key));
+  const data = await res.json();
+
+  const box = document.getElementById("threadList");
+
+  if (!data.ok) {
+    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load GPT chats.")}</p>`;
+    return;
+  }
+
+  if (!data.threads.length) {
+    box.innerHTML = "<p>No GPT chats yet.</p>";
+    return;
+  }
+
+  box.innerHTML = data.threads.map(t => `
+    <article class="post-card">
+      <h3>${escapeHtml(t.title || "New chat")}</h3>
+      <p><strong>User:</strong> ${escapeHtml(t.user_name || "")}</p>
+      <p><strong>Email:</strong> ${escapeHtml(t.user_email || "")}</p>
+      <p><strong>Created:</strong> ${escapeHtml(t.created_at)}</p>
+      <p><strong>Updated:</strong> ${escapeHtml(t.updated_at)}</p>
+      <button onclick="loadMessages('${t.id}')">View Messages</button>
+    </article>
+  `).join("");
+}
+
+async function loadMessages(threadId) {
+  const key = getKey();
+  if (!key) {
+    alert("Please enter admin key.");
+    return;
+  }
+
+  const params = new URLSearchParams({
+    key,
+    threadId
+  });
+
+  const res = await fetch("/api/admin/gpt/messages?" + params.toString());
+  const data = await res.json();
+
+  const box = document.getElementById("messageList");
+
+  if (!data.ok) {
+    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load messages.")}</p>`;
+    return;
+  }
+
+  if (!data.messages.length) {
+    box.innerHTML = "<p>No messages found.</p>";
+    return;
+  }
+
+  box.innerHTML = data.messages.map(m => `
+    <article class="post-card">
+      <p><strong>${escapeHtml(m.role)}</strong></p>
+      <p class="post-body">${escapeHtml(m.content).replaceAll("\\n", "<br>")}</p>
+      <p class="post-meta">${escapeHtml(m.created_at)}</p>
+    </article>
+  `).join("");
+}
+
+window.addEventListener("load", () => {
+  const key = localStorage.getItem(KEY_NAME);
+  if (key) {
+    document.getElementById("adminKey").value = key;
+  }
+});
+</script>
+</body>
+</html>
