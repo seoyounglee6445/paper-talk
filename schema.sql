@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS gpt_messages (
 
 CREATE TABLE IF NOT EXISTS research_knowledge (
   id TEXT PRIMARY KEY,
-  post_id TEXT NOT NULL,
+  post_id TEXT NOT NULL UNIQUE,
   title TEXT NOT NULL,
   source_url TEXT,
   pdf_link TEXT,
