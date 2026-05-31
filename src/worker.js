@@ -40,6 +40,10 @@ export default {
       return adminCreateResearchPaper(request, env);
     }
 
+    if (url.pathname === "/api/admin/research/reindex" && request.method === "POST") {
+      return adminReindexResearchPapers(request, env);
+    }
+
     if (url.pathname === "/api/admin/study/create" && request.method === "POST") {
       return adminCreateStudyPost(request, env);
     }
@@ -699,6 +703,48 @@ async function adminCreateResearchPaper(request, env) {
   return json({
     ok: true,
     message: "Research paper saved and added to Paper_Talk GPT knowledge base."
+  });
+}
+
+async function adminReindexResearchPapers(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const posts = await env.DB.prepare(`
+    SELECT *
+    FROM posts
+    WHERE section = 'research'
+      AND type = 'paper'
+      AND status = 'published'
+    ORDER BY datetime(created_at) DESC
+  `).all();
+
+  let indexed = 0;
+  let failed = 0;
+  const errors = [];
+
+  for (const post of posts.results || []) {
+    try {
+      await indexResearchPaperPost(post, env);
+      indexed++;
+    } catch (error) {
+      failed++;
+      errors.push({
+        id: post.id,
+        title: post.title,
+        error: error?.message || "Unknown error"
+      });
+    }
+  }
+
+  return json({
+    ok: true,
+    total: posts.results?.length || 0,
+    indexed,
+    failed,
+    errors: errors.slice(0, 20),
+    message: `Reindexed ${indexed} research papers. Failed: ${failed}`
   });
 }
 
