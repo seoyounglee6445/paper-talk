@@ -24,6 +24,7 @@ export default {
 
     if (url.pathname === "/api/gpt/threads" && request.method === "GET") return listGptThreads(request, env);
     if (url.pathname === "/api/gpt/threads" && request.method === "POST") return createGptThread(request, env);
+    if (url.pathname.startsWith("/api/gpt/threads/") && request.method === "DELETE") return deleteGptThread(request, env);
     if (url.pathname === "/api/gpt/messages" && request.method === "GET") return listGptMessages(request, env);
     if (url.pathname === "/api/gpt/chat" && request.method === "POST") return gptChat(request, env);
 
@@ -1012,6 +1013,20 @@ async function gptChat(request, env) {
     return json({ ok: false, error: "Message is required." }, 400);
   }
 
+  const quotaBefore = await getMonthlyGptQuota(user.id, env);
+
+  if (quotaBefore.used >= quotaBefore.limit) {
+    return json({
+      ok: false,
+      error: "이번 달 질문 횟수 10회를 모두 사용했습니다. 1인당 매월 10회씩 다시 충전됩니다.",
+      quota: {
+        used: quotaBefore.used,
+        limit: quotaBefore.limit,
+        remaining: 0
+      }
+    }, 429);
+  }
+
   if (!threadId) {
     threadId = crypto.randomUUID();
 
@@ -1100,16 +1115,86 @@ async function gptChat(request, env) {
     user.id
   ).run();
 
+  const quotaAfter = await getMonthlyGptQuota(user.id, env);
+
   return json({
     ok: true,
     threadId,
     answer: assistantText,
+    quota: {
+      used: quotaAfter.used,
+      limit: quotaAfter.limit,
+      remaining: quotaAfter.remaining
+    },
     sources: context.map(item => ({
       title: item.title,
       source_url: item.source_url,
       pdf_link: item.pdf_link
     }))
   });
+}
+
+async function getMonthlyGptQuota(userId, env) {
+  const now = new Date();
+  const monthKey = now.toISOString().slice(0, 7);
+  const monthlyLimit = 10;
+
+  const result = await env.DB.prepare(`
+    SELECT COUNT(*) AS used
+    FROM gpt_messages
+    WHERE user_id = ?
+      AND role = 'user'
+      AND substr(created_at, 1, 7) = ?
+  `).bind(userId, monthKey).first();
+
+  const used = result ? Number(result.used || 0) : 0;
+
+  return {
+    used,
+    limit: monthlyLimit,
+    remaining: Math.max(monthlyLimit - used, 0),
+    monthKey
+  };
+}
+
+async function deleteGptThread(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  const url = new URL(request.url);
+  const threadId = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() || "");
+
+  if (!threadId) {
+    return json({ ok: false, error: "threadId is required." }, 400);
+  }
+
+  const thread = await env.DB.prepare(`
+    SELECT *
+    FROM gpt_threads
+    WHERE id = ?
+      AND user_id = ?
+  `).bind(threadId, user.id).first();
+
+  if (!thread) {
+    return json({ ok: false, error: "Thread not found." }, 404);
+  }
+
+  await env.DB.prepare(`
+    DELETE FROM gpt_messages
+    WHERE thread_id = ?
+      AND user_id = ?
+  `).bind(threadId, user.id).run();
+
+  await env.DB.prepare(`
+    DELETE FROM gpt_threads
+    WHERE id = ?
+      AND user_id = ?
+  `).bind(threadId, user.id).run();
+
+  return json({ ok: true });
 }
 
 async function searchResearchKnowledge(query, env) {
