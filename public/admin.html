@@ -114,18 +114,19 @@
   </section>
 
   <section class="card write-form">
-    <h2>Import LinkedIn CSV to GPT Knowledge</h2>
-    <p>Paste the CSV text from LinkedIn export. This will save posts into the Paper_Talk GPT knowledge base.</p>
+  <h2>Import LinkedIn CSV to GPT Knowledge</h2>
+  <p>Select your LinkedIn Posts.csv or Shares.csv file. It will be imported into the Paper_Talk GPT knowledge base.</p>
 
-    <form onsubmit="importLinkedInCsv(event)">
-      <div class="full-row">
-        <label>LinkedIn CSV Text</label>
-        <textarea name="csvText" rows="14" placeholder="Paste LinkedIn Posts.csv or Shares.csv content here"></textarea>
-      </div>
+  <form onsubmit="importLinkedInCsvFile(event)">
+    <div class="full-row">
+      <label>LinkedIn CSV File</label>
+      <input type="file" id="linkedinCsvFile" accept=".csv,text/csv">
+    </div>
 
-      <button type="submit">Import LinkedIn CSV</button>
-    </form>
-  </section>
+    <button type="submit">Import LinkedIn CSV File</button>
+  </form>
+</section>
+  
 
   <section class="card write-form">
     <h2>New Study Post</h2>
