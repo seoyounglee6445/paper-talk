@@ -1532,17 +1532,7 @@ async function gptChat(request, env) {
 }
 
 async function getMonthlyGptQuota(userId, env, user = null) {
-  const ownerEmail = "seoyounglee6445@gmail.com";
   const monthlyLimit = 10;
-
-  if (user && user.email === ownerEmail) {
-    return {
-      used: 0,
-      limit: 999999,
-      remaining: 999999,
-      monthKey: new Date().toISOString().slice(0, 7)
-    };
-  }
 
   const now = new Date();
   const monthKey = now.toISOString().slice(0, 7);
@@ -1564,6 +1554,7 @@ async function getMonthlyGptQuota(userId, env, user = null) {
     monthKey
   };
 }
+
 async function deleteGptThread(request, env) {
   const user = await getSession(request, env);
 
