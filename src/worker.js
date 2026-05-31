@@ -870,7 +870,7 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
       updated_at
     )
     VALUES (?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP)
-    post_id TEXT NOT NULL UNIQUE
+    ON CONFLICT(post_id) DO UPDATE SET
       title = excluded.title,
       source_url = excluded.source_url,
       pdf_link = excluded.pdf_link,
