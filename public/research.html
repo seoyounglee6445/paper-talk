@@ -46,6 +46,12 @@ let isLoggedIn = false;
 
 document.addEventListener("DOMContentLoaded", async () => {
   await checkLoginStatus();
+
+  if (!isLoggedIn) {
+    showLoginRequired();
+    return;
+  }
+
   loadResearchPapers(1);
 });
 
@@ -70,7 +76,29 @@ async function checkLoginStatus() {
   }
 }
 
+function showLoginRequired() {
+  const toolbar = document.querySelector(".toolbar");
+  const box = document.getElementById("researchList");
+  const pagination = document.getElementById("pagination");
+
+  if (toolbar) toolbar.style.display = "none";
+  if (pagination) pagination.innerHTML = "";
+
+  box.innerHTML = `
+    <article class="post-card">
+      <h3>Google login required</h3>
+      <p class="post-body">Please sign in with Google to view research papers.</p>
+      <a class="btn" href="/auth/google">Sign in with Google</a>
+    </article>
+  `;
+}
+
 async function loadResearchPapers(page = 1) {
+  if (!isLoggedIn) {
+    showLoginRequired();
+    return;
+  }
+
   currentPage = page;
 
   const res = await fetch("/api/posts?section=research&type=paper&page=" + page);
