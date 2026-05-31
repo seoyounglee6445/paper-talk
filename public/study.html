@@ -30,21 +30,31 @@
   <h1>Study Materials</h1>
   <p>Choose a study category.</p>
 
-  <div class="category-tabs">
-    <button class="tab-btn active" onclick="showStudyCategory('study_post', this)">Study</button>
-    <button class="tab-btn" onclick="showStudyCategory('methodology_page', this)">Methodology</button>
-    <button class="tab-btn" onclick="showStudyCategory('blog', this)">Blog</button>
-  </div>
-
-  <section class="card">
-    <h2 id="categoryTitle">Study</h2>
-    <p id="categoryDescription">
-      General study materials and learning posts will be organized here.
+  <section id="loginRequiredBox" class="card" style="display:none;">
+    <h2>Login Required</h2>
+    <p>Please sign in with Google to view study materials.</p>
+    <p>
+      <a class="btn" href="/auth/google">Sign in with Google</a>
     </p>
   </section>
 
-  <section id="postList"></section>
-  <div id="pagination" class="pagination"></div>
+  <div id="studyContent">
+    <div class="category-tabs">
+      <button class="tab-btn active" onclick="showStudyCategory('study_post', this)">Study</button>
+      <button class="tab-btn" onclick="showStudyCategory('methodology_page', this)">Methodology</button>
+      <button class="tab-btn" onclick="showStudyCategory('blog', this)">Blog</button>
+    </div>
+
+    <section class="card">
+      <h2 id="categoryTitle">Study</h2>
+      <p id="categoryDescription">
+        General study materials and learning posts will be organized here.
+      </p>
+    </section>
+
+    <section id="postList"></section>
+    <div id="pagination" class="pagination"></div>
+  </div>
 </main>
 
 <script>
@@ -54,7 +64,10 @@ let isLoggedIn = false;
 
 document.addEventListener("DOMContentLoaded", async () => {
   await checkLoginStatus();
-  loadPosts(1);
+
+  if (isLoggedIn) {
+    loadPosts(1);
+  }
 });
 
 function escapeHtml(value) {
@@ -79,27 +92,44 @@ function parseJsonBody(body) {
 }
 
 async function checkLoginStatus() {
-  const res = await fetch("/api/me");
-  const data = await res.json();
-
-  isLoggedIn = data.ok;
-
   const userInfo = document.getElementById("userInfo");
   const loginBtn = document.getElementById("loginBtn");
   const logoutBtn = document.getElementById("logoutBtn");
+  const loginRequiredBox = document.getElementById("loginRequiredBox");
+  const studyContent = document.getElementById("studyContent");
 
-  if (isLoggedIn) {
-    userInfo.textContent = `${data.user.name} `;
-    loginBtn.style.display = "none";
-    logoutBtn.style.display = "inline-block";
-  } else {
+  try {
+    const res = await fetch("/api/me");
+    const data = await res.json();
+
+    isLoggedIn = data.ok;
+
+    if (isLoggedIn) {
+      userInfo.textContent = `${data.user.name} `;
+      loginBtn.style.display = "none";
+      logoutBtn.style.display = "inline-block";
+      loginRequiredBox.style.display = "none";
+      studyContent.style.display = "block";
+    } else {
+      userInfo.textContent = "Sign in to view all study materials. ";
+      loginBtn.style.display = "inline-block";
+      logoutBtn.style.display = "none";
+      loginRequiredBox.style.display = "block";
+      studyContent.style.display = "none";
+    }
+  } catch (error) {
+    isLoggedIn = false;
     userInfo.textContent = "Sign in to view all study materials. ";
     loginBtn.style.display = "inline-block";
     logoutBtn.style.display = "none";
+    loginRequiredBox.style.display = "block";
+    studyContent.style.display = "none";
   }
 }
 
 function showStudyCategory(type, button) {
+  if (!isLoggedIn) return;
+
   currentType = type;
   currentPage = 1;
 
@@ -128,6 +158,8 @@ function showStudyCategory(type, button) {
 }
 
 async function loadPosts(page = 1) {
+  if (!isLoggedIn) return;
+
   currentPage = page;
 
   const box = document.getElementById("postList");
@@ -214,12 +246,8 @@ function renderPagination(data) {
   const pagination = document.getElementById("pagination");
   if (!pagination) return;
 
-  if (!data.isLoggedIn) {
-    pagination.innerHTML = `
-      <p class="empty-posts">
-        Sign in with Google to view older study materials.
-      </p>
-    `;
+  if (!isLoggedIn || !data.isLoggedIn) {
+    pagination.innerHTML = "";
     return;
   }
 
