@@ -1,7 +1,4 @@
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS posts;
-
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT,
@@ -10,7 +7,7 @@ CREATE TABLE users (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE posts (
+CREATE TABLE IF NOT EXISTS posts (
   id TEXT PRIMARY KEY,
   section TEXT NOT NULL,
   type TEXT NOT NULL,
@@ -37,7 +34,7 @@ CREATE TABLE IF NOT EXISTS gpt_messages (
   id TEXT PRIMARY KEY,
   thread_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
-  role TEXT NOT NULL, -- user / assistant / system
+  role TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (thread_id) REFERENCES gpt_threads(id),
@@ -56,3 +53,12 @@ CREATE TABLE IF NOT EXISTS research_knowledge (
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (post_id) REFERENCES posts(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_gpt_threads_user_id
+ON gpt_threads(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_gpt_messages_thread_id
+ON gpt_messages(thread_id);
+
+CREATE INDEX IF NOT EXISTS idx_research_knowledge_post_id
+ON research_knowledge(post_id);
