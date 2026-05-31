@@ -1172,8 +1172,13 @@ async function callOpenAIForPaperTalk({ userMessage, context, recentMessages }, 
           item.source_url ? `Article: ${item.source_url}` : "",
           item.pdf_link ? `PDF: ${item.pdf_link}` : "",
           item.content || ""
-        ].filter(Boolean).join("\n");
-      }).join("\n\n---\n\n")
+        ].filter(Boolean).join("
+");
+      }).join("
+
+---
+
+")
     : "No matching research paper context was found in the Paper_Talk knowledge base.";
 
   const messages = [
@@ -1193,7 +1198,9 @@ Rules:
     },
     {
       role: "system",
-      content: `Paper_Talk research knowledge base:\n\n${contextText}`
+      content: `Paper_Talk research knowledge base:
+
+${contextText}`
     },
     ...recentMessages.map(m => ({
       role: m.role === "assistant" ? "assistant" : "user",
