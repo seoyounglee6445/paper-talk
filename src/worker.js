@@ -1611,9 +1611,31 @@ async function deleteGptThread(request, env) {
 }
 
 async function searchResearchKnowledge(query, env) {
-  return [];
-}
-  const directResults = await keywordFallbackSearch(userQuery, env);
+  const userQuery = String(query || "").trim();
+
+  if (!userQuery) {
+    try {
+      const latest = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 8
+      `).all();
+
+      return latest.results || [];
+    } catch {
+      return [];
+    }
+  }
+
+  let directResults = [];
+
+  try {
+    directResults = await keywordFallbackSearch(userQuery, env);
+  } catch {
+    directResults = [];
+  }
 
   if (directResults && directResults.length > 0) {
     return directResults;
@@ -1664,7 +1686,7 @@ async function searchResearchKnowledge(query, env) {
     }
 
     return results.slice(0, 8);
-  } catch (error) {
+  } catch {
     return [];
   }
 }
@@ -1734,15 +1756,19 @@ async function keywordFallbackSearch(query, env) {
   const rawQuery = String(query || "").trim();
 
   if (!rawQuery) {
-    const latest = await env.DB.prepare(`
-      SELECT title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE status = 'indexed'
-      ORDER BY datetime(updated_at) DESC
-      LIMIT 8
-    `).all();
+    try {
+      const latest = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 8
+      `).all();
 
-    return latest.results || [];
+      return latest.results || [];
+    } catch {
+      return [];
+    }
   }
 
   const cleanedQuery = rawQuery
@@ -1750,44 +1776,47 @@ async function keywordFallbackSearch(query, env) {
     .replace(/[{}]/g, "")
     .replace(/[^\p{L}\p{N}\s-]/gu, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .slice(0, 240);
+
+  if (!cleanedQuery) return [];
 
   const terms = cleanedQuery
     .split(/\s+/)
-    .filter(term => term.length >= 2)
-    .slice(0, 12);
+    .filter(term => term.length >= 3)
+    .slice(0, 4);
 
   const clauses = [];
   const params = [];
 
+  // Phrase search only on title to avoid D1 "LIKE pattern too complex" on long content.
   clauses.push(`LOWER(REPLACE(REPLACE(title, '{', ''), '}', '')) LIKE ?`);
   params.push(`%${cleanedQuery}%`);
 
-  clauses.push(`LOWER(REPLACE(REPLACE(content, '{', ''), '}', '')) LIKE ?`);
-  params.push(`%${cleanedQuery}%`);
-
+  // A few title-term searches are enough for long paper titles.
   for (const term of terms) {
     clauses.push(`LOWER(REPLACE(REPLACE(title, '{', ''), '}', '')) LIKE ?`);
     params.push(`%${term}%`);
-
-    clauses.push(`LOWER(REPLACE(REPLACE(content, '{', ''), '}', '')) LIKE ?`);
-    params.push(`%${term}%`);
   }
 
-  const result = await env.DB.prepare(`
-    SELECT title, source_url, pdf_link, content
-    FROM research_knowledge
-    WHERE status = 'indexed'
-      AND (${clauses.join(" OR ")})
-    ORDER BY datetime(updated_at) DESC
-    LIMIT 8
-  `).bind(...params).all();
+  try {
+    const result = await env.DB.prepare(`
+      SELECT title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE status = 'indexed'
+        AND (${clauses.join(" OR ")})
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 8
+    `).bind(...params).all();
 
-  return (result.results || []).map(item => ({
-    ...item,
-    title: cleanBibtexText(item.title),
-    content: cleanBibtexText(item.content)
-  }));
+    return (result.results || []).map(item => ({
+      ...item,
+      title: cleanBibtexText(item.title),
+      content: cleanBibtexText(item.content)
+    }));
+  } catch {
+    return [];
+  }
 }
 
 function cleanBibtexText(value) {
