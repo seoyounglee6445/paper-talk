@@ -89,6 +89,10 @@
   padding: 10px;
 }
 
+#stopBtn {
+  background: #ef4444;
+}
+
 @media (max-width: 900px) {
   .gpt-layout {
     grid-template-columns: 1fr;
@@ -155,6 +159,7 @@
       <div class="chat-input-row">
         <textarea id="messageInput" placeholder="Ask about Vision, spatial transcriptomics, cancer genomics..."></textarea>
         <button id="sendBtn">Send</button>
+        <button id="stopBtn" style="display:none;">Stop</button>
       </div>
     </section>
   </section>
@@ -163,6 +168,8 @@
 <script>
 let currentUser = null;
 let currentThreadId = null;
+let chatController = null;
+let isSending = false;
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -184,6 +191,7 @@ async function init() {
 
   document.getElementById("newThreadBtn").addEventListener("click", createThread);
   document.getElementById("sendBtn").addEventListener("click", sendMessage);
+  document.getElementById("stopBtn").addEventListener("click", stopMessage);
 
   document.getElementById("messageInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -226,6 +234,8 @@ async function loadThreads() {
 }
 
 async function createThread() {
+  if (isSending) return;
+
   const res = await fetch("/api/gpt/threads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -245,6 +255,8 @@ async function createThread() {
 }
 
 async function selectThread(threadId) {
+  if (isSending) return;
+
   currentThreadId = threadId;
   await loadThreads();
   await loadMessages();
@@ -277,41 +289,86 @@ async function loadMessages() {
 }
 
 async function sendMessage() {
+  if (isSending) return;
+
   const input = document.getElementById("messageInput");
+  const sendBtn = document.getElementById("sendBtn");
+  const stopBtn = document.getElementById("stopBtn");
   const text = input.value.trim();
 
   if (!text) return;
 
+  isSending = true;
   input.value = "";
+  sendBtn.style.display = "none";
+  stopBtn.style.display = "inline-block";
+
   addMessage("user", text);
   addMessage("assistant", "Thinking...");
-
   scrollChatToBottom();
 
-  const res = await fetch("/api/gpt/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      threadId: currentThreadId,
-      message: text
-    })
-  });
+  chatController = new AbortController();
 
-  const data = await res.json();
+  const timeout = setTimeout(() => {
+    if (chatController) chatController.abort();
+  }, 30000);
 
-  const thinking = document.querySelector(".message.assistant:last-child");
-  if (thinking) thinking.remove();
+  try {
+    const res = await fetch("/api/gpt/chat", {
+      method: "POST",
+      signal: chatController.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId: currentThreadId,
+        message: text
+      })
+    });
 
-  if (!data.ok) {
-    addMessage("assistant", data.error || "Something went wrong.");
-    return;
+    const data = await res.json();
+
+    removeLastThinking();
+
+    if (!data.ok) {
+      addMessage("assistant", data.error || "Something went wrong.");
+      return;
+    }
+
+    currentThreadId = data.threadId;
+    addMessage("assistant", data.answer || "No answer was generated.");
+
+    await loadThreads();
+    scrollChatToBottom();
+
+  } catch (error) {
+    removeLastThinking();
+
+    if (error.name === "AbortError") {
+      addMessage("assistant", "Stopped or timed out. Please try again.");
+    } else {
+      addMessage("assistant", error.message || "Request failed.");
+    }
+  } finally {
+    clearTimeout(timeout);
+    chatController = null;
+    isSending = false;
+    sendBtn.style.display = "inline-block";
+    stopBtn.style.display = "none";
   }
+}
 
-  currentThreadId = data.threadId;
-  addMessage("assistant", data.answer);
+function stopMessage() {
+  if (chatController) {
+    chatController.abort();
+  }
+}
 
-  await loadThreads();
-  scrollChatToBottom();
+function removeLastThinking() {
+  const messages = document.querySelectorAll(".message.assistant");
+  const last = messages[messages.length - 1];
+
+  if (last && last.textContent === "Thinking...") {
+    last.remove();
+  }
 }
 
 function addMessage(role, content) {
