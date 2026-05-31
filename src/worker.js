@@ -1,92 +1,107 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const pathname = url.pathname.replace(/\/+$/, "") || "/";
 
-    if (url.pathname === "/api/test-secret") {
+    try {
+      if (pathname === "/api/test-secret") {
+        return json({
+          hasKey: !!env.OPENAI_API_KEY
+        });
+      }
+
+      if (pathname === "/auth/google") return googleLogin(request, env);
+      if (pathname === "/auth/google/callback") return googleCallback(request, env);
+      if (pathname === "/auth/logout") return logout();
+      if (pathname === "/api/me") return apiMe(request, env);
+
+      if (pathname === "/api/delete-account" && request.method === "POST") return deleteAccount(request, env);
+
+      if (pathname === "/api/my/posts" && request.method === "GET") return myPosts(request, env);
+      if (pathname === "/api/my/update" && request.method === "POST") return updateMyPost(request, env);
+      if (pathname === "/api/my/delete" && request.method === "POST") return deleteMyPost(request, env);
+
+      if (pathname === "/api/posts" && request.method === "GET") return listPosts(request, env);
+      if (pathname === "/api/posts" && request.method === "POST") return createPost(request, env);
+
+      if (pathname === "/api/gpt/threads" && request.method === "GET") return listGptThreads(request, env);
+      if (pathname === "/api/gpt/threads" && request.method === "POST") return createGptThread(request, env);
+      if (pathname.startsWith("/api/gpt/threads/") && request.method === "DELETE") return deleteGptThread(request, env);
+      if (pathname === "/api/gpt/messages" && request.method === "GET") return listGptMessages(request, env);
+      if (pathname === "/api/gpt/chat" && request.method === "POST") return gptChat(request, env);
+
+      if (pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
+      if (pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
+
+      if (pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
+      if (pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
+      if (pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
+      if (pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
+
+      if (pathname === "/api/admin/research/import-linkedin-csv" && request.method === "POST") {
+        return adminImportLinkedInCsv(request, env);
+      }
+
+      if (pathname === "/api/admin/research/reindex" && request.method === "POST") {
+        return adminReindexResearchPapers(request, env);
+      }
+
+      if (pathname === "/api/admin/study/create" && request.method === "POST") {
+        return adminCreateStudyPost(request, env);
+      }
+
+      if (pathname === "/api/admin/methodology/save" && request.method === "POST") {
+        return adminSaveMethodologyPage(request, env);
+      }
+
+      if (pathname === "/api/admin/blog/create" && request.method === "POST") {
+        return adminCreateBlogPost(request, env);
+      }
+
+      if (pathname === "/admin" || pathname === "/admin.html") {
+        return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
+      }
+
+      if (pathname === "/admin-gpt" || pathname === "/admin-gpt.html") {
+        return env.ASSETS.fetch(new Request(new URL("/admin-gpt.html", request.url)));
+      }
+
+      if (pathname === "/research") {
+        return env.ASSETS.fetch(new Request(new URL("/research.html", request.url)));
+      }
+
+      if (pathname === "/study") {
+        return env.ASSETS.fetch(new Request(new URL("/study.html", request.url)));
+      }
+
+      if (pathname === "/visium-gpt") {
+        return env.ASSETS.fetch(new Request(new URL("/visium-gpt.html", request.url)));
+      }
+
+      if (pathname === "/community") {
+        return env.ASSETS.fetch(new Request(new URL("/community.html", request.url)));
+      }
+
+      if (pathname === "/career") {
+        return env.ASSETS.fetch(new Request(new URL("/career.html", request.url)));
+      }
+
+      if (pathname.startsWith("/api/")) {
+        return json({
+          ok: false,
+          error: `API route not found: ${pathname}`
+        }, 404);
+      }
+
+      if (env.ASSETS) return env.ASSETS.fetch(request);
+
+      return new Response("Not found", { status: 404 });
+    } catch (error) {
       return json({
-        hasKey: !!env.OPENAI_API_KEY
-      });
+        ok: false,
+        error: error?.message || "Worker server error"
+      }, 500);
     }
-
-    if (url.pathname === "/auth/google") return googleLogin(request, env);
-    if (url.pathname === "/auth/google/callback") return googleCallback(request, env);
-    if (url.pathname === "/auth/logout") return logout();
-    if (url.pathname === "/api/me") return apiMe(request, env);
-
-    if (url.pathname === "/api/delete-account" && request.method === "POST") return deleteAccount(request, env);
-
-    if (url.pathname === "/api/my/posts" && request.method === "GET") return myPosts(request, env);
-    if (url.pathname === "/api/my/update" && request.method === "POST") return updateMyPost(request, env);
-    if (url.pathname === "/api/my/delete" && request.method === "POST") return deleteMyPost(request, env);
-
-    if (url.pathname === "/api/posts" && request.method === "GET") return listPosts(request, env);
-    if (url.pathname === "/api/posts" && request.method === "POST") return createPost(request, env);
-
-    if (url.pathname === "/api/gpt/threads" && request.method === "GET") return listGptThreads(request, env);
-    if (url.pathname === "/api/gpt/threads" && request.method === "POST") return createGptThread(request, env);
-    if (url.pathname.startsWith("/api/gpt/threads/") && request.method === "DELETE") return deleteGptThread(request, env);
-    if (url.pathname === "/api/gpt/messages" && request.method === "GET") return listGptMessages(request, env);
-    if (url.pathname === "/api/gpt/chat" && request.method === "POST") return gptChat(request, env);
-
-    if (url.pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
-    if (url.pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
-
-    if (url.pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
-    if (url.pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
-    if (url.pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
-    if (url.pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
-
-    if (url.pathname === "/api/admin/research/import-linkedin-csv" && request.method === "POST") {
-      return adminImportLinkedInCsv(request, env);
-    }
-
-    if (url.pathname === "/api/admin/research/reindex" && request.method === "POST") {
-      return adminReindexResearchPapers(request, env);
-    }
-
-    if (url.pathname === "/api/admin/study/create" && request.method === "POST") {
-      return adminCreateStudyPost(request, env);
-    }
-
-    if (url.pathname === "/api/admin/methodology/save" && request.method === "POST") {
-      return adminSaveMethodologyPage(request, env);
-    }
-
-    if (url.pathname === "/api/admin/blog/create" && request.method === "POST") {
-      return adminCreateBlogPost(request, env);
-    }
-
-    if (url.pathname === "/admin" || url.pathname === "/admin.html") {
-      return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
-    }
-
-    if (url.pathname === "/admin-gpt" || url.pathname === "/admin-gpt.html") {
-      return env.ASSETS.fetch(new Request(new URL("/admin-gpt.html", request.url)));
-    }
-
-    if (url.pathname === "/research") {
-      return env.ASSETS.fetch(new Request(new URL("/research.html", request.url)));
-    }
-
-    if (url.pathname === "/study") {
-      return env.ASSETS.fetch(new Request(new URL("/study.html", request.url)));
-    }
-
-    if (url.pathname === "/visium-gpt") {
-      return env.ASSETS.fetch(new Request(new URL("/visium-gpt.html", request.url)));
-    }
-
-    if (url.pathname === "/community") {
-      return env.ASSETS.fetch(new Request(new URL("/community.html", request.url)));
-    }
-
-    if (url.pathname === "/career") {
-      return env.ASSETS.fetch(new Request(new URL("/career.html", request.url)));
-    }
-
-    if (env.ASSETS) return env.ASSETS.fetch(request);
-
-    return new Response("Not found", { status: 404 });
   }
 };
 
@@ -412,7 +427,7 @@ async function createPost(request, env) {
     }, 401);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
 
   const section = String(data.section || "").trim();
   const type = String(data.type || "").trim();
@@ -484,7 +499,7 @@ async function updateMyPost(request, env) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
 
   if (!data.id || !title) {
@@ -525,7 +540,7 @@ async function deleteMyPost(request, env) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
 
   if (!data.id) {
     return json({ ok: false, error: "Post ID is required." }, 400);
@@ -609,7 +624,7 @@ async function adminApprovePost(request, env) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
 
   if (!data.id) {
     return json({ ok: false, error: "Post ID is required." }, 400);
@@ -639,7 +654,7 @@ async function adminDeletePost(request, env) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
 
   if (!data.id) {
     return json({ ok: false, error: "Post ID is required." }, 400);
@@ -672,7 +687,7 @@ async function adminCreateResearchPaper(request, env) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
 
   if (!title) {
@@ -1051,7 +1066,7 @@ async function adminCreateStudyPost(request, env) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
 
   if (!title) {
@@ -1098,7 +1113,7 @@ async function adminSaveMethodologyPage(request, env) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
 
   if (!title) {
@@ -1145,7 +1160,7 @@ async function adminCreateBlogPost(request, env) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
 
   if (!title) {
@@ -1401,7 +1416,7 @@ async function gptChat(request, env) {
     return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
   }
 
-  const data = await request.json();
+  const data = await request.json().catch(() => ({}));
   const message = String(data.message || "").trim();
   let threadId = String(data.threadId || "").trim();
 
@@ -1409,12 +1424,12 @@ async function gptChat(request, env) {
     return json({ ok: false, error: "Message is required." }, 400);
   }
 
- const quotaBefore = await getMonthlyGptQuota(user.id, env, user);
+  const quotaBefore = await getMonthlyGptQuota(user.id, env, user);
 
   if (quotaBefore.used >= quotaBefore.limit) {
     return json({
       ok: false,
-     error: "Monthly limit reached. You have used all 10 questions for this month. Your quota will reset automatically next month.",
+      error: "Monthly limit reached. You have used all 10 questions for this month. Your quota will reset automatically next month.",
       quota: {
         used: quotaBefore.used,
         limit: quotaBefore.limit,
@@ -1511,7 +1526,7 @@ async function gptChat(request, env) {
     user.id
   ).run();
 
- const quotaAfter = await getMonthlyGptQuota(user.id, env, user);
+  const quotaAfter = await getMonthlyGptQuota(user.id, env, user);
 
   return json({
     ok: true,
@@ -1795,7 +1810,6 @@ function cleanBibtexText(value) {
     .trim();
 }
 
-
 async function getRecentThreadMessages(threadId, userId, env) {
   const result = await env.DB.prepare(`
     SELECT role, content
@@ -1882,13 +1896,20 @@ Rules:
       })
     });
 
-    const data = await res.json().catch(() => ({}));
+    const raw = await res.text();
+    let data = {};
 
-    if (!res.ok) {
-      return `OpenAI API error: ${data.error?.message || `HTTP ${res.status}`}`;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return `OpenAI API returned non-JSON response:\n\n${raw.slice(0, 500)}`;
     }
 
-    return data.choices?.[0]?.message?.content || "No answer was generated.";
+    if (!res.ok) {
+      return `OpenAI API error: ${data?.error?.message || `HTTP ${res.status}`}`;
+    }
+
+    return data?.choices?.[0]?.message?.content || "No answer was generated.";
   } catch (error) {
     if (error && error.name === "AbortError") {
       return "OpenAI API timeout. Please try again.";
@@ -1899,7 +1920,6 @@ Rules:
     clearTimeout(timeout);
   }
 }
-
 
 async function adminListGptThreads(request, env) {
   if (!isAdmin(request, env)) {
