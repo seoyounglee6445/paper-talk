@@ -1290,30 +1290,258 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
   return true;
 }
 
+
 async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink }) {
+  const normalizedTitle = cleanFetchedArticleText(title || "");
   const urls = [sourceUrl, pdfLink]
     .map(v => String(v || "").trim())
     .filter(Boolean);
 
   const collected = [];
+  const doi = extractDoiFromTextOrUrl([sourceUrl, pdfLink, title].join("\n"));
 
+  // 1) DOI/title 기반 공개 학술 메타데이터를 먼저 수집합니다.
+  // ScienceDirect/Wiley 같은 출판사 페이지는 Worker fetch가 차단될 수 있으므로
+  // Crossref + Europe PMC/PubMed 계열 API를 우선 사용합니다.
+  try {
+    const crossref = await fetchCrossrefKnowledge({ doi, title: normalizedTitle });
+    if (crossref) collected.push(crossref);
+  } catch {
+    // Continue with other sources.
+  }
+
+  try {
+    const europePmc = await fetchEuropePmcKnowledge({ doi, title: normalizedTitle });
+    if (europePmc) collected.push(europePmc);
+  } catch {
+    // Continue with direct link fallback.
+  }
+
+  // 2) 그래도 부족하면 원문 링크 HTML 메타데이터/초록을 직접 시도합니다.
   for (const url of urls) {
     try {
-      const item = await fetchReadableArticleText(url, title);
+      const item = await fetchReadableArticleText(url, normalizedTitle);
       if (item) collected.push(item);
     } catch {
       // Some publisher pages block automated access. Do not fail saving/indexing.
     }
   }
 
-  return cleanFetchedArticleText(collected.join("\n\n")).slice(0, 18000);
+  const finalText = cleanFetchedArticleText(collected.join("\n\n"));
+  return finalText.slice(0, 36000);
+}
+
+async function fetchCrossrefKnowledge({ doi, title }) {
+  let url = "";
+
+  if (doi) {
+    url = `https://api.crossref.org/works/${encodeURIComponent(doi)}`;
+  } else if (title) {
+    url = `https://api.crossref.org/works?rows=1&query.title=${encodeURIComponent(title)}`;
+  } else {
+    return "";
+  }
+
+  const data = await fetchJsonWithTimeout(url, 12000);
+  const item = doi ? data?.message : data?.message?.items?.[0];
+
+  if (!item) return "";
+
+  const titleText = Array.isArray(item.title) ? item.title.join(" ") : "";
+  const abstract = item.abstract ? cleanCrossrefAbstract(item.abstract) : "";
+  const container = Array.isArray(item["container-title"]) ? item["container-title"].join(" ") : "";
+  const published = item.published?.["date-parts"]?.[0]?.join("-") || "";
+  const authors = Array.isArray(item.author)
+    ? item.author.slice(0, 20).map(a => [a.given, a.family].filter(Boolean).join(" ")).filter(Boolean).join(", ")
+    : "";
+  const doiText = item.DOI || doi || "";
+  const urlText = item.URL || "";
+
+  const pieces = [
+    "Crossref metadata from article DOI/title:",
+    titleText ? `Title: ${titleText}` : "",
+    authors ? `Authors: ${authors}` : "",
+    container ? `Journal: ${container}` : "",
+    published ? `Published: ${published}` : "",
+    doiText ? `DOI: ${doiText}` : "",
+    urlText ? `URL: ${urlText}` : "",
+    abstract ? `Abstract: ${abstract}` : ""
+  ].filter(Boolean);
+
+  return pieces.join("\n");
+}
+
+async function fetchEuropePmcKnowledge({ doi, title }) {
+  const queries = [];
+
+  if (doi) queries.push(`DOI:"${doi}"`);
+  if (title) queries.push(`TITLE:"${title.replace(/"/g, " ")}"`);
+
+  for (const query of queries) {
+    const searchUrl =
+      `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&resultType=core&pageSize=1`;
+
+    const data = await fetchJsonWithTimeout(searchUrl, 15000);
+    const result = data?.resultList?.result?.[0];
+
+    if (!result) continue;
+
+    const pieces = [];
+
+    pieces.push("Europe PMC / PubMed-indexed article data:");
+    if (result.title) pieces.push(`Title: ${result.title}`);
+    if (result.authorString) pieces.push(`Authors: ${result.authorString}`);
+    if (result.journalTitle) pieces.push(`Journal: ${result.journalTitle}`);
+    if (result.pubYear) pieces.push(`Year: ${result.pubYear}`);
+    if (result.doi) pieces.push(`DOI: ${result.doi}`);
+    if (result.pmid) pieces.push(`PMID: ${result.pmid}`);
+    if (result.pmcid) pieces.push(`PMCID: ${result.pmcid}`);
+    if (result.abstractText) pieces.push(`Abstract: ${cleanFetchedArticleText(stripHtmlEntities(result.abstractText))}`);
+
+    if (result.pmcid) {
+      try {
+        const fullText = await fetchPmcFullText(result.pmcid);
+        if (fullText) pieces.push(`PMC full text extracted sections: ${fullText}`);
+      } catch {
+        // Open access full text may be unavailable.
+      }
+    }
+
+    return pieces.filter(Boolean).join("\n");
+  }
+
+  return "";
+}
+
+async function fetchPmcFullText(pmcid) {
+  const cleanPmcid = String(pmcid || "").trim();
+  if (!cleanPmcid) return "";
+
+  const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/${encodeURIComponent(cleanPmcid)}/fullTextXML`;
+  const response = await fetchWithTimeout(url, {
+    method: "GET",
+    headers: {
+      "User-Agent": "Paper_Talk_Bot/1.0; research indexing",
+      "Accept": "application/xml,text/xml,text/plain,*/*"
+    },
+    redirect: "follow"
+  }, 15000);
+
+  if (!response.ok) return "";
+
+  const xml = await response.text();
+  if (!xml || xml.length < 300) return "";
+
+  const extracted = extractUsefulTextFromJatsXml(xml);
+  return extracted.slice(0, 24000);
+}
+
+function extractUsefulTextFromJatsXml(xml) {
+  const value = String(xml || "");
+
+  const pieces = [];
+
+  const titleMatch = value.match(/<article-title[^>]*>([\s\S]*?)<\/article-title>/i);
+  if (titleMatch) pieces.push(`Title: ${xmlToPlainText(titleMatch[1])}`);
+
+  const abstractMatch = value.match(/<abstract[^>]*>([\s\S]*?)<\/abstract>/i);
+  if (abstractMatch) pieces.push(`Abstract: ${xmlToPlainText(abstractMatch[1])}`);
+
+  const sectionNames = [
+    "introduction",
+    "background",
+    "methods",
+    "materials and methods",
+    "results",
+    "discussion",
+    "conclusion",
+    "conclusions"
+  ];
+
+  for (const sectionName of sectionNames) {
+    const section = extractJatsSection(value, sectionName);
+    if (section) pieces.push(`${sectionName} section: ${section}`);
+  }
+
+  if (pieces.length <= 2) {
+    const bodyMatch = value.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    if (bodyMatch) {
+      pieces.push(`Body text: ${xmlToPlainText(bodyMatch[1]).slice(0, 20000)}`);
+    }
+  }
+
+  return cleanFetchedArticleText(pieces.filter(Boolean).join("\n\n"));
+}
+
+function extractJatsSection(xml, wantedTitle) {
+  const sections = [...String(xml || "").matchAll(/<sec[^>]*>([\s\S]*?)<\/sec>/gi)];
+
+  for (const match of sections) {
+    const block = match[1] || "";
+    const titleMatch = block.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const sectionTitle = titleMatch ? normalizeSearchText(xmlToPlainText(titleMatch[1])) : "";
+
+    if (!sectionTitle) continue;
+
+    const wanted = normalizeSearchText(wantedTitle);
+    if (sectionTitle === wanted || sectionTitle.includes(wanted) || wanted.includes(sectionTitle)) {
+      return xmlToPlainText(block).slice(0, 8000);
+    }
+  }
+
+  return "";
+}
+
+function xmlToPlainText(value) {
+  return cleanFetchedArticleText(
+    stripHtmlEntities(
+      String(value || "")
+        .replace(/<xref[\s\S]*?<\/xref>/gi, " ")
+        .replace(/<table-wrap[\s\S]*?<\/table-wrap>/gi, " ")
+        .replace(/<fig[\s\S]*?<\/fig>/gi, " ")
+        .replace(/<disp-formula[\s\S]*?<\/disp-formula>/gi, " ")
+        .replace(/<\/(p|sec|title|abstract|body|list-item)>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+    )
+  );
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs = 12000) {
+  const response = await fetchWithTimeout(url, {
+    method: "GET",
+    headers: {
+      "User-Agent": "Paper_Talk_Bot/1.0; research indexing",
+      "Accept": "application/json,text/plain,*/*"
+    },
+    redirect: "follow"
+  }, timeoutMs);
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function fetchReadableArticleText(url, title = "") {
   const normalizedUrl = normalizeArticleUrl(url);
   if (!normalizedUrl) return "";
 
-  const response = await fetch(normalizedUrl, {
+  const response = await fetchWithTimeout(normalizedUrl, {
     method: "GET",
     headers: {
       "User-Agent": "Mozilla/5.0 Paper_Talk_Bot/1.0; research indexing",
@@ -1321,12 +1549,12 @@ async function fetchReadableArticleText(url, title = "") {
       "Accept-Language": "en-US,en;q=0.9"
     },
     redirect: "follow"
-  });
+  }, 15000);
 
   const contentType = response.headers.get("Content-Type") || "";
 
   if (!response.ok) {
-    return `Fetch status for ${normalizedUrl}: HTTP ${response.status}. The publisher page may block automated access. Stored admin-provided metadata and link instead.`;
+    return `Direct source-link fetch status for ${normalizedUrl}: HTTP ${response.status}. The publisher page may block automated access. The system also tried DOI/Crossref/Europe PMC metadata.`;
   }
 
   if (contentType.includes("application/pdf")) {
@@ -1360,6 +1588,39 @@ function normalizeArticleUrl(url) {
   return "";
 }
 
+function extractDoiFromTextOrUrl(value) {
+  const text = String(value || "");
+
+  const doiUrl = text.match(/https?:\/\/(?:dx\.)?doi\.org\/(10\.\d{4,9}\/[^\s)"'<>]+)/i);
+  if (doiUrl) return cleanDoi(doiUrl[1]);
+
+  const doiParam = text.match(/[?&](?:doi|DOI)=([^&\s]+)/);
+  if (doiParam) return cleanDoi(decodeURIComponent(doiParam[1]));
+
+  const doi = text.match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i);
+  if (doi) return cleanDoi(doi[0]);
+
+  return "";
+}
+
+function cleanDoi(value) {
+  return String(value || "")
+    .replace(/^doi:/i, "")
+    .replace(/[.,;)\]}]+$/g, "")
+    .trim();
+}
+
+function cleanCrossrefAbstract(value) {
+  return cleanFetchedArticleText(
+    stripHtmlEntities(
+      String(value || "")
+        .replace(/<jats:[^>]+>/g, " ")
+        .replace(/<\/jats:[^>]+>/g, " ")
+        .replace(/<[^>]+>/g, " ")
+    )
+  );
+}
+
 function looksLikeJson(text) {
   const value = String(text || "").trim();
   return value.startsWith("{") || value.startsWith("[");
@@ -1389,9 +1650,9 @@ function extractTextFromJson(text, sourceUrl) {
     }
 
     walk(data);
-    return [`Source URL: ${sourceUrl}`, ...pieces].join("\n");
+    return [`Direct source JSON URL: ${sourceUrl}`, ...pieces].join("\n");
   } catch {
-    return `Source URL: ${sourceUrl}\n${cleanFetchedArticleText(text).slice(0, 12000)}`;
+    return `Direct source URL: ${sourceUrl}\n${cleanFetchedArticleText(text).slice(0, 12000)}`;
   }
 }
 
@@ -1430,16 +1691,16 @@ function extractTextFromHtml(html, sourceUrl, fallbackTitle = "") {
   }
 
   const abstract = extractSectionByHeading(html, ["abstract", "summary"]);
-  if (abstract) pieces.push(`Abstract section: ${abstract}`);
+  if (abstract) pieces.push(`Abstract section from source link: ${abstract}`);
 
   const introduction = extractSectionByHeading(html, ["introduction", "background"]);
-  if (introduction) pieces.push(`Introduction/background section: ${introduction}`);
+  if (introduction) pieces.push(`Introduction/background section from source link: ${introduction}`);
 
   const results = extractSectionByHeading(html, ["results", "findings"]);
-  if (results) pieces.push(`Results/findings section: ${results}`);
+  if (results) pieces.push(`Results/findings section from source link: ${results}`);
 
   const discussion = extractSectionByHeading(html, ["discussion", "conclusion", "conclusions"]);
-  if (discussion) pieces.push(`Discussion/conclusion section: ${discussion}`);
+  if (discussion) pieces.push(`Discussion/conclusion section from source link: ${discussion}`);
 
   let readable = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -1453,8 +1714,8 @@ function extractTextFromHtml(html, sourceUrl, fallbackTitle = "") {
   readable = cleanFetchedArticleText(stripHtmlEntities(readable));
 
   const keywordWindow = extractKeywordWindow(readable, fallbackTitle);
-  if (keywordWindow) pieces.push(`Relevant page text: ${keywordWindow}`);
-  else if (readable.length > 500) pieces.push(`Page text: ${readable.slice(0, 16000)}`);
+  if (keywordWindow) pieces.push(`Relevant source-link page text: ${keywordWindow}`);
+  else if (readable.length > 500) pieces.push(`Direct source-link page text: ${readable.slice(0, 16000)}`);
 
   const unique = [...new Set(
     pieces
@@ -1463,10 +1724,10 @@ function extractTextFromHtml(html, sourceUrl, fallbackTitle = "") {
   )];
 
   if (!unique.length) {
-    return `Source URL: ${sourceUrl}\nThe page was fetched, but readable article text could not be extracted. The publisher may require JavaScript, institutional access, or block automated access.`;
+    return `Direct source URL: ${sourceUrl}\nThe page was fetched, but readable article text could not be extracted. The publisher may require JavaScript, institutional access, or block automated access.`;
   }
 
-  return [`Source URL: ${sourceUrl}`, ...unique].join("\n\n");
+  return [`Direct source URL: ${sourceUrl}`, ...unique].join("\n\n");
 }
 
 function extractMetaContent(html, name) {
@@ -2302,7 +2563,7 @@ You are Paper_Talk Vision GPT, a research assistant for cancer genomics, bioinfo
 
 Rules:
 - Always use the provided Paper_Talk research knowledge base when relevant.
-- The knowledge base may include fetched article text from article links. If fetched article text is available, use it to answer summaries and paper-specific questions.
+- The knowledge base may include fetched article text, Crossref metadata, Europe PMC/PubMed abstracts, or PMC full text collected from the article link/DOI/title. If any of these are available, use them to answer summaries and paper-specific questions.
 - Do not use Markdown formatting.
 - Do not use **, __, #, or markdown bullet points.
 - Return plain text only.
@@ -2316,6 +2577,7 @@ Rules:
 - Only say that detailed abstract/results are unavailable when the context truly contains title-only information and no scientific description at all.
 - Never refuse to summarize when descriptive content exists.
 - Do not say "not included", "not stored", or "cannot summarize" when a matching source includes any descriptive content.
+- If the user asks whether the link was accessed, answer according to the context: source-link HTML, DOI/Crossref, Europe PMC/PubMed, or PMC full text may have been used. Do not incorrectly deny access when the context contains fetched article text or public metadata collected from the link/DOI.
 - If the knowledge base has no matching context, say that clearly.
 - Do not invent paper details, results, methods, sample sizes, or conclusions.
 - Give concise but scientifically useful answers.
