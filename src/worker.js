@@ -21,6 +21,9 @@ export default {
     if (url.pathname === "/api/gpt/messages" && request.method === "GET") return listGptMessages(request, env);
     if (url.pathname === "/api/gpt/chat" && request.method === "POST") return gptChat(request, env);
 
+    if (url.pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
+    if (url.pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
+
     if (url.pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
     if (url.pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
     if (url.pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
@@ -1212,4 +1215,60 @@ Rules:
   }
 
   return data.choices?.[0]?.message?.content || "No answer was generated.";
+}
+
+async function adminListGptThreads(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const threads = await env.DB.prepare(`
+    SELECT
+      gpt_threads.id,
+      gpt_threads.user_id,
+      gpt_threads.title,
+      gpt_threads.created_at,
+      gpt_threads.updated_at,
+      users.name AS user_name,
+      users.email AS user_email
+    FROM gpt_threads
+    LEFT JOIN users ON users.id = gpt_threads.user_id
+    ORDER BY datetime(gpt_threads.updated_at) DESC
+  `).all();
+
+  return json({
+    ok: true,
+    threads: threads.results || []
+  });
+}
+
+async function adminListGptMessages(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const url = new URL(request.url);
+  const threadId = url.searchParams.get("threadId");
+
+  if (!threadId) {
+    return json({ ok: false, error: "threadId is required." }, 400);
+  }
+
+  const messages = await env.DB.prepare(`
+    SELECT
+      gpt_messages.role,
+      gpt_messages.content,
+      gpt_messages.created_at,
+      users.name AS user_name,
+      users.email AS user_email
+    FROM gpt_messages
+    LEFT JOIN users ON users.id = gpt_messages.user_id
+    WHERE gpt_messages.thread_id = ?
+    ORDER BY datetime(gpt_messages.created_at) ASC
+  `).bind(threadId).all();
+
+  return json({
+    ok: true,
+    messages: messages.results || []
+  });
 }
