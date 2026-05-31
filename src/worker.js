@@ -1611,20 +1611,8 @@ async function deleteGptThread(request, env) {
 }
 
 async function searchResearchKnowledge(query, env) {
-  const userQuery = String(query || "").trim();
-
-  if (!userQuery) {
-    const latest = await env.DB.prepare(`
-      SELECT title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE status = 'indexed'
-      ORDER BY datetime(updated_at) DESC
-      LIMIT 8
-    `).all();
-
-    return latest.results || [];
-  }
-
+  return [];
+}
   const directResults = await keywordFallbackSearch(userQuery, env);
 
   if (directResults && directResults.length > 0) {
