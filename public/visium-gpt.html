@@ -34,12 +34,16 @@
   box-shadow: 0 18px 40px rgba(0,0,0,0.04);
 }
 
+.thread-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
 .thread-item {
-  display: block;
-  width: 100%;
+  flex: 1;
   text-align: left;
   padding: 10px;
-  margin-bottom: 8px;
   border: 1px solid #b9c7ff;
   border-radius: 8px;
   background: #f8f8f8;
@@ -51,7 +55,16 @@
 .thread-item.active {
   background: #e8f0ff;
   border-color: #1428a0;
-  color: #1428a0;
+}
+
+.delete-thread-btn {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ef4444;
+  color: white;
+  border: none;
+  cursor: pointer;
+  font-weight: 700;
 }
 
 .chat-box {
@@ -139,7 +152,12 @@
   </div>
 
   <h1>Paper_Talk Vision GPT</h1>
-  <p>Private GPT workspace for signed-in Paper_Talk users. It answers using Research Paper knowledge added by the admin.</p>
+
+  <p>
+    Private GPT workspace for signed-in Paper_Talk users.
+    It answers using Research Paper knowledge added by the admin.
+    질문 횟수는 매월 10번입니다.
+  </p>
 
   <section id="loginBox" class="login-required-box" style="display:none;">
     <h2>Login Required</h2>
@@ -224,11 +242,22 @@ async function loadThreads() {
   }
 
   data.threads.forEach(thread => {
+    const row = document.createElement("div");
+    row.className = "thread-row";
+
     const btn = document.createElement("button");
     btn.className = "thread-item" + (thread.id === currentThreadId ? " active" : "");
     btn.textContent = thread.title || "New chat";
     btn.onclick = () => selectThread(thread.id);
-    list.appendChild(btn);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "delete-thread-btn";
+    delBtn.textContent = "삭제";
+    delBtn.onclick = () => deleteThread(thread.id);
+
+    row.appendChild(btn);
+    row.appendChild(delBtn);
+    list.appendChild(row);
   });
 
   if (!currentThreadId) {
@@ -263,6 +292,29 @@ async function selectThread(threadId) {
   currentThreadId = threadId;
   await loadThreads();
   await loadMessages();
+}
+
+async function deleteThread(threadId) {
+  if (isSending) return;
+
+  if (!confirm("이 채팅을 삭제할까요?")) return;
+
+  const res = await fetch(`/api/gpt/threads/${encodeURIComponent(threadId)}`, {
+    method: "DELETE"
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Failed to delete chat.");
+    return;
+  }
+
+  if (currentThreadId === threadId) {
+    currentThreadId = null;
+  }
+
+  await loadThreads();
 }
 
 async function loadMessages() {
