@@ -2161,9 +2161,16 @@ async function searchResearchKnowledge(query, env) {
 
   const collected = [];
 
-  // 1) Always search both GPT knowledge and visible Research Paper posts first.
-  // This prevents a stale Vectorize result or a missing reindex from hiding a paper
-  // that is already visible on the Research Paper page.
+  // 1) Strong deterministic DB retrieval first.
+  // This fixes cases where a paper exists in research_knowledge but Vectorize does not return it.
+  // Example: exact/near-exact title questions such as
+  // "Spatial Transcriptomics and In Situ Sequencing to Study Alzheimer’s Disease 논문 요약해줘".
+  try {
+    collected.push(...await directResearchKnowledgeSearch(userQuery, env));
+  } catch {
+    // Continue.
+  }
+
   try {
     collected.push(...await keywordFallbackSearch(userQuery, env));
   } catch {
@@ -2176,10 +2183,10 @@ async function searchResearchKnowledge(query, env) {
     // Continue.
   }
 
-  const directMerged = mergeKnowledgeResults(collected).slice(0, 8);
+  let directMerged = mergeKnowledgeResults(collected).slice(0, 8);
 
-  // If direct search found a Research Paper with scientific content, use it immediately.
-  // This is more reliable for exact title questions such as "please summarize this paper".
+  // If deterministic DB search found scientific content, return it immediately.
+  // Do not let Vectorize override a correct exact-title DB match.
   if (directMerged.some(item => hasScientificContent(item?.content || item?.matched_chunk || ""))) {
     return directMerged;
   }
@@ -2221,17 +2228,155 @@ async function searchResearchKnowledge(query, env) {
         }
       }
 
-      const merged = mergeKnowledgeResults([...vectorResults, ...directMerged]).slice(0, 8);
+      const merged = mergeKnowledgeResults([...directMerged, ...vectorResults]).slice(0, 8);
       if (merged.length > 0) return merged;
     } catch {
       // Continue to direct fallback below.
     }
   }
 
-  // 3) Final fallback: return any direct result, even if it is title-only.
+  // 3) Final fallback: return any direct result, even if title-only.
   if (directMerged.length > 0) return directMerged;
 
   return [];
+}
+
+async function directResearchKnowledgeSearch(query, env) {
+  const tokens = getImportantSearchTokens(query);
+  const cleaned = stripQuestionIntentWords(normalizeSearchText(query));
+  const results = [];
+
+  // A) Try a broad cleaned phrase against title/content.
+  if (cleaned && cleaned.length >= 8) {
+    try {
+      const phrase = cleaned.slice(0, 160);
+      const phraseResult = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND (
+            LOWER(title) LIKE ?
+            OR LOWER(content) LIKE ?
+          )
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 8
+      `).bind(`%${phrase}%`, `%${phrase}%`).all();
+
+      results.push(...(phraseResult.results || []));
+    } catch {
+      // Continue.
+    }
+  }
+
+  if (!tokens.length) {
+    return results.map(item => ({
+      ...item,
+      title: cleanBibtexText(item.title),
+      content: cleanBibtexText(item.content),
+      matched_chunk: cleanBibtexText(item.content || "")
+    }));
+  }
+
+  // B) Require multiple important tokens in the title.
+  // This is robust to punctuation differences such as Alzheimer's vs Alzheimer’s.
+  const titleTokens = tokens.slice(0, Math.min(tokens.length, 6));
+  if (titleTokens.length >= 2) {
+    try {
+      const titleClauses = titleTokens.map(() => `LOWER(title) LIKE ?`).join(" AND ");
+      const titleParams = titleTokens.map(token => `%${token}%`);
+
+      const titleResult = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND (${titleClauses})
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 8
+      `).bind(...titleParams).all();
+
+      results.push(...(titleResult.results || []));
+    } catch {
+      // Continue.
+    }
+  }
+
+  // C) Require multiple important tokens in the content.
+  const contentTokens = tokens.slice(0, Math.min(tokens.length, 5));
+  if (contentTokens.length >= 2) {
+    try {
+      const contentClauses = contentTokens.map(() => `LOWER(content) LIKE ?`).join(" AND ");
+      const contentParams = contentTokens.map(token => `%${token}%`);
+
+      const contentResult = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND (${contentClauses})
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 8
+      `).bind(...contentParams).all();
+
+      results.push(...(contentResult.results || []));
+    } catch {
+      // Continue.
+    }
+  }
+
+  // D) Very broad title fallback: any strong token.
+  // This catches cases where the user types only "Alzheimer paper summary".
+  try {
+    const broadTokens = tokens.slice(0, 8);
+    const orClauses = broadTokens.map(() => `LOWER(title) LIKE ?`).join(" OR ");
+    const orParams = broadTokens.map(token => `%${token}%`);
+
+    const broadResult = await env.DB.prepare(`
+      SELECT title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE status = 'indexed'
+        AND (${orClauses})
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 8
+    `).bind(...orParams).all();
+
+    results.push(...(broadResult.results || []));
+  } catch {
+    // Continue.
+  }
+
+  return mergeKnowledgeResults((results || []).map(item => ({
+    ...item,
+    title: cleanBibtexText(item.title),
+    content: cleanBibtexText(item.content),
+    matched_chunk: cleanBibtexText(item.content || ""),
+    similarity_score: null,
+    from_direct_db_search: true
+  })));
+}
+
+function getImportantSearchTokens(query) {
+  const stopWords = new Set([
+    "the", "and", "for", "with", "from", "into", "onto", "this", "that", "these", "those",
+    "paper", "article", "study", "please", "summary", "summarize", "summarise", "about",
+    "what", "which", "where", "when", "how", "why", "can", "could", "would", "should",
+    "논문", "요약", "요약해줘", "요약해주세요", "정리", "정리해줘", "알려줘", "해주세요",
+    "있는", "있나요", "대한", "해당", "그", "이", "저", "좀"
+  ]);
+
+  const cleaned = normalizeSearchText(query);
+  return cleaned
+    .split(/\s+/)
+    .map(token => token.trim())
+    .filter(token => token.length >= 3)
+    .filter(token => !stopWords.has(token))
+    .slice(0, 12);
+}
+
+function stripQuestionIntentWords(value) {
+  return String(value || "")
+    .replace(/\b(paper|article|study|please|summary|summarize|summarise|about)\b/gi, " ")
+    .replace(/논문|요약해주세요|요약해줘|요약|정리해줘|정리|알려줘|해주세요/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function mergeKnowledgeResults(items) {
@@ -2247,8 +2392,10 @@ function mergeKnowledgeResults(items) {
   }
 
   return merged.sort((a, b) => {
-    const aScore = hasScientificContent(a?.content || a?.matched_chunk || "") ? 1 : 0;
-    const bScore = hasScientificContent(b?.content || b?.matched_chunk || "") ? 1 : 0;
+    const aContent = a?.content || a?.matched_chunk || "";
+    const bContent = b?.content || b?.matched_chunk || "";
+    const aScore = (hasScientificContent(aContent) ? 10 : 0) + Math.min(String(aContent).length / 1000, 5);
+    const bScore = (hasScientificContent(bContent) ? 10 : 0) + Math.min(String(bContent).length / 1000, 5);
     return bScore - aScore;
   });
 }
@@ -2534,23 +2681,36 @@ async function searchResearchPostsAsKnowledge(query, env) {
   const cleanedQuery = normalizeSearchText(query);
   if (!cleanedQuery) return latestResearchPostsAsKnowledge(env, 8);
 
-  const words = cleanedQuery
-    .split(/\s+/)
-    .filter(word => word.length >= 3)
-    .slice(0, 8);
-
-  const phrases = [cleanedQuery.slice(0, 120), ...words].filter(Boolean);
-  const uniquePhrases = [...new Set(phrases)].slice(0, 10);
-
+  const tokens = getImportantSearchTokens(query);
   const clauses = [];
   const params = [];
 
-  for (const phrase of uniquePhrases) {
+  const cleanedPhrase = stripQuestionIntentWords(cleanedQuery).slice(0, 160);
+  if (cleanedPhrase.length >= 8) {
     clauses.push(`LOWER(title) LIKE ?`);
-    params.push(`%${phrase}%`);
+    params.push(`%${cleanedPhrase}%`);
     clauses.push(`LOWER(body) LIKE ?`);
-    params.push(`%${phrase}%`);
+    params.push(`%${cleanedPhrase}%`);
   }
+
+  if (tokens.length >= 2) {
+    const titleAnd = tokens.slice(0, Math.min(tokens.length, 6)).map(() => `LOWER(title) LIKE ?`).join(" AND ");
+    clauses.push(`(${titleAnd})`);
+    params.push(...tokens.slice(0, Math.min(tokens.length, 6)).map(token => `%${token}%`));
+
+    const bodyAnd = tokens.slice(0, Math.min(tokens.length, 5)).map(() => `LOWER(body) LIKE ?`).join(" AND ");
+    clauses.push(`(${bodyAnd})`);
+    params.push(...tokens.slice(0, Math.min(tokens.length, 5)).map(token => `%${token}%`));
+  }
+
+  for (const token of tokens.slice(0, 8)) {
+    clauses.push(`LOWER(title) LIKE ?`);
+    params.push(`%${token}%`);
+    clauses.push(`LOWER(body) LIKE ?`);
+    params.push(`%${token}%`);
+  }
+
+  if (!clauses.length) return [];
 
   try {
     const result = await env.DB.prepare(`
