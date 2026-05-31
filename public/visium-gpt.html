@@ -94,15 +94,33 @@
   border: 1px solid #ddd;
 }
 
+/* 수정됨: 좁은 화면에서도 quota가 안 숨겨지게 함 */
 .chat-input-row {
   display: flex;
   gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 #messageInput {
-  flex: 1;
+  flex: 1 1 320px;
   min-height: 44px;
   padding: 10px;
+}
+
+#quotaText {
+  display: inline-block;
+  align-self: center;
+  font-size: 13px;
+  color: #1428a0;
+  font-weight: 700;
+  white-space: nowrap;
+  margin: 4px 0;
+}
+
+#sendBtn,
+#stopBtn {
+  flex: 0 0 auto;
 }
 
 #stopBtn {
@@ -117,6 +135,40 @@
   .gpt-top-login {
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  #messageInput {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  #quotaText {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .gpt-sidebar,
+  .gpt-chat,
+  .login-required-box {
+    padding: 18px;
+  }
+
+  .chat-box {
+    height: 420px;
+  }
+
+  .chat-input-row {
+    align-items: stretch;
+  }
+
+  #quotaText {
+    width: 100%;
+  }
+
+  #sendBtn,
+  #stopBtn {
+    width: 100%;
   }
 }
 </style>
@@ -154,10 +206,10 @@
   <h1>Paper_Talk Vision GPT</h1>
 
   <p>
-  Private GPT workspace for signed-in Paper_Talk users.
-  It answers using Research Paper knowledge added by the admin.
-  Usage limit: 10 questions per user per month.
-</p>
+    Private GPT workspace for signed-in Paper_Talk users.
+    It answers using Research Paper knowledge added by the admin.
+    Usage limit: 10 questions per user per month.
+  </p>
 
   <section id="loginBox" class="login-required-box" style="display:none;">
     <h2>Login Required</h2>
@@ -175,19 +227,20 @@
     </aside>
 
     <section class="gpt-chat">
-  <div id="chatBox" class="chat-box"></div>
+      <div id="chatBox" class="chat-box"></div>
 
-  <div class="chat-input-row">
-    <textarea id="messageInput" placeholder="Ask about Vision, spatial transcriptomics, cancer genomics..."></textarea>
+      <div class="chat-input-row">
+        <textarea id="messageInput" placeholder="Ask about Vision, spatial transcriptomics, cancer genomics..."></textarea>
 
-    <span id="quotaText" style="align-self:center; font-size:13px; color:#1428a0; font-weight:700; white-space:nowrap;">
-      Questions left: 10/10
-    </span>
+        <span id="quotaText">Questions left: 10/10</span>
 
-    <button id="sendBtn">Send</button>
-    <button id="stopBtn" style="display:none;">Stop</button>
-  </div>
-</section>
+        <button id="sendBtn">Send</button>
+        <button id="stopBtn" style="display:none;">Stop</button>
+      </div>
+    </section>
+  </section>
+
+</main>
 
 <script>
 let currentUser = null;
@@ -210,13 +263,13 @@ async function init() {
   currentUser = me.user;
 
   document.getElementById("topLogoutArea").style.display = "flex";
-document.getElementById("userText").textContent =
-  `Signed in as ${currentUser.name || currentUser.email}`;
-document.getElementById("gptApp").style.display = "grid";
+  document.getElementById("userText").textContent =
+    `Signed in as ${currentUser.name || currentUser.email}`;
+  document.getElementById("gptApp").style.display = "grid";
 
-if (me.quota) {
-  updateQuotaText(me.quota.remaining, me.quota.limit);
-}
+  if (me.quota) {
+    updateQuotaText(me.quota.remaining, me.quota.limit);
+  }
 
   document.getElementById("newThreadBtn").addEventListener("click", createThread);
   document.getElementById("sendBtn").addEventListener("click", sendMessage);
