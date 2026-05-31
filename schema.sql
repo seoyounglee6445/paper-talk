@@ -33,5 +33,8 @@ ON gpt_threads(user_id);
 CREATE INDEX IF NOT EXISTS idx_gpt_messages_thread_id
 ON gpt_messages(thread_id);
 
+CREATE INDEX IF NOT EXISTS idx_gpt_messages_user_role_created
+ON gpt_messages(user_id, role, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_research_knowledge_post_id
 ON research_knowledge(post_id);
