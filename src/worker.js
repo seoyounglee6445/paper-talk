@@ -36,8 +36,8 @@ export default {
     if (url.pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
     if (url.pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
 
-    if (url.pathname === "/api/admin/research/create" && request.method === "POST") {
-      return adminCreateResearchPaper(request, env);
+    if (url.pathname === "/api/admin/research/import-linkedin-csv" && request.method === "POST") {
+      return adminImportLinkedInCsv(request, env);
     }
 
     if (url.pathname === "/api/admin/research/reindex" && request.method === "POST") {
@@ -727,6 +727,281 @@ async function adminCreateResearchPaper(request, env) {
     ok: true,
     message: "Research paper saved and added to Paper_Talk GPT knowledge base."
   });
+}
+
+async function adminImportLinkedInCsv(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json().catch(() => ({}));
+  const csvText = String(data.csvText || "").trim();
+
+  if (!csvText) {
+    return json({ ok: false, error: "CSV text is required." }, 400);
+  }
+
+  const rows = parseCsv(csvText);
+
+  if (!rows.length) {
+    return json({ ok: false, error: "No CSV rows found." }, 400);
+  }
+
+  let imported = 0;
+  let skipped = 0;
+  const errors = [];
+
+  for (const row of rows) {
+    try {
+      const normalized = normalizeLinkedInRow(row);
+
+      if (!normalized.content || normalized.content.length < 20) {
+        skipped++;
+        continue;
+      }
+
+      const fingerprint = normalized.sourceUrl || normalized.content.slice(0, 300);
+      const postId = "linkedin_" + await sha256Hex(fingerprint);
+
+      const title = normalized.title || makeTitleFromText(normalized.content);
+
+      const content = [
+        `Source: LinkedIn post by SEO YOUNG Lee`,
+        normalized.date ? `Date: ${normalized.date}` : "",
+        title ? `Title: ${title}` : "",
+        normalized.sourceUrl ? `LinkedIn URL: ${normalized.sourceUrl}` : "",
+        "",
+        normalized.content
+      ].filter(v => v !== "").join("\n");
+
+      await env.DB.prepare(`
+        INSERT INTO research_knowledge (
+          id,
+          post_id,
+          title,
+          source_url,
+          pdf_link,
+          content,
+          status,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP)
+        ON CONFLICT(post_id) DO UPDATE SET
+          title = excluded.title,
+          source_url = excluded.source_url,
+          pdf_link = excluded.pdf_link,
+          content = excluded.content,
+          status = 'indexed',
+          updated_at = CURRENT_TIMESTAMP
+      `).bind(
+        crypto.randomUUID(),
+        postId,
+        title,
+        normalized.sourceUrl || "",
+        normalized.pdfLink || "",
+        content
+      ).run();
+
+      await upsertResearchKnowledgeVectors({
+        postId,
+        title,
+        sourceUrl: normalized.sourceUrl || "",
+        pdfLink: normalized.pdfLink || "",
+        content
+      }, env);
+
+      imported++;
+    } catch (error) {
+      skipped++;
+      errors.push(error?.message || "Unknown import error");
+    }
+  }
+
+  return json({
+    ok: true,
+    imported,
+    skipped,
+    errors: errors.slice(0, 10),
+    message: `Imported ${imported} LinkedIn posts. Skipped: ${skipped}`
+  });
+}
+
+function parseCsv(csvText) {
+  const text = String(csvText || "").replace(/^\uFEFF/, "");
+  const rows = [];
+  let row = [];
+  let value = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        value += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(value);
+      value = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") i++;
+      row.push(value);
+      rows.push(row);
+      row = [];
+      value = "";
+      continue;
+    }
+
+    value += char;
+  }
+
+  row.push(value);
+  rows.push(row);
+
+  const nonEmptyRows = rows.filter(r =>
+    r.some(cell => String(cell || "").trim())
+  );
+
+  if (nonEmptyRows.length < 2) return [];
+
+  const headers = nonEmptyRows[0].map(h => String(h || "").trim());
+
+  return nonEmptyRows.slice(1).map(cells => {
+    const obj = {};
+    headers.forEach((header, index) => {
+      obj[header || `column_${index}`] = String(cells[index] || "").trim();
+    });
+    return obj;
+  });
+}
+
+function normalizeLinkedInRow(row) {
+  const keys = Object.keys(row || {});
+  const lowerMap = {};
+
+  for (const key of keys) {
+    lowerMap[key.toLowerCase().replace(/[\s_\-]/g, "")] = key;
+  }
+
+  function pick(possibleNames) {
+    for (const name of possibleNames) {
+      const normalized = name.toLowerCase().replace(/[\s_\-]/g, "");
+      const realKey = lowerMap[normalized];
+
+      if (realKey && String(row[realKey] || "").trim()) {
+        return String(row[realKey]).trim();
+      }
+    }
+
+    return "";
+  }
+
+  const commentary = pick([
+    "ShareCommentary",
+    "Share Commentary",
+    "Commentary",
+    "Text",
+    "Content",
+    "Post",
+    "Post Text",
+    "Update Text",
+    "Body",
+    "Description"
+  ]);
+
+  const title = pick([
+    "Title",
+    "Article Title",
+    "Post Title",
+    "Headline"
+  ]);
+
+  const date = pick([
+    "Date",
+    "Created Date",
+    "Creation Date",
+    "Created At",
+    "Time"
+  ]);
+
+  const sourceUrl = pick([
+    "ShareLink",
+    "Share Link",
+    "URL",
+    "Url",
+    "Post URL",
+    "Post Url",
+    "Link",
+    "Permalink"
+  ]) || extractFirstUrl(commentary);
+
+  const pdfLink = extractDoiOrPdfLink(commentary + "\n" + sourceUrl);
+
+  const allText = keys
+    .map(key => String(row[key] || "").trim())
+    .filter(Boolean)
+    .join("\n");
+
+  const content = commentary || allText;
+
+  return {
+    title: title || makeTitleFromText(content),
+    date,
+    sourceUrl,
+    pdfLink,
+    content
+  };
+}
+
+function makeTitleFromText(text) {
+  const cleaned = String(text || "")
+    .replace(/https?:\/\/\S+/g, "")
+    .split(/\n+/)
+    .map(v => v.trim())
+    .filter(Boolean)[0] || "LinkedIn research post";
+
+  return cleaned.length > 120 ? cleaned.slice(0, 117) + "..." : cleaned;
+}
+
+function extractFirstUrl(text) {
+  const match = String(text || "").match(/https?:\/\/[^\s)"'>]+/);
+  return match ? match[0] : "";
+}
+
+function extractDoiOrPdfLink(text) {
+  const value = String(text || "");
+
+  const doiUrl = value.match(/https?:\/\/(dx\.)?doi\.org\/[^\s)"'>]+/i);
+  if (doiUrl) return doiUrl[0];
+
+  const doi = value.match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/i);
+  if (doi) return `https://doi.org/${doi[0]}`;
+
+  const pdf = value.match(/https?:\/\/[^\s)"'>]+\.pdf\b[^\s)"'>]*/i);
+  if (pdf) return pdf[0];
+
+  return "";
+}
+
+async function sha256Hex(value) {
+  const buffer = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(String(value || ""))
+  );
+
+  return Array.from(new Uint8Array(buffer))
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 async function adminReindexResearchPapers(request, env) {
