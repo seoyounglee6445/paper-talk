@@ -154,10 +154,10 @@
   <h1>Paper_Talk Vision GPT</h1>
 
   <p>
-    Private GPT workspace for signed-in Paper_Talk users.
-    It answers using Research Paper knowledge added by the admin.
-    질문 횟수는 매월 10번입니다.
-  </p>
+  Private GPT workspace for signed-in Paper_Talk users.
+  It answers using Research Paper knowledge added by the admin.
+  Usage limit: 10 questions per user per month.
+</p>
 
   <section id="loginBox" class="login-required-box" style="display:none;">
     <h2>Login Required</h2>
@@ -175,16 +175,19 @@
     </aside>
 
     <section class="gpt-chat">
-      <div id="chatBox" class="chat-box"></div>
+  <div id="chatBox" class="chat-box"></div>
 
-      <div class="chat-input-row">
-        <textarea id="messageInput" placeholder="Ask about Vision, spatial transcriptomics, cancer genomics..."></textarea>
-        <button id="sendBtn">Send</button>
-        <button id="stopBtn" style="display:none;">Stop</button>
-      </div>
-    </section>
-  </section>
-</main>
+  <div class="chat-input-row">
+    <textarea id="messageInput" placeholder="Ask about Vision, spatial transcriptomics, cancer genomics..."></textarea>
+
+    <span id="quotaText" style="align-self:center; font-size:13px; color:#1428a0; font-weight:700; white-space:nowrap;">
+      Questions left: 10/10
+    </span>
+
+    <button id="sendBtn">Send</button>
+    <button id="stopBtn" style="display:none;">Stop</button>
+  </div>
+</section>
 
 <script>
 let currentUser = null;
