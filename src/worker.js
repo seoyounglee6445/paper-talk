@@ -1809,13 +1809,15 @@ async function getRecentThreadMessages(threadId, userId, env) {
 }
 
 async function callOpenAIForPaperTalk({ userMessage, context, recentMessages }, env) {
-  const contextText = context.length
+  const hasContext = Array.isArray(context) && context.length > 0;
+
+  const contextText = hasContext
     ? context.map((item, index) => {
         return [
-          `Source ${index + 1}: ${item.title}`,
+          `Source ${index + 1}: ${cleanBibtexText(item.title || "")}`,
           item.source_url ? `Article: ${item.source_url}` : "",
           item.pdf_link ? `PDF: ${item.pdf_link}` : "",
-          item.matched_chunk || item.content || ""
+          cleanBibtexText(item.matched_chunk || item.content || "")
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "No matching research paper context was found in the Paper_Talk knowledge base.";
@@ -1827,12 +1829,15 @@ async function callOpenAIForPaperTalk({ userMessage, context, recentMessages }, 
 You are Paper_Talk Vision GPT, a research assistant for cancer genomics, bioinformatics, spatial transcriptomics, and Visium-related research.
 
 Rules:
-- Always search and use the provided Paper_Talk research knowledge base when relevant.
+- Always use the provided Paper_Talk research knowledge base when relevant.
 - The user may ask in Korean, English, or mixed Korean-English. Understand both languages.
 - Use semantic meaning, not only exact keywords, when interpreting the user's question.
+- If Paper_Talk research knowledge base contains any source related to the user's question, say that the paper/source is found.
 - If relevant Paper_Talk sources are found, base the answer on them and mention the source titles.
-- If the knowledge base does not contain enough information, say that clearly.
-- Do not invent paper details.
+- If only a title or limited metadata is available, summarize only what is available and clearly say that detailed abstract/results are not stored.
+- Do not say "not included" when a matching source is provided in the context.
+- If the knowledge base has no matching context, say that clearly.
+- Do not invent paper details, results, methods, sample sizes, or conclusions.
 - Give concise but scientifically useful answers.
 - When possible, mention which uploaded Paper_Talk source you used.
 - The user may be a researcher, student, or bioinformatics learner.
@@ -1841,6 +1846,12 @@ Rules:
     {
       role: "system",
       content: `Paper_Talk research knowledge base:\n\n${contextText}`
+    },
+    {
+      role: "system",
+      content: hasContext
+        ? "Important: Matching Paper_Talk sources were found. Do not answer that the paper is absent from the knowledge base. Use the provided source titles/content."
+        : "Important: No matching Paper_Talk source was found."
     },
     ...recentMessages.map(m => ({
       role: m.role === "assistant" ? "assistant" : "user",
@@ -1866,7 +1877,7 @@ Rules:
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-4.1",
         messages,
-        temperature: 0.3
+        temperature: 0.2
       })
     });
 
@@ -1887,6 +1898,7 @@ Rules:
     clearTimeout(timeout);
   }
 }
+
 
 async function adminListGptThreads(request, env) {
   if (!isAdmin(request, env)) {
