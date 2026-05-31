@@ -1609,8 +1609,14 @@ async function searchResearchKnowledge(query, env) {
     return latest.results || [];
   }
 
+  const directResults = await keywordFallbackSearch(userQuery, env);
+
+  if (directResults && directResults.length > 0) {
+    return directResults;
+  }
+
   if (!env.AI || !env.VECTORIZE) {
-    return keywordFallbackSearch(userQuery, env);
+    return [];
   }
 
   try {
@@ -1624,7 +1630,7 @@ async function searchResearchKnowledge(query, env) {
     const matches = vectorResult.matches || [];
 
     if (matches.length === 0) {
-      return keywordFallbackSearch(userQuery, env);
+      return [];
     }
 
     const seen = new Set();
@@ -1653,13 +1659,9 @@ async function searchResearchKnowledge(query, env) {
       }
     }
 
-    if (results.length === 0) {
-      return keywordFallbackSearch(userQuery, env);
-    }
-
     return results.slice(0, 8);
   } catch (error) {
-    return keywordFallbackSearch(userQuery, env);
+    return [];
   }
 }
 
