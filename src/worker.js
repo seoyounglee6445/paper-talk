@@ -1624,23 +1624,12 @@ async function searchResearchKnowledge(query, env) {
   const userQuery = String(query || "").trim();
 
   if (!userQuery) {
-    try {
-      const latest = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 8
-      `).all();
-
-      return latest.results || [];
-    } catch {
-      return [];
-    }
+    const latestKnowledge = await latestResearchKnowledge(env, 8);
+    if (latestKnowledge.length > 0) return latestKnowledge;
+    return latestResearchPostsAsKnowledge(env, 8);
   }
 
   let directResults = [];
-
   try {
     directResults = await keywordFallbackSearch(userQuery, env);
   } catch {
@@ -1651,54 +1640,51 @@ async function searchResearchKnowledge(query, env) {
     return directResults;
   }
 
-  if (!env.AI || !env.VECTORIZE) {
-    return [];
-  }
+  if (env.AI && env.VECTORIZE) {
+    try {
+      const queryEmbedding = await createEmbedding(userQuery, env);
 
-  try {
-    const queryEmbedding = await createEmbedding(userQuery, env);
+      const vectorResult = await env.VECTORIZE.query(queryEmbedding, {
+        topK: 8,
+        returnMetadata: "all"
+      });
 
-    const vectorResult = await env.VECTORIZE.query(queryEmbedding, {
-      topK: 8,
-      returnMetadata: "all"
-    });
+      const matches = vectorResult.matches || [];
+      const seen = new Set();
+      const results = [];
 
-    const matches = vectorResult.matches || [];
+      for (const match of matches) {
+        const metadata = match.metadata || {};
+        const postId = metadata.post_id;
 
-    if (matches.length === 0) {
-      return [];
-    }
+        if (!postId || seen.has(postId)) continue;
+        seen.add(postId);
 
-    const seen = new Set();
-    const results = [];
+        const paper = await env.DB.prepare(`
+          SELECT title, source_url, pdf_link, content
+          FROM research_knowledge
+          WHERE post_id = ?
+            AND status = 'indexed'
+        `).bind(postId).first();
 
-    for (const match of matches) {
-      const metadata = match.metadata || {};
-      const postId = metadata.post_id;
-
-      if (!postId || seen.has(postId)) continue;
-      seen.add(postId);
-
-      const paper = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE post_id = ?
-          AND status = 'indexed'
-      `).bind(postId).first();
-
-      if (paper) {
-        results.push({
-          ...paper,
-          matched_chunk: metadata.text || "",
-          similarity_score: match.score || 0
-        });
+        if (paper) {
+          results.push({
+            ...paper,
+            matched_chunk: metadata.text || "",
+            similarity_score: match.score || 0
+          });
+        }
       }
-    }
 
-    return results.slice(0, 8);
-  } catch {
-    return [];
+      if (results.length > 0) {
+        return results.slice(0, 8);
+      }
+    } catch {
+      // Continue to posts fallback below.
+    }
   }
+
+  return searchResearchPostsAsKnowledge(userQuery, env);
 }
 
 async function createEmbedding(text, env) {
@@ -1766,12 +1752,7 @@ async function keywordFallbackSearch(query, env) {
   const rawQuery = String(query || "").trim();
   if (!rawQuery) return [];
 
-  const cleanedQuery = cleanBibtexText(rawQuery)
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
+  const cleanedQuery = normalizeSearchText(rawQuery);
   if (!cleanedQuery) return [];
 
   const words = cleanedQuery
@@ -1779,34 +1760,41 @@ async function keywordFallbackSearch(query, env) {
     .filter(word => word.length >= 3);
 
   const phrases = [];
-
-  // 1) Exact-ish title phrase, but short enough for D1 LIKE.
   phrases.push(cleanedQuery.slice(0, 120));
-
-  // 2) First meaningful word groups. This catches long paper titles.
+  if (words.length >= 1) phrases.push(words[0]);
+  if (words.length >= 2) phrases.push(words.slice(0, 2).join(" "));
   if (words.length >= 3) phrases.push(words.slice(0, 3).join(" "));
   if (words.length >= 4) phrases.push(words.slice(0, 4).join(" "));
   if (words.length >= 5) phrases.push(words.slice(0, 5).join(" "));
 
-  // 3) Domain-specific phrase groups from the user's query.
   const knownPhrases = [
     "single-cell spatial atlas",
     "high-grade serous ovarian cancer",
     "spatial tumor ecosystems",
+    "stereo-cell",
+    "stereo cell",
+    "streo-cell",
+    "streo cell",
+    "spado",
+    "spatial transcriptome",
+    "spatial transcriptomics",
+    "visium",
     "mhc1",
     "mhc",
     "class ii"
   ];
 
   for (const phrase of knownPhrases) {
-    if (cleanedQuery.includes(phrase)) phrases.push(phrase);
+    if (cleanedQuery.includes(normalizeSearchText(phrase))) {
+      phrases.push(phrase);
+    }
   }
 
   const uniquePhrases = [...new Set(
     phrases
-      .map(v => String(v || "").trim())
+      .map(v => normalizeSearchText(v))
       .filter(v => v.length >= 3)
-  )].slice(0, 8);
+  )].slice(0, 10);
 
   if (!uniquePhrases.length) return [];
 
@@ -1828,7 +1816,6 @@ async function keywordFallbackSearch(query, env) {
     params.push(`%${phrase}%`);
   }
 
-  // Use content only for the safest short phrase to avoid D1 LIKE complexity errors.
   clauses.push(`
     LOWER(
       REPLACE(
@@ -1854,8 +1841,7 @@ async function keywordFallbackSearch(query, env) {
       title: cleanBibtexText(item.title),
       content: cleanBibtexText(item.content)
     }));
-  } catch (error) {
-    // Final safe fallback: title search only with the shortest phrase.
+  } catch {
     try {
       const fallbackPhrase = uniquePhrases.find(v => v.length <= 80) || uniquePhrases[0];
 
@@ -1885,6 +1871,131 @@ function cleanBibtexText(value) {
     .replace(/[{}]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeSearchText(value) {
+  return cleanBibtexText(value)
+    .toLowerCase()
+    .replace(/streo/g, "stereo")
+    .replace(/[‐‑‒–—]/g, "-")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/-/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseResearchPostBody(body) {
+  try {
+    const parsed = JSON.parse(body || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function postToKnowledgeItem(post) {
+  const researchData = parseResearchPostBody(post.body || "{}");
+  const sourceUrl = post.link || "";
+  const pdfLink = researchData.pdfLink || "";
+
+  const content = [
+    `Title: ${post.title || ""}`,
+    researchData.year ? `Year: ${researchData.year}` : "",
+    researchData.authors ? `Authors: ${researchData.authors}` : "",
+    researchData.journal ? `Journal: ${researchData.journal}` : "",
+    researchData.category ? `Category: ${researchData.category}` : "",
+    researchData.tags ? `Tags: ${researchData.tags}` : "",
+    researchData.abstract ? `Abstract: ${researchData.abstract}` : "",
+    researchData.description ? `Description: ${researchData.description}` : "",
+    researchData.figures ? `Figures: ${researchData.figures}` : "",
+    researchData.note ? `Note: ${researchData.note}` : "",
+    sourceUrl ? `Article link: ${sourceUrl}` : "",
+    pdfLink ? `PDF link: ${pdfLink}` : ""
+  ].filter(Boolean).join("\n\n");
+
+  return {
+    title: cleanBibtexText(post.title || ""),
+    source_url: sourceUrl,
+    pdf_link: pdfLink,
+    content,
+    matched_chunk: content,
+    similarity_score: null,
+    from_posts_fallback: true
+  };
+}
+
+async function latestResearchKnowledge(env, limit = 8) {
+  try {
+    const latest = await env.DB.prepare(`
+      SELECT title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE status = 'indexed'
+      ORDER BY datetime(updated_at) DESC
+      LIMIT ?
+    `).bind(limit).all();
+
+    return latest.results || [];
+  } catch {
+    return [];
+  }
+}
+
+async function latestResearchPostsAsKnowledge(env, limit = 8) {
+  try {
+    const result = await env.DB.prepare(`
+      SELECT *
+      FROM posts
+      WHERE section = 'research'
+        AND type = 'paper'
+        AND status = 'published'
+      ORDER BY datetime(created_at) DESC
+      LIMIT ?
+    `).bind(limit).all();
+
+    return (result.results || []).map(postToKnowledgeItem);
+  } catch {
+    return [];
+  }
+}
+
+async function searchResearchPostsAsKnowledge(query, env) {
+  const cleanedQuery = normalizeSearchText(query);
+  if (!cleanedQuery) return latestResearchPostsAsKnowledge(env, 8);
+
+  const words = cleanedQuery
+    .split(/\s+/)
+    .filter(word => word.length >= 3)
+    .slice(0, 8);
+
+  const phrases = [cleanedQuery.slice(0, 120), ...words].filter(Boolean);
+  const uniquePhrases = [...new Set(phrases)].slice(0, 10);
+
+  const clauses = [];
+  const params = [];
+
+  for (const phrase of uniquePhrases) {
+    clauses.push(`LOWER(title) LIKE ?`);
+    params.push(`%${phrase}%`);
+    clauses.push(`LOWER(body) LIKE ?`);
+    params.push(`%${phrase}%`);
+  }
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT *
+      FROM posts
+      WHERE section = 'research'
+        AND type = 'paper'
+        AND status = 'published'
+        AND (${clauses.join(" OR ")})
+      ORDER BY datetime(created_at) DESC
+      LIMIT 8
+    `).bind(...params).all();
+
+    return (result.results || []).map(postToKnowledgeItem);
+  } catch {
+    return [];
+  }
 }
 
 async function getRecentThreadMessages(threadId, userId, env) {
