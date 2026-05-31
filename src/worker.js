@@ -46,6 +46,10 @@ export default {
         return adminReindexResearchPapers(request, env);
       }
 
+      if (pathname === "/api/admin/research/create" && request.method === "POST") {
+        return adminCreateResearchPaper(request, env);
+      }
+
       if (pathname === "/api/admin/study/create" && request.method === "POST") {
         return adminCreateStudyPost(request, env);
       }
