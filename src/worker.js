@@ -295,7 +295,30 @@ function logout() {
 
 async function apiMe(request, env) {
   const user = await getSession(request, env);
-  return json({ ok: !!user, user });
+
+  if (!user) {
+    return json({
+      ok: false,
+      user: null,
+      quota: {
+        used: 0,
+        limit: 10,
+        remaining: 10
+      }
+    });
+  }
+
+  const quota = await getMonthlyGptQuota(user.id, env);
+
+  return json({
+    ok: true,
+    user,
+    quota: {
+      used: quota.used,
+      limit: quota.limit,
+      remaining: quota.remaining
+    }
+  });
 }
 
 async function deleteAccount(request, env) {
