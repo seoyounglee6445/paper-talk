@@ -2159,17 +2159,32 @@ async function searchResearchKnowledge(query, env) {
     return latestResearchPostsAsKnowledge(env, 8);
   }
 
-  let directResults = [];
+  const collected = [];
+
+  // 1) Always search both GPT knowledge and visible Research Paper posts first.
+  // This prevents a stale Vectorize result or a missing reindex from hiding a paper
+  // that is already visible on the Research Paper page.
   try {
-    directResults = await keywordFallbackSearch(userQuery, env);
+    collected.push(...await keywordFallbackSearch(userQuery, env));
   } catch {
-    directResults = [];
+    // Continue.
   }
 
-  if (directResults && directResults.length > 0) {
-    return directResults;
+  try {
+    collected.push(...await searchResearchPostsAsKnowledge(userQuery, env));
+  } catch {
+    // Continue.
   }
 
+  const directMerged = mergeKnowledgeResults(collected).slice(0, 8);
+
+  // If direct search found a Research Paper with scientific content, use it immediately.
+  // This is more reliable for exact title questions such as "please summarize this paper".
+  if (directMerged.some(item => hasScientificContent(item?.content || item?.matched_chunk || ""))) {
+    return directMerged;
+  }
+
+  // 2) Then try Vectorize semantic search.
   if (env.AI && env.VECTORIZE) {
     try {
       const queryEmbedding = await createEmbedding(userQuery, env);
@@ -2181,7 +2196,7 @@ async function searchResearchKnowledge(query, env) {
 
       const matches = vectorResult.matches || [];
       const seen = new Set();
-      const results = [];
+      const vectorResults = [];
 
       for (const match of matches) {
         const metadata = match.metadata || {};
@@ -2198,23 +2213,50 @@ async function searchResearchKnowledge(query, env) {
         `).bind(postId).first();
 
         if (paper) {
-          results.push({
+          vectorResults.push({
             ...paper,
-            matched_chunk: metadata.text || "",
+            matched_chunk: metadata.text || paper.content || "",
             similarity_score: match.score || 0
           });
         }
       }
 
-      if (results.length > 0) {
-        return results.slice(0, 8);
-      }
+      const merged = mergeKnowledgeResults([...vectorResults, ...directMerged]).slice(0, 8);
+      if (merged.length > 0) return merged;
     } catch {
-      // Continue to posts fallback below.
+      // Continue to direct fallback below.
     }
   }
 
-  return searchResearchPostsAsKnowledge(userQuery, env);
+  // 3) Final fallback: return any direct result, even if it is title-only.
+  if (directMerged.length > 0) return directMerged;
+
+  return [];
+}
+
+function mergeKnowledgeResults(items) {
+  const seen = new Set();
+  const merged = [];
+
+  for (const item of items || []) {
+    if (!item) continue;
+    const key = normalizeSearchText(item.title || "") || normalizeSearchText(item.source_url || item.pdf_link || "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+
+  return merged.sort((a, b) => {
+    const aScore = hasScientificContent(a?.content || a?.matched_chunk || "") ? 1 : 0;
+    const bScore = hasScientificContent(b?.content || b?.matched_chunk || "") ? 1 : 0;
+    return bScore - aScore;
+  });
+}
+
+function hasScientificContent(value) {
+  const text = String(value || "").toLowerCase();
+  if (text.length < 120) return false;
+  return /abstract|admin abstract|description|result|discussion|method|conclusion|fetched article text|crossref|europe pmc|pubmed|pmc full text|논문|초록|결과|방법|요약/.test(text);
 }
 
 async function createEmbedding(text, env) {
@@ -2579,6 +2621,7 @@ Rules:
 - Do not say "not included", "not stored", or "cannot summarize" when a matching source includes any descriptive content.
 - If the user asks whether the link was accessed, answer according to the context: source-link HTML, DOI/Crossref, Europe PMC/PubMed, or PMC full text may have been used. Do not incorrectly deny access when the context contains fetched article text or public metadata collected from the link/DOI.
 - If the knowledge base has no matching context, say that clearly.
+- Previous assistant messages may be outdated. If the current Paper_Talk context contains scientific content, ignore previous assistant claims that information was unavailable.
 - Do not invent paper details, results, methods, sample sizes, or conclusions.
 - Give concise but scientifically useful answers.
 - When possible, mention which uploaded Paper_Talk source you used.
@@ -2595,10 +2638,13 @@ Rules:
         ? "Important: Matching Paper_Talk sources were found. Do not answer that the paper is absent from the knowledge base. Use the provided source titles/content."
         : "Important: No matching Paper_Talk source was found."
     },
-    ...recentMessages.map(m => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: m.content
-    })),
+    ...recentMessages
+      .filter(m => m.role !== "assistant")
+      .slice(-4)
+      .map(m => ({
+        role: "user",
+        content: m.content
+      })),
     {
       role: "user",
       content: userMessage
