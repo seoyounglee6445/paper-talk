@@ -189,7 +189,7 @@ async function init() {
   currentUser = me.user;
 
   document.getElementById("topLogoutArea").style.display = "flex";
-  document.getElementById("userText").textContent = `Signed in as ${currentUser.email || currentUser.name}`;
+  document.getElementById("userText").textContent = `Signed in as ${currentUser.name || currentUser.email}`;
   document.getElementById("gptApp").style.display = "grid";
 
   document.getElementById("newThreadBtn").addEventListener("click", createThread);
