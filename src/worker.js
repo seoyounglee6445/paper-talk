@@ -623,6 +623,15 @@ async function adminDeletePost(request, env) {
     WHERE post_id = ?
   `).bind(data.id).run();
 
+  if (env.VECTORIZE) {
+    try {
+      const ids = Array.from({ length: 8 }, (_, index) => `${data.id}:${index}`);
+      await env.VECTORIZE.deleteByIds(ids);
+    } catch (error) {
+      // Ignore Vectorize delete errors so post deletion still works.
+    }
+  }
+
   await env.DB.prepare(`
     DELETE FROM posts
     WHERE id = ?
@@ -900,6 +909,49 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
     content
   ).run();
 
+  await upsertResearchKnowledgeVectors({
+    postId,
+    title,
+    sourceUrl,
+    pdfLink,
+    content
+  }, env);
+
+  return true;
+}
+
+async function upsertResearchKnowledgeVectors({ postId, title, sourceUrl, pdfLink, content }, env) {
+  if (!env.AI || !env.VECTORIZE) {
+    return false;
+  }
+
+  const chunks = chunkTextForEmbedding(content, 1800).slice(0, 8);
+
+  if (chunks.length === 0) {
+    return false;
+  }
+
+  const vectors = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const embedding = await createEmbedding(chunk, env);
+
+    vectors.push({
+      id: `${postId}:${i}`,
+      values: embedding,
+      metadata: {
+        post_id: postId,
+        chunk_index: i,
+        title,
+        source_url: sourceUrl || "",
+        pdf_link: pdfLink || "",
+        text: chunk
+      }
+    });
+  }
+
+  await env.VECTORIZE.upsert(vectors);
   return true;
 }
 
@@ -1129,7 +1181,8 @@ async function gptChat(request, env) {
     sources: context.map(item => ({
       title: item.title,
       source_url: item.source_url,
-      pdf_link: item.pdf_link
+      pdf_link: item.pdf_link,
+      similarity_score: item.similarity_score || null
     }))
   });
 }
@@ -1198,12 +1251,142 @@ async function deleteGptThread(request, env) {
 }
 
 async function searchResearchKnowledge(query, env) {
-  const terms = query
+  const userQuery = String(query || "").trim();
+
+  if (!userQuery) {
+    const latest = await env.DB.prepare(`
+      SELECT title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE status = 'indexed'
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 8
+    `).all();
+
+    return latest.results || [];
+  }
+
+  if (!env.AI || !env.VECTORIZE) {
+    return keywordFallbackSearch(userQuery, env);
+  }
+
+  try {
+    const queryEmbedding = await createEmbedding(userQuery, env);
+
+    const vectorResult = await env.VECTORIZE.query(queryEmbedding, {
+      topK: 8,
+      returnMetadata: "all"
+    });
+
+    const matches = vectorResult.matches || [];
+
+    if (matches.length === 0) {
+      return keywordFallbackSearch(userQuery, env);
+    }
+
+    const seen = new Set();
+    const results = [];
+
+    for (const match of matches) {
+      const metadata = match.metadata || {};
+      const postId = metadata.post_id;
+
+      if (!postId || seen.has(postId)) continue;
+      seen.add(postId);
+
+      const paper = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE post_id = ?
+          AND status = 'indexed'
+      `).bind(postId).first();
+
+      if (paper) {
+        results.push({
+          ...paper,
+          matched_chunk: metadata.text || "",
+          similarity_score: match.score || 0
+        });
+      }
+    }
+
+    if (results.length === 0) {
+      return keywordFallbackSearch(userQuery, env);
+    }
+
+    return results.slice(0, 8);
+  } catch (error) {
+    return keywordFallbackSearch(userQuery, env);
+  }
+}
+
+async function createEmbedding(text, env) {
+  const input = String(text || "").slice(0, 8000);
+
+  if (!env.AI) {
+    throw new Error("AI binding is missing.");
+  }
+
+  const response = await env.AI.run("@cf/baai/bge-m3", {
+    text: input
+  });
+
+  if (Array.isArray(response?.data) && Array.isArray(response.data[0])) {
+    return response.data[0];
+  }
+
+  if (Array.isArray(response?.data)) {
+    return response.data;
+  }
+
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  throw new Error("Failed to create embedding.");
+}
+
+function chunkTextForEmbedding(text, maxLength = 1800) {
+  const value = String(text || "").trim();
+
+  if (!value) return [];
+
+  const paragraphs = value
+    .split(/\n{2,}/)
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  const chunks = [];
+  let current = "";
+
+  for (const paragraph of paragraphs) {
+    if ((current + "\n\n" + paragraph).length <= maxLength) {
+      current = current ? `${current}\n\n${paragraph}` : paragraph;
+    } else {
+      if (current) chunks.push(current);
+
+      if (paragraph.length > maxLength) {
+        for (let i = 0; i < paragraph.length; i += maxLength) {
+          chunks.push(paragraph.slice(i, i + maxLength));
+        }
+        current = "";
+      } else {
+        current = paragraph;
+      }
+    }
+  }
+
+  if (current) chunks.push(current);
+
+  return chunks;
+}
+
+async function keywordFallbackSearch(query, env) {
+  const terms = String(query || "")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]/gu, " ")
     .split(/\s+/)
-    .filter(term => term.length >= 3)
-    .slice(0, 8);
+    .filter(term => term.length >= 2)
+    .slice(0, 12);
 
   if (terms.length === 0) {
     const latest = await env.DB.prepare(`
@@ -1211,13 +1394,16 @@ async function searchResearchKnowledge(query, env) {
       FROM research_knowledge
       WHERE status = 'indexed'
       ORDER BY datetime(updated_at) DESC
-      LIMIT 5
+      LIMIT 8
     `).all();
 
     return latest.results || [];
   }
 
-  const clauses = terms.map(() => `(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)`).join(" OR ");
+  const clauses = terms
+    .map(() => `(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)`) 
+    .join(" OR ");
+
   const params = [];
 
   for (const term of terms) {
@@ -1256,7 +1442,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, recentMessages }, 
           `Source ${index + 1}: ${item.title}`,
           item.source_url ? `Article: ${item.source_url}` : "",
           item.pdf_link ? `PDF: ${item.pdf_link}` : "",
-          item.content || ""
+          item.matched_chunk || item.content || ""
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "No matching research paper context was found in the Paper_Talk knowledge base.";
@@ -1268,7 +1454,10 @@ async function callOpenAIForPaperTalk({ userMessage, context, recentMessages }, 
 You are Paper_Talk Vision GPT, a research assistant for cancer genomics, bioinformatics, spatial transcriptomics, and Visium-related research.
 
 Rules:
-- Use the provided Paper_Talk research knowledge base when relevant.
+- Always search and use the provided Paper_Talk research knowledge base when relevant.
+- The user may ask in Korean, English, or mixed Korean-English. Understand both languages.
+- Use semantic meaning, not only exact keywords, when interpreting the user's question.
+- If relevant Paper_Talk sources are found, base the answer on them and mention the source titles.
 - If the knowledge base does not contain enough information, say that clearly.
 - Do not invent paper details.
 - Give concise but scientifically useful answers.
