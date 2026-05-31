@@ -308,7 +308,7 @@ async function apiMe(request, env) {
     });
   }
 
-  const quota = await getMonthlyGptQuota(user.id, env);
+  const quota = await getMonthlyGptQuota(user.id, env, user);
 
   return json({
     ok: true,
@@ -1409,7 +1409,7 @@ async function gptChat(request, env) {
     return json({ ok: false, error: "Message is required." }, 400);
   }
 
-  const quotaBefore = await getMonthlyGptQuota(user.id, env);
+ const quotaBefore = await getMonthlyGptQuota(user.id, env, user);
 
   if (quotaBefore.used >= quotaBefore.limit) {
     return json({
@@ -1511,7 +1511,7 @@ async function gptChat(request, env) {
     user.id
   ).run();
 
-  const quotaAfter = await getMonthlyGptQuota(user.id, env);
+ const quotaAfter = await getMonthlyGptQuota(user.id, env, user);
 
   return json({
     ok: true,
@@ -1531,10 +1531,21 @@ async function gptChat(request, env) {
   });
 }
 
-async function getMonthlyGptQuota(userId, env) {
+async function getMonthlyGptQuota(userId, env, user = null) {
+  const ownerEmail = "seoyounglee6445@gmail.com";
+  const monthlyLimit = 10;
+
+  if (user && user.email === ownerEmail) {
+    return {
+      used: 0,
+      limit: 999999,
+      remaining: 999999,
+      monthKey: new Date().toISOString().slice(0, 7)
+    };
+  }
+
   const now = new Date();
   const monthKey = now.toISOString().slice(0, 7);
-  const monthlyLimit = 10;
 
   const result = await env.DB.prepare(`
     SELECT COUNT(*) AS used
@@ -1553,7 +1564,6 @@ async function getMonthlyGptQuota(userId, env) {
     monthKey
   };
 }
-
 async function deleteGptThread(request, env) {
   const user = await getSession(request, env);
 
