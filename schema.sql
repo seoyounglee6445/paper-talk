@@ -38,3 +38,7 @@ ON gpt_messages(user_id, role, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_research_knowledge_post_id
 ON research_knowledge(post_id);
+
+CREATE INDEX IF NOT EXISTS idx_research_knowledge_updated_at
+ON research_knowledge(updated_at);
+
