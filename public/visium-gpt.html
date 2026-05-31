@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Paper_Talk Visium GPT</title>
+<link rel="stylesheet" href="/style.css">
+
+<style>
+.gpt-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 20px;
+  margin-top: 24px;
+}
+
+.gpt-sidebar,
+.gpt-chat {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.thread-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #f8f8f8;
+  cursor: pointer;
+}
+
+.thread-item.active {
+  background: #e8f0ff;
+  border-color: #6b8cff;
+}
+
+.chat-box {
+  height: 520px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  padding: 16px;
+  background: #fafafa;
+  margin-bottom: 12px;
+}
+
+.message {
+  margin-bottom: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.message.user {
+  background: #e8f0ff;
+}
+
+.message.assistant {
+  background: #ffffff;
+  border: 1px solid #ddd;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+#messageInput {
+  flex: 1;
+  min-height: 44px;
+  padding: 10px;
+}
+
+button {
+  cursor: pointer;
+}
+
+.login-box {
+  padding: 24px;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  background: white;
+  margin-top: 24px;
+}
+
+@media (max-width: 800px) {
+  .gpt-layout {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+</head>
+
+<body>
+<header class="header">
+  <nav class="nav">
+    <div class="logo">Paper_Talk</div>
+    <a href="/">Home</a>
+    <a href="/research.html">Research Paper</a>
+    <a href="/study.html">Study Materials</a>
+    <a href="/visium-gpt.html">Paper_Talk Visium GPT</a>
+    <a href="/community.html">Community</a>
+    <a href="/career.html">Career</a>
+  </nav>
+</header>
+
+<main class="container">
+  <h1>Paper_Talk Visium GPT</h1>
+  <p>Private GPT workspace for signed-in Paper_Talk users. It answers using Research Paper knowledge added by the admin.</p>
+
+  <div id="loginBox" class="login-box" style="display:none;">
+    <h2>Login required</h2>
+    <p>Please sign in with Google to use Paper_Talk Visium GPT.</p>
+    <a href="/auth/google">
+      <button>Sign in with Google</button>
+    </a>
+  </div>
+
+  <section id="gptApp" class="gpt-layout" style="display:none;">
+    <aside class="gpt-sidebar">
+      <button id="newThreadBtn">+ New Chat</button>
+      <hr>
+      <div id="threadList"></div>
+    </aside>
+
+    <section class="gpt-chat">
+      <div id="chatBox" class="chat-box"></div>
+
+      <div class="chat-input-row">
+        <textarea id="messageInput" placeholder="Ask about Visium, spatial transcriptomics, cancer genomics..."></textarea>
+        <button id="sendBtn">Send</button>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script>
+let currentUser = null;
+let currentThreadId = null;
+
+document.addEventListener("DOMContentLoaded", init);
+
+async function init() {
+  const meRes = await fetch("/api/me");
+  const me = await meRes.json();
+
+  if (!me.ok || !me.user) {
+    document.getElementById("loginBox").style.display = "block";
+    return;
+  }
+
+  currentUser = me.user;
+  document.getElementById("gptApp").style.display = "grid";
+
+  document.getElementById("newThreadBtn").addEventListener("click", createThread);
+  document.getElementById("sendBtn").addEventListener("click", sendMessage);
+
+  document.getElementById("messageInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  await loadThreads();
+}
+
+async function loadThreads() {
+  const res = await fetch("/api/gpt/threads");
+  const data = await res.json();
+
+  const list = document.getElementById("threadList");
+  list.innerHTML = "";
+
+  if (!data.ok) {
+    list.innerHTML = `<p>${escapeHtml(data.error || "Failed to load chats.")}</p>`;
+    return;
+  }
+
+  if (!data.threads || data.threads.length === 0) {
+    await createThread();
+    return;
+  }
+
+  data.threads.forEach(thread => {
+    const btn = document.createElement("button");
+    btn.className = "thread-item" + (thread.id === currentThreadId ? " active" : "");
+    btn.textContent = thread.title || "New chat";
+    btn.onclick = () => selectThread(thread.id);
+    list.appendChild(btn);
+  });
+
+  if (!currentThreadId) {
+    await selectThread(data.threads[0].id);
+  }
+}
+
+async function createThread() {
+  const res = await fetch("/api/gpt/threads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "New chat" })
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Failed to create chat.");
+    return;
+  }
+
+  currentThreadId = data.thread.id;
+  await loadThreads();
+  await loadMessages();
+}
+
+async function selectThread(threadId) {
+  currentThreadId = threadId;
+  await loadThreads();
+  await loadMessages();
+}
+
+async function loadMessages() {
+  const box = document.getElementById("chatBox");
+  box.innerHTML = "";
+
+  if (!currentThreadId) return;
+
+  const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}`);
+  const data = await res.json();
+
+  if (!data.ok) {
+    box.innerHTML = `<p>${escapeHtml(data.error || "Failed to load messages.")}</p>`;
+    return;
+  }
+
+  if (!data.messages || data.messages.length === 0) {
+    box.innerHTML = `<p class="empty-posts">Start a new conversation with Paper_Talk Visium GPT.</p>`;
+    return;
+  }
+
+  data.messages.forEach(msg => {
+    addMessage(msg.role, msg.content);
+  });
+
+  scrollChatToBottom();
+}
+
+async function sendMessage() {
+  const input = document.getElementById("messageInput");
+  const text = input.value.trim();
+
+  if (!text) return;
+
+  input.value = "";
+  addMessage("user", text);
+  addMessage("assistant", "Thinking...");
+
+  scrollChatToBottom();
+
+  const res = await fetch("/api/gpt/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      threadId: currentThreadId,
+      message: text
+    })
+  });
+
+  const data = await res.json();
+
+  const thinking = document.querySelector(".message.assistant:last-child");
+  if (thinking) thinking.remove();
+
+  if (!data.ok) {
+    addMessage("assistant", data.error || "Something went wrong.");
+    return;
+  }
+
+  currentThreadId = data.threadId;
+  addMessage("assistant", data.answer);
+
+  await loadThreads();
+  scrollChatToBottom();
+}
+
+function addMessage(role, content) {
+  const box = document.getElementById("chatBox");
+  const div = document.createElement("div");
+  div.className = `message ${role}`;
+  div.textContent = content;
+  box.appendChild(div);
+}
+
+function scrollChatToBottom() {
+  const box = document.getElementById("chatBox");
+  box.scrollTop = box.scrollHeight;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+</script>
+</body>
+</html>
