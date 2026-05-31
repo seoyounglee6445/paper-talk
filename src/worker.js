@@ -49,6 +49,10 @@ export default {
       return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
     }
 
+    if (url.pathname === "/admin-gpt" || url.pathname === "/admin-gpt.html") {
+  return env.ASSETS.fetch(new Request(new URL("/admin-gpt.html", request.url)));
+    }
+
     if (url.pathname === "/research") {
       return env.ASSETS.fetch(new Request(new URL("/research.html", request.url)));
     }
