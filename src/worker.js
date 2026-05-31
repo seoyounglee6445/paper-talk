@@ -1762,23 +1762,55 @@ async function keywordFallbackSearch(query, env) {
     .replace(/\s+/g, " ")
     .trim();
 
-  const phrases = [
-    cleanedQuery.slice(0, 120),
+  if (!cleanedQuery) return [];
+
+  const words = cleanedQuery
+    .split(/\s+/)
+    .filter(word => word.length >= 3);
+
+  const phrases = [];
+
+  // 1) Exact-ish title phrase, but short enough for D1 LIKE.
+  phrases.push(cleanedQuery.slice(0, 120));
+
+  // 2) First meaningful word groups. This catches long paper titles.
+  if (words.length >= 3) phrases.push(words.slice(0, 3).join(" "));
+  if (words.length >= 4) phrases.push(words.slice(0, 4).join(" "));
+  if (words.length >= 5) phrases.push(words.slice(0, 5).join(" "));
+
+  // 3) Domain-specific phrase groups from the user's query.
+  const knownPhrases = [
     "single-cell spatial atlas",
     "high-grade serous ovarian cancer",
     "spatial tumor ecosystems",
-    "mhc"
-  ].filter(Boolean);
+    "mhc1",
+    "mhc",
+    "class ii"
+  ];
+
+  for (const phrase of knownPhrases) {
+    if (cleanedQuery.includes(phrase)) phrases.push(phrase);
+  }
+
+  const uniquePhrases = [...new Set(
+    phrases
+      .map(v => String(v || "").trim())
+      .filter(v => v.length >= 3)
+  )].slice(0, 8);
+
+  if (!uniquePhrases.length) return [];
 
   const clauses = [];
   const params = [];
 
-  for (const phrase of phrases) {
+  for (const phrase of uniquePhrases) {
     clauses.push(`
       LOWER(
         REPLACE(
           REPLACE(
-            REPLACE(title, 'title = {', ''),
+            REPLACE(
+              REPLACE(title, 'title = {', ''),
+            'title={', ''),
           '{', ''),
         '}', '')
       ) LIKE ?
@@ -1786,20 +1818,63 @@ async function keywordFallbackSearch(query, env) {
     params.push(`%${phrase}%`);
   }
 
-  const result = await env.DB.prepare(`
-    SELECT title, source_url, pdf_link, content
-    FROM research_knowledge
-    WHERE status = 'indexed'
-      AND (${clauses.join(" OR ")})
-    ORDER BY datetime(updated_at) DESC
-    LIMIT 8
-  `).bind(...params).all();
+  // Use content only for the safest short phrase to avoid D1 LIKE complexity errors.
+  clauses.push(`
+    LOWER(
+      REPLACE(
+        REPLACE(
+          REPLACE(content, '{', ''),
+        '}', ''),
+      'title =', '')
+    ) LIKE ?
+  `);
+  params.push(`%${uniquePhrases[0]}%`);
 
-  return (result.results || []).map(item => ({
-    ...item,
-    title: cleanBibtexText(item.title),
-    content: cleanBibtexText(item.content)
-  }));
+  try {
+    const result = await env.DB.prepare(`
+      SELECT title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE (${clauses.join(" OR ")})
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 8
+    `).bind(...params).all();
+
+    return (result.results || []).map(item => ({
+      ...item,
+      title: cleanBibtexText(item.title),
+      content: cleanBibtexText(item.content)
+    }));
+  } catch (error) {
+    // Final safe fallback: title search only with the shortest phrase.
+    try {
+      const fallbackPhrase = uniquePhrases.find(v => v.length <= 80) || uniquePhrases[0];
+
+      const fallback = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE LOWER(title) LIKE ?
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 8
+      `).bind(`%${fallbackPhrase}%`).all();
+
+      return (fallback.results || []).map(item => ({
+        ...item,
+        title: cleanBibtexText(item.title),
+        content: cleanBibtexText(item.content)
+      }));
+    } catch {
+      return [];
+    }
+  }
+}
+
+function cleanBibtexText(value) {
+  return String(value || "")
+    .replace(/title\s*=\s*\{/gi, "")
+    .replace(/title\s*=\s*/gi, "")
+    .replace(/[{}]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function getRecentThreadMessages(threadId, userId, env) {
