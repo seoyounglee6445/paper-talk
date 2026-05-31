@@ -10,15 +10,15 @@
 <body>
 <header class="header">
   <nav class="nav">
-  <div class="logo">Paper_Talk Admin</div>
-  <a href="/">Home</a>
-  <a href="/admin.html">Admin</a>
-  <a href="/admin-gpt.html">GPT Usage</a>
-  <a href="/research">Research Paper</a>
-  <a href="/study">Study Materials</a>
-  <a href="/community">Community</a>
-  <a href="/career">Career</a>
-</nav>
+    <div class="logo">Paper_Talk Admin</div>
+    <a href="/">Home</a>
+    <a href="/admin.html">Admin</a>
+    <a href="/admin-gpt.html">GPT Usage</a>
+    <a href="/research">Research Paper</a>
+    <a href="/study">Study Materials</a>
+    <a href="/community">Community</a>
+    <a href="/career">Career</a>
+  </nav>
 </header>
 
 <main class="container">
@@ -110,6 +110,20 @@
       </div>
 
       <button type="submit">Save Research Paper</button>
+    </form>
+  </section>
+
+  <section class="card write-form">
+    <h2>Import LinkedIn CSV to GPT Knowledge</h2>
+    <p>Paste the CSV text from LinkedIn export. This will save posts into the Paper_Talk GPT knowledge base.</p>
+
+    <form onsubmit="importLinkedInCsv(event)">
+      <div class="full-row">
+        <label>LinkedIn CSV Text</label>
+        <textarea name="csvText" rows="14" placeholder="Paste LinkedIn Posts.csv or Shares.csv content here"></textarea>
+      </div>
+
+      <button type="submit">Import LinkedIn CSV</button>
     </form>
   </section>
 
@@ -397,6 +411,41 @@ async function createResearchPaper(e) {
   }
 
   alert("Research paper saved.");
+  e.target.reset();
+  loadAdminPosts();
+}
+
+async function importLinkedInCsv(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const form = new FormData(e.target);
+  const csvText = String(form.get("csvText") || "").trim();
+
+  if (!csvText) {
+    alert("Please paste LinkedIn CSV text.");
+    return;
+  }
+
+  const res = await fetch("/api/admin/research/import-linkedin-csv", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({ csvText })
+  });
+
+  const result = await res.json();
+
+  if (!result.ok) {
+    alert(result.error || "LinkedIn CSV import failed.");
+    return;
+  }
+
+  alert(`Imported: ${result.imported || 0}, Skipped: ${result.skipped || 0}`);
   e.target.reset();
   loadAdminPosts();
 }
