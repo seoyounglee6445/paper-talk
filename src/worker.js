@@ -671,7 +671,7 @@ async function adminDeletePost(request, env) {
 
   if (env.VECTORIZE) {
     try {
-      const ids = Array.from({ length: 8 }, (_, index) => `${data.id}:${index}`);
+      const ids = Array.from({ length: 24 }, (_, index) => `${data.id}:${index}`);
       await env.VECTORIZE.deleteByIds(ids);
     } catch (error) {
       // Ignore Vectorize delete errors so post deletion still works.
@@ -1330,7 +1330,7 @@ async function fetchReadableArticleText(url, title = "") {
   }
 
   if (contentType.includes("application/pdf")) {
-    return `PDF detected at ${normalizedUrl}. This Worker stores the PDF link, but cannot reliably extract PDF text without an external PDF text extraction service. Add the abstract/full text to the admin form for full GPT learning.`;
+    return `PDF detected at ${normalizedUrl}. The PDF link is stored for retrieval context. Native Cloudflare Worker PDF text extraction is limited without an external PDF parsing service, so the system will still learn from article metadata, HTML abstract, admin abstract, admin description, and any readable page text.`;
   }
 
   const raw = await response.text();
@@ -1557,7 +1557,7 @@ async function upsertResearchKnowledgeVectors({ postId, title, sourceUrl, pdfLin
     return false;
   }
 
-  const chunks = chunkTextForEmbedding(content, 1800).slice(0, 8);
+  const chunks = chunkTextForEmbedding(content, 1800).slice(0, 24);
 
   if (chunks.length === 0) {
     return false;
@@ -2312,8 +2312,10 @@ Rules:
 - Use semantic meaning, not only exact keywords, when interpreting the user's question.
 - If Paper_Talk research knowledge base contains any source related to the user's question, say that the paper/source is found.
 - If relevant Paper_Talk sources are found, base the answer on them and mention the source titles.
-- If only a title or limited metadata is available, summarize only what is available and clearly say that detailed abstract/results are not stored.
-- Do not say "not included" when a matching source is provided in the context.
+- If Paper_Talk context contains any scientific description, admin abstract, admin description, fetched article text, page text, abstract section, results section, discussion section, metadata description, or source link context, you MUST summarize using that available information.
+- Only say that detailed abstract/results are unavailable when the context truly contains title-only information and no scientific description at all.
+- Never refuse to summarize when descriptive content exists.
+- Do not say "not included", "not stored", or "cannot summarize" when a matching source includes any descriptive content.
 - If the knowledge base has no matching context, say that clearly.
 - Do not invent paper details, results, methods, sample sizes, or conclusions.
 - Give concise but scientifically useful answers.
