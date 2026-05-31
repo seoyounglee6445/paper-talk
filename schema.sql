@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS gpt_messages (
   id TEXT PRIMARY KEY,
   thread_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
-  role TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
   content TEXT NOT NULL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -30,8 +30,17 @@ CREATE TABLE IF NOT EXISTS research_knowledge (
 CREATE INDEX IF NOT EXISTS idx_gpt_threads_user_id
 ON gpt_threads(user_id);
 
+CREATE INDEX IF NOT EXISTS idx_gpt_threads_updated_at
+ON gpt_threads(updated_at);
+
 CREATE INDEX IF NOT EXISTS idx_gpt_messages_thread_id
 ON gpt_messages(thread_id);
 
+CREATE INDEX IF NOT EXISTS idx_gpt_messages_user_id
+ON gpt_messages(user_id);
+
 CREATE INDEX IF NOT EXISTS idx_research_knowledge_post_id
 ON research_knowledge(post_id);
+
+CREATE INDEX IF NOT EXISTS idx_research_knowledge_status
+ON research_knowledge(status);
