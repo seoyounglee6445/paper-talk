@@ -2159,86 +2159,169 @@ async function searchResearchKnowledge(query, env) {
     return latestResearchPostsAsKnowledge(env, 8);
   }
 
-  const collected = [];
+  const allResults = [];
 
-  // 1) Strong deterministic DB retrieval first.
-  // This fixes cases where a paper exists in research_knowledge but Vectorize does not return it.
-  // Example: exact/near-exact title questions such as
-  // "Spatial Transcriptomics and In Situ Sequencing to Study Alzheimer’s Disease 논문 요약해줘".
-  try {
-    collected.push(...await directResearchKnowledgeSearch(userQuery, env));
-  } catch {
-    // Continue.
-  }
+  // True semantic RAG:
+  // 1) Expand/translate the user's natural question into English scientific retrieval text.
+  //    This lets Korean questions like "알츠하이머 연구가 뭐가 있지?" match English paper text
+  //    such as "Alzheimer's disease, amyloid plaque, oligodendrocyte".
+  // 2) Query Vectorize with both the original question and the expanded retrieval query.
+  // 3) Use deterministic DB title/content search only as a fallback/safety net.
+  const retrievalQueries = await buildRetrievalQueries(userQuery, env);
 
-  try {
-    collected.push(...await keywordFallbackSearch(userQuery, env));
-  } catch {
-    // Continue.
-  }
-
-  try {
-    collected.push(...await searchResearchPostsAsKnowledge(userQuery, env));
-  } catch {
-    // Continue.
-  }
-
-  let directMerged = mergeKnowledgeResults(collected).slice(0, 8);
-
-  // If deterministic DB search found scientific content, return it immediately.
-  // Do not let Vectorize override a correct exact-title DB match.
-  if (directMerged.some(item => hasScientificContent(item?.content || item?.matched_chunk || ""))) {
-    return directMerged;
-  }
-
-  // 2) Then try Vectorize semantic search.
-  if (env.AI && env.VECTORIZE) {
+  // A) Semantic Vectorize search first.
+  for (const retrievalQuery of retrievalQueries) {
     try {
-      const queryEmbedding = await createEmbedding(userQuery, env);
-
-      const vectorResult = await env.VECTORIZE.query(queryEmbedding, {
-        topK: 8,
-        returnMetadata: "all"
-      });
-
-      const matches = vectorResult.matches || [];
-      const seen = new Set();
-      const vectorResults = [];
-
-      for (const match of matches) {
-        const metadata = match.metadata || {};
-        const postId = metadata.post_id;
-
-        if (!postId || seen.has(postId)) continue;
-        seen.add(postId);
-
-        const paper = await env.DB.prepare(`
-          SELECT title, source_url, pdf_link, content
-          FROM research_knowledge
-          WHERE post_id = ?
-            AND status = 'indexed'
-        `).bind(postId).first();
-
-        if (paper) {
-          vectorResults.push({
-            ...paper,
-            matched_chunk: metadata.text || paper.content || "",
-            similarity_score: match.score || 0
-          });
-        }
-      }
-
-      const merged = mergeKnowledgeResults([...directMerged, ...vectorResults]).slice(0, 8);
-      if (merged.length > 0) return merged;
+      allResults.push(...await vectorSemanticSearch(retrievalQuery, env));
     } catch {
-      // Continue to direct fallback below.
+      // Continue with other retrieval methods.
     }
   }
 
-  // 3) Final fallback: return any direct result, even if title-only.
-  if (directMerged.length > 0) return directMerged;
+  let semanticMerged = mergeKnowledgeResults(allResults).slice(0, 8);
+  if (semanticMerged.length > 0) {
+    return semanticMerged;
+  }
+
+  // B) Deterministic DB fallback with expanded English retrieval queries.
+  for (const retrievalQuery of retrievalQueries) {
+    try {
+      allResults.push(...await directResearchKnowledgeSearch(retrievalQuery, env));
+    } catch {
+      // Continue.
+    }
+
+    try {
+      allResults.push(...await keywordFallbackSearch(retrievalQuery, env));
+    } catch {
+      // Continue.
+    }
+
+    try {
+      allResults.push(...await searchResearchPostsAsKnowledge(retrievalQuery, env));
+    } catch {
+      // Continue.
+    }
+  }
+
+  const merged = mergeKnowledgeResults(allResults).slice(0, 8);
+  if (merged.length > 0) return merged;
 
   return [];
+}
+
+async function buildRetrievalQueries(userQuery, env) {
+  const queries = [String(userQuery || "").trim()].filter(Boolean);
+
+  // Add a cheap normalization pass.
+  const normalized = normalizeSearchText(userQuery);
+  if (normalized && normalized !== userQuery.toLowerCase()) {
+    queries.push(normalized);
+  }
+
+  // Use the OpenAI model as a query translator/expander.
+  // This is not keyword mapping. It lets any natural-language question become
+  // a scientific retrieval query for English abstracts/full text.
+  const expanded = await expandQuestionForResearchRetrieval(userQuery, env);
+  if (expanded) queries.push(expanded);
+
+  // If the model returns comma-separated terms, also add a compact space-joined query.
+  if (expanded && expanded.includes(",")) {
+    queries.push(expanded.split(",").map(v => v.trim()).filter(Boolean).join(" "));
+  }
+
+  return [...new Set(queries.map(v => String(v || "").trim()).filter(Boolean))].slice(0, 4);
+}
+
+async function expandQuestionForResearchRetrieval(userQuery, env) {
+  if (!env.OPENAI_API_KEY) return "";
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-5",
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You convert user questions into concise English scientific retrieval queries for a biomedical paper RAG system.",
+              "Return only search terms and short phrases, no explanation.",
+              "Include likely English biomedical synonyms, disease names, methods, cell types, molecules, and concepts.",
+              "Do not answer the question.",
+              "Example: 알츠하이머 연구가 뭐가 있지? -> Alzheimer disease, amyloid plaque, neurodegeneration, brain, spatial transcriptomics"
+            ].join(" ")
+          },
+          {
+            role: "user",
+            content: String(userQuery || "").slice(0, 1000)
+          }
+        ],
+        temperature: 0
+      })
+    });
+
+    const raw = await res.text();
+    const data = JSON.parse(raw);
+    const value = data?.choices?.[0]?.message?.content || "";
+
+    return cleanFetchedArticleText(value)
+      .replace(/^["']|["']$/g, "")
+      .slice(0, 500);
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function vectorSemanticSearch(query, env) {
+  if (!env.AI || !env.VECTORIZE) return [];
+
+  const queryEmbedding = await createEmbedding(query, env);
+
+  const vectorResult = await env.VECTORIZE.query(queryEmbedding, {
+    topK: 12,
+    returnMetadata: "all"
+  });
+
+  const matches = vectorResult.matches || [];
+  const seen = new Set();
+  const results = [];
+
+  for (const match of matches) {
+    const metadata = match.metadata || {};
+    const postId = metadata.post_id;
+
+    if (!postId || seen.has(postId)) continue;
+    seen.add(postId);
+
+    const paper = await env.DB.prepare(`
+      SELECT title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE post_id = ?
+        AND status = 'indexed'
+    `).bind(postId).first();
+
+    if (paper) {
+      results.push({
+        ...paper,
+        matched_chunk: metadata.text || paper.content || "",
+        similarity_score: match.score || 0,
+        from_vector_search: true
+      });
+    }
+  }
+
+  return results;
 }
 
 async function directResearchKnowledgeSearch(query, env) {
@@ -2277,8 +2360,7 @@ async function directResearchKnowledgeSearch(query, env) {
     }));
   }
 
-  // B) Require multiple important tokens in the title.
-  // This is robust to punctuation differences such as Alzheimer's vs Alzheimer’s.
+  // B) Strong title match: require multiple important tokens in the title.
   const titleTokens = tokens.slice(0, Math.min(tokens.length, 6));
   if (titleTokens.length >= 2) {
     try {
@@ -2300,7 +2382,7 @@ async function directResearchKnowledgeSearch(query, env) {
     }
   }
 
-  // C) Require multiple important tokens in the content.
+  // C) Strong content match: require at least two important tokens in content.
   const contentTokens = tokens.slice(0, Math.min(tokens.length, 5));
   if (contentTokens.length >= 2) {
     try {
@@ -2322,23 +2404,32 @@ async function directResearchKnowledgeSearch(query, env) {
     }
   }
 
-  // D) Very broad title fallback: any strong token.
-  // This catches cases where the user types only "Alzheimer paper summary".
+  // D) Broad OR fallback across title AND content.
+  // This is important for expanded queries such as:
+  // "Alzheimer disease, amyloid plaque, neurodegeneration, brain, spatial transcriptomics".
   try {
-    const broadTokens = tokens.slice(0, 8);
-    const orClauses = broadTokens.map(() => `LOWER(title) LIKE ?`).join(" OR ");
-    const orParams = broadTokens.map(token => `%${token}%`);
+    const broadTokens = tokens.slice(0, 10);
+    if (broadTokens.length > 0) {
+      const orClauses = broadTokens
+        .map(() => `(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)`)
+        .join(" OR ");
 
-    const broadResult = await env.DB.prepare(`
-      SELECT title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE status = 'indexed'
-        AND (${orClauses})
-      ORDER BY datetime(updated_at) DESC
-      LIMIT 8
-    `).bind(...orParams).all();
+      const orParams = [];
+      for (const token of broadTokens) {
+        orParams.push(`%${token}%`, `%${token}%`);
+      }
 
-    results.push(...(broadResult.results || []));
+      const broadResult = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND (${orClauses})
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 12
+      `).bind(...orParams).all();
+
+      results.push(...(broadResult.results || []));
+    }
   } catch {
     // Continue.
   }
@@ -2356,10 +2447,11 @@ async function directResearchKnowledgeSearch(query, env) {
 function getImportantSearchTokens(query) {
   const stopWords = new Set([
     "the", "and", "for", "with", "from", "into", "onto", "this", "that", "these", "those",
-    "paper", "article", "study", "please", "summary", "summarize", "summarise", "about",
+    "paper", "article", "study", "research", "please", "summary", "summarize", "summarise", "about",
     "what", "which", "where", "when", "how", "why", "can", "could", "would", "should",
-    "논문", "요약", "요약해줘", "요약해주세요", "정리", "정리해줘", "알려줘", "해주세요",
-    "있는", "있나요", "대한", "해당", "그", "이", "저", "좀"
+    "논문", "연구", "관련", "자료", "정보", "뭐가", "무엇", "어떤", "있지", "있어", "있나요",
+    "요약", "요약해줘", "요약해주세요", "정리", "정리해줘", "알려줘", "해주세요",
+    "있는", "대한", "해당", "그", "이", "저", "좀"
   ]);
 
   const cleaned = normalizeSearchText(query);
@@ -2368,13 +2460,13 @@ function getImportantSearchTokens(query) {
     .map(token => token.trim())
     .filter(token => token.length >= 3)
     .filter(token => !stopWords.has(token))
-    .slice(0, 12);
+    .slice(0, 16);
 }
 
 function stripQuestionIntentWords(value) {
   return String(value || "")
-    .replace(/\b(paper|article|study|please|summary|summarize|summarise|about)\b/gi, " ")
-    .replace(/논문|요약해주세요|요약해줘|요약|정리해줘|정리|알려줘|해주세요/g, " ")
+    .replace(/\b(paper|article|study|research|please|summary|summarize|summarise|about)\b/gi, " ")
+    .replace(/논문|연구|관련|자료|정보|뭐가|무엇|어떤|있지|있어|있나요|요약해주세요|요약해줘|요약|정리해줘|정리|알려줘|해주세요/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -2394,8 +2486,10 @@ function mergeKnowledgeResults(items) {
   return merged.sort((a, b) => {
     const aContent = a?.content || a?.matched_chunk || "";
     const bContent = b?.content || b?.matched_chunk || "";
-    const aScore = (hasScientificContent(aContent) ? 10 : 0) + Math.min(String(aContent).length / 1000, 5);
-    const bScore = (hasScientificContent(bContent) ? 10 : 0) + Math.min(String(bContent).length / 1000, 5);
+    const aVector = a?.from_vector_search ? 3 : 0;
+    const bVector = b?.from_vector_search ? 3 : 0;
+    const aScore = aVector + (hasScientificContent(aContent) ? 10 : 0) + Math.min(String(aContent).length / 1000, 5);
+    const bScore = bVector + (hasScientificContent(bContent) ? 10 : 0) + Math.min(String(bContent).length / 1000, 5);
     return bScore - aScore;
   });
 }
