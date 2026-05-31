@@ -1,7 +1,12 @@
-// deploy test
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/test-secret") {
+      return json({
+        hasKey: !!env.OPENAI_API_KEY
+      });
+    }
 
     if (url.pathname === "/auth/google") return googleLogin(request, env);
     if (url.pathname === "/auth/google/callback") return googleCallback(request, env);
@@ -48,10 +53,6 @@ export default {
 
     if (url.pathname === "/admin" || url.pathname === "/admin.html") {
       return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
-    }
-
-    if (url.pathname === "/admin-gpt" || url.pathname === "/admin-gpt.html") {
-  return env.ASSETS.fetch(new Request(new URL("/admin-gpt.html", request.url)));
     }
 
     if (url.pathname === "/research") {
