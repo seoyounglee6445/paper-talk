@@ -416,17 +416,24 @@ async function createResearchPaper(e) {
   loadAdminPosts();
 }
 
-async function importLinkedInCsv(e) {
+async function importLinkedInCsvFile(e) {
   e.preventDefault();
 
   const key = requireAdminKey();
   if (!key) return;
 
-  const form = new FormData(e.target);
-  const csvText = String(form.get("csvText") || "").trim();
+  const fileInput = document.getElementById("linkedinCsvFile");
+  const file = fileInput.files[0];
 
-  if (!csvText) {
-    alert("Please paste LinkedIn CSV text.");
+  if (!file) {
+    alert("Please select a CSV file.");
+    return;
+  }
+
+  const csvText = await file.text();
+
+  if (!csvText.trim()) {
+    alert("CSV file is empty.");
     return;
   }
 
