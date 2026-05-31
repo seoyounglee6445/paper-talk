@@ -1488,11 +1488,17 @@ async function gptChat(request, env) {
   const context = await searchResearchKnowledge(message, env);
   const recentMessages = await getRecentThreadMessages(threadId, user.id, env);
 
-  const assistantText = await callOpenAIForPaperTalk({
+  let assistantText = await callOpenAIForPaperTalk({
     userMessage: message,
     context,
     recentMessages
   }, env);
+
+  assistantText = assistantText
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "")
+    .replace(/#/g, "")
+    .replace(/\*/g, "");
 
   await env.DB.prepare(`
     INSERT INTO gpt_messages (
@@ -1912,6 +1918,11 @@ You are Paper_Talk Vision GPT, a research assistant for cancer genomics, bioinfo
 
 Rules:
 - Always use the provided Paper_Talk research knowledge base when relevant.
+- Do not use Markdown formatting.
+- Do not use **, __, #, or markdown bullet points.
+- Return plain text only.
+- Use readable paragraphs.
+- Never wrap text with markdown symbols.
 - The user may ask in Korean, English, or mixed Korean-English. Understand both languages.
 - Use semantic meaning, not only exact keywords, when interpreting the user's question.
 - If Paper_Talk research knowledge base contains any source related to the user's question, say that the paper/source is found.
@@ -1957,9 +1968,9 @@ Rules:
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4.1",
+        model: env.OPENAI_MODEL || "gpt-5",
         messages,
-        temperature: 0.2
+        temperature: 0.1
       })
     });
 
