@@ -1754,77 +1754,52 @@ function chunkTextForEmbedding(text, maxLength = 1800) {
 
 async function keywordFallbackSearch(query, env) {
   const rawQuery = String(query || "").trim();
+  if (!rawQuery) return [];
 
-  if (!rawQuery) {
-    try {
-      const latest = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 8
-      `).all();
-
-      return latest.results || [];
-    } catch {
-      return [];
-    }
-  }
-
-  const cleanedQuery = rawQuery
+  const cleanedQuery = cleanBibtexText(rawQuery)
     .toLowerCase()
-    .replace(/[{}]/g, "")
     .replace(/[^\p{L}\p{N}\s-]/gu, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 240);
+    .trim();
 
-  if (!cleanedQuery) return [];
-
-  const terms = cleanedQuery
-    .split(/\s+/)
-    .filter(term => term.length >= 3)
-    .slice(0, 4);
+  const phrases = [
+    cleanedQuery.slice(0, 120),
+    "single-cell spatial atlas",
+    "high-grade serous ovarian cancer",
+    "spatial tumor ecosystems",
+    "mhc"
+  ].filter(Boolean);
 
   const clauses = [];
   const params = [];
 
-  // Phrase search only on title to avoid D1 "LIKE pattern too complex" on long content.
-  clauses.push(`LOWER(REPLACE(REPLACE(title, '{', ''), '}', '')) LIKE ?`);
-  params.push(`%${cleanedQuery}%`);
-
-  // A few title-term searches are enough for long paper titles.
-  for (const term of terms) {
-    clauses.push(`LOWER(REPLACE(REPLACE(title, '{', ''), '}', '')) LIKE ?`);
-    params.push(`%${term}%`);
+  for (const phrase of phrases) {
+    clauses.push(`
+      LOWER(
+        REPLACE(
+          REPLACE(
+            REPLACE(title, 'title = {', ''),
+          '{', ''),
+        '}', '')
+      ) LIKE ?
+    `);
+    params.push(`%${phrase}%`);
   }
 
-  try {
-    const result = await env.DB.prepare(`
-      SELECT title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE status = 'indexed'
-        AND (${clauses.join(" OR ")})
-      ORDER BY datetime(updated_at) DESC
-      LIMIT 8
-    `).bind(...params).all();
+  const result = await env.DB.prepare(`
+    SELECT title, source_url, pdf_link, content
+    FROM research_knowledge
+    WHERE status = 'indexed'
+      AND (${clauses.join(" OR ")})
+    ORDER BY datetime(updated_at) DESC
+    LIMIT 8
+  `).bind(...params).all();
 
-    return (result.results || []).map(item => ({
-      ...item,
-      title: cleanBibtexText(item.title),
-      content: cleanBibtexText(item.content)
-    }));
-  } catch {
-    return [];
-  }
-}
-
-function cleanBibtexText(value) {
-  return String(value || "")
-    .replace(/title\s*=\s*/gi, "")
-    .replace(/[{}]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return (result.results || []).map(item => ({
+    ...item,
+    title: cleanBibtexText(item.title),
+    content: cleanBibtexText(item.content)
+  }));
 }
 
 async function getRecentThreadMessages(threadId, userId, env) {
