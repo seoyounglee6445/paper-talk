@@ -1727,14 +1727,9 @@ function chunkTextForEmbedding(text, maxLength = 1800) {
 }
 
 async function keywordFallbackSearch(query, env) {
-  const terms = String(query || "")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
-    .split(/\s+/)
-    .filter(term => term.length >= 2)
-    .slice(0, 12);
+  const rawQuery = String(query || "").trim();
 
-  if (terms.length === 0) {
+  if (!rawQuery) {
     const latest = await env.DB.prepare(`
       SELECT title, source_url, pdf_link, content
       FROM research_knowledge
@@ -1746,27 +1741,59 @@ async function keywordFallbackSearch(query, env) {
     return latest.results || [];
   }
 
-  const clauses = terms
-    .map(() => `(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)`) 
-    .join(" OR ");
+  const cleanedQuery = rawQuery
+    .toLowerCase()
+    .replace(/[{}]/g, "")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
+  const terms = cleanedQuery
+    .split(/\s+/)
+    .filter(term => term.length >= 2)
+    .slice(0, 12);
+
+  const clauses = [];
   const params = [];
 
+  clauses.push(`LOWER(REPLACE(REPLACE(title, '{', ''), '}', '')) LIKE ?`);
+  params.push(`%${cleanedQuery}%`);
+
+  clauses.push(`LOWER(REPLACE(REPLACE(content, '{', ''), '}', '')) LIKE ?`);
+  params.push(`%${cleanedQuery}%`);
+
   for (const term of terms) {
-    params.push(`%${term}%`, `%${term}%`);
+    clauses.push(`LOWER(REPLACE(REPLACE(title, '{', ''), '}', '')) LIKE ?`);
+    params.push(`%${term}%`);
+
+    clauses.push(`LOWER(REPLACE(REPLACE(content, '{', ''), '}', '')) LIKE ?`);
+    params.push(`%${term}%`);
   }
 
   const result = await env.DB.prepare(`
     SELECT title, source_url, pdf_link, content
     FROM research_knowledge
     WHERE status = 'indexed'
-      AND (${clauses})
+      AND (${clauses.join(" OR ")})
     ORDER BY datetime(updated_at) DESC
     LIMIT 8
   `).bind(...params).all();
 
-  return result.results || [];
+  return (result.results || []).map(item => ({
+    ...item,
+    title: cleanBibtexText(item.title),
+    content: cleanBibtexText(item.content)
+  }));
 }
+
+function cleanBibtexText(value) {
+  return String(value || "")
+    .replace(/title\s*=\s*/gi, "")
+    .replace(/[{}]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 
 async function getRecentThreadMessages(threadId, userId, env) {
   const result = await env.DB.prepare(`
