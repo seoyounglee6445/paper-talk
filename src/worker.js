@@ -1229,6 +1229,12 @@ async function indexResearchPaperPost(post, env) {
 }
 
 async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, researchData }, env) {
+  const fetchedArticle = await fetchArticleKnowledgeText({
+    title,
+    sourceUrl,
+    pdfLink
+  });
+
   const content = [
     `Title: ${title}`,
     researchData.year ? `Year: ${researchData.year}` : "",
@@ -1236,8 +1242,9 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
     researchData.journal ? `Journal: ${researchData.journal}` : "",
     researchData.category ? `Category: ${researchData.category}` : "",
     researchData.tags ? `Tags: ${researchData.tags}` : "",
-    researchData.abstract ? `Abstract: ${researchData.abstract}` : "",
-    researchData.description ? `Description: ${researchData.description}` : "",
+    researchData.abstract ? `Admin abstract: ${researchData.abstract}` : "",
+    researchData.description ? `Admin description: ${researchData.description}` : "",
+    fetchedArticle ? `Fetched article text from link: ${fetchedArticle}` : "",
     researchData.figures ? `Figures: ${researchData.figures}` : "",
     researchData.note ? `Note: ${researchData.note}` : "",
     sourceUrl ? `Article link: ${sourceUrl}` : "",
@@ -1281,6 +1288,268 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
   }, env);
 
   return true;
+}
+
+async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink }) {
+  const urls = [sourceUrl, pdfLink]
+    .map(v => String(v || "").trim())
+    .filter(Boolean);
+
+  const collected = [];
+
+  for (const url of urls) {
+    try {
+      const item = await fetchReadableArticleText(url, title);
+      if (item) collected.push(item);
+    } catch {
+      // Some publisher pages block automated access. Do not fail saving/indexing.
+    }
+  }
+
+  return cleanFetchedArticleText(collected.join("\n\n")).slice(0, 18000);
+}
+
+async function fetchReadableArticleText(url, title = "") {
+  const normalizedUrl = normalizeArticleUrl(url);
+  if (!normalizedUrl) return "";
+
+  const response = await fetch(normalizedUrl, {
+    method: "GET",
+    headers: {
+      "User-Agent": "Mozilla/5.0 Paper_Talk_Bot/1.0; research indexing",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,text/plain;q=0.7,*/*;q=0.5",
+      "Accept-Language": "en-US,en;q=0.9"
+    },
+    redirect: "follow"
+  });
+
+  const contentType = response.headers.get("Content-Type") || "";
+
+  if (!response.ok) {
+    return `Fetch status for ${normalizedUrl}: HTTP ${response.status}. The publisher page may block automated access. Stored admin-provided metadata and link instead.`;
+  }
+
+  if (contentType.includes("application/pdf")) {
+    return `PDF detected at ${normalizedUrl}. This Worker stores the PDF link, but cannot reliably extract PDF text without an external PDF text extraction service. Add the abstract/full text to the admin form for full GPT learning.`;
+  }
+
+  const raw = await response.text();
+  const limitedRaw = raw.slice(0, 700000);
+
+  if (contentType.includes("application/json") || looksLikeJson(limitedRaw)) {
+    return extractTextFromJson(limitedRaw, normalizedUrl);
+  }
+
+  return extractTextFromHtml(limitedRaw, normalizedUrl, title);
+}
+
+function normalizeArticleUrl(url) {
+  const value = String(url || "").trim();
+  if (!value) return "";
+
+  if (/^10\.\d{4,9}\//i.test(value)) {
+    return `https://doi.org/${value}`;
+  }
+
+  if (/^doi:/i.test(value)) {
+    return `https://doi.org/${value.replace(/^doi:/i, "").trim()}`;
+  }
+
+  if (/^https?:\/\//i.test(value)) return value;
+
+  return "";
+}
+
+function looksLikeJson(text) {
+  const value = String(text || "").trim();
+  return value.startsWith("{") || value.startsWith("[");
+}
+
+function extractTextFromJson(text, sourceUrl) {
+  try {
+    const data = JSON.parse(text);
+    const pieces = [];
+
+    function walk(value, key = "") {
+      if (pieces.join(" ").length > 25000) return;
+      if (typeof value === "string") {
+        const cleaned = cleanFetchedArticleText(value);
+        if (cleaned.length >= 80 && /title|abstract|summary|description|article|paper|result|method|conclusion|background|objective/i.test(key + " " + cleaned)) {
+          pieces.push(cleaned);
+        }
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) walk(item, key);
+        return;
+      }
+      if (value && typeof value === "object") {
+        for (const [k, v] of Object.entries(value)) walk(v, k);
+      }
+    }
+
+    walk(data);
+    return [`Source URL: ${sourceUrl}`, ...pieces].join("\n");
+  } catch {
+    return `Source URL: ${sourceUrl}\n${cleanFetchedArticleText(text).slice(0, 12000)}`;
+  }
+}
+
+function extractTextFromHtml(html, sourceUrl, fallbackTitle = "") {
+  const pieces = [];
+
+  const jsonLdBlocks = [...String(html).matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)]
+    .map(match => stripHtmlEntities(match[1] || ""));
+
+  for (const block of jsonLdBlocks.slice(0, 5)) {
+    const extracted = extractTextFromJson(block, sourceUrl);
+    if (extracted) pieces.push(extracted);
+  }
+
+  const metaNames = [
+    "citation_title",
+    "dc.title",
+    "og:title",
+    "twitter:title",
+    "citation_author",
+    "citation_journal_title",
+    "citation_publication_date",
+    "citation_doi",
+    "citation_abstract",
+    "description",
+    "dc.description",
+    "og:description",
+    "twitter:description"
+  ];
+
+  for (const name of metaNames) {
+    const values = extractMetaContent(html, name);
+    for (const value of values) {
+      if (value) pieces.push(`${name}: ${value}`);
+    }
+  }
+
+  const abstract = extractSectionByHeading(html, ["abstract", "summary"]);
+  if (abstract) pieces.push(`Abstract section: ${abstract}`);
+
+  const introduction = extractSectionByHeading(html, ["introduction", "background"]);
+  if (introduction) pieces.push(`Introduction/background section: ${introduction}`);
+
+  const results = extractSectionByHeading(html, ["results", "findings"]);
+  if (results) pieces.push(`Results/findings section: ${results}`);
+
+  const discussion = extractSectionByHeading(html, ["discussion", "conclusion", "conclusions"]);
+  if (discussion) pieces.push(`Discussion/conclusion section: ${discussion}`);
+
+  let readable = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, " ")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, " ")
+    .replace(/<header[\s\S]*?<\/header>/gi, " ")
+    .replace(/<(p|div|section|article|h1|h2|h3|li|br)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+
+  readable = cleanFetchedArticleText(stripHtmlEntities(readable));
+
+  const keywordWindow = extractKeywordWindow(readable, fallbackTitle);
+  if (keywordWindow) pieces.push(`Relevant page text: ${keywordWindow}`);
+  else if (readable.length > 500) pieces.push(`Page text: ${readable.slice(0, 16000)}`);
+
+  const unique = [...new Set(
+    pieces
+      .map(v => cleanFetchedArticleText(v))
+      .filter(v => v.length >= 40)
+  )];
+
+  if (!unique.length) {
+    return `Source URL: ${sourceUrl}\nThe page was fetched, but readable article text could not be extracted. The publisher may require JavaScript, institutional access, or block automated access.`;
+  }
+
+  return [`Source URL: ${sourceUrl}`, ...unique].join("\n\n");
+}
+
+function extractMetaContent(html, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`<meta[^>]+(?:name|property)=["']${escaped}["'][^>]+content=["']([^"']*)["'][^>]*>`, "gi"),
+    new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+(?:name|property)=["']${escaped}["'][^>]*>`, "gi")
+  ];
+
+  const values = [];
+  for (const pattern of patterns) {
+    for (const match of String(html).matchAll(pattern)) {
+      const value = cleanFetchedArticleText(stripHtmlEntities(match[1] || ""));
+      if (value) values.push(value);
+    }
+  }
+  return values;
+}
+
+function extractSectionByHeading(html, headings) {
+  const text = String(html || "");
+  for (const heading of headings) {
+    const pattern = new RegExp(`<h[1-4][^>]*>\\s*${heading}\\s*<\\/h[1-4]>([\\s\\S]{0,12000}?)(?=<h[1-4][^>]*>|$)`, "i");
+    const match = text.match(pattern);
+    if (match) {
+      return cleanFetchedArticleText(stripHtmlEntities(
+        match[1]
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+      )).slice(0, 8000);
+    }
+  }
+  return "";
+}
+
+function extractKeywordWindow(text, title) {
+  const clean = cleanFetchedArticleText(text);
+  const titleWords = normalizeSearchText(title)
+    .split(/\s+/)
+    .filter(v => v.length >= 5)
+    .slice(0, 6);
+
+  const keywords = ["abstract", "introduction", "results", "discussion", "conclusion", ...titleWords];
+  const lower = clean.toLowerCase();
+
+  let bestIndex = -1;
+  for (const keyword of keywords) {
+    const index = lower.indexOf(keyword.toLowerCase());
+    if (index >= 0) {
+      bestIndex = index;
+      break;
+    }
+  }
+
+  if (bestIndex < 0) return "";
+
+  const start = Math.max(0, bestIndex - 2000);
+  const end = Math.min(clean.length, bestIndex + 16000);
+  return clean.slice(start, end);
+}
+
+function stripHtmlEntities(value) {
+  return String(value || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&#x2F;/gi, "/")
+    .replace(/&#(\d+);/g, (_, code) => {
+      try { return String.fromCharCode(Number(code)); } catch { return " "; }
+    });
+}
+
+function cleanFetchedArticleText(value) {
+  return String(value || "")
+    .replace(/\u0000/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
 }
 
 async function upsertResearchKnowledgeVectors({ postId, title, sourceUrl, pdfLink, content }, env) {
@@ -2033,6 +2302,7 @@ You are Paper_Talk Vision GPT, a research assistant for cancer genomics, bioinfo
 
 Rules:
 - Always use the provided Paper_Talk research knowledge base when relevant.
+- The knowledge base may include fetched article text from article links. If fetched article text is available, use it to answer summaries and paper-specific questions.
 - Do not use Markdown formatting.
 - Do not use **, __, #, or markdown bullet points.
 - Return plain text only.
