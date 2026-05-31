@@ -16,6 +16,11 @@ export default {
     if (url.pathname === "/api/posts" && request.method === "GET") return listPosts(request, env);
     if (url.pathname === "/api/posts" && request.method === "POST") return createPost(request, env);
 
+    if (url.pathname === "/api/gpt/threads" && request.method === "GET") return listGptThreads(request, env);
+    if (url.pathname === "/api/gpt/threads" && request.method === "POST") return createGptThread(request, env);
+    if (url.pathname === "/api/gpt/messages" && request.method === "GET") return listGptMessages(request, env);
+    if (url.pathname === "/api/gpt/chat" && request.method === "POST") return gptChat(request, env);
+
     if (url.pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
     if (url.pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
     if (url.pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
@@ -47,6 +52,10 @@ export default {
 
     if (url.pathname === "/study") {
       return env.ASSETS.fetch(new Request(new URL("/study.html", request.url)));
+    }
+
+    if (url.pathname === "/visium-gpt") {
+      return env.ASSETS.fetch(new Request(new URL("/visium-gpt.html", request.url)));
     }
 
     if (url.pathname === "/community") {
@@ -571,6 +580,16 @@ async function adminApprovePost(request, env) {
     WHERE id = ?
   `).bind(data.id).run();
 
+  const post = await env.DB.prepare(`
+    SELECT *
+    FROM posts
+    WHERE id = ?
+  `).bind(data.id).first();
+
+  if (post && post.section === "research" && post.type === "paper") {
+    await indexResearchPaperPost(post, env);
+  }
+
   return json({ ok: true });
 }
 
@@ -584,6 +603,11 @@ async function adminDeletePost(request, env) {
   if (!data.id) {
     return json({ ok: false, error: "Post ID is required." }, 400);
   }
+
+  await env.DB.prepare(`
+    DELETE FROM research_knowledge
+    WHERE post_id = ?
+  `).bind(data.id).run();
 
   await env.DB.prepare(`
     DELETE FROM posts
@@ -604,6 +628,8 @@ async function adminCreateResearchPaper(request, env) {
   if (!title) {
     return json({ ok: false, error: "Title is required." }, 400);
   }
+
+  const postId = crypto.randomUUID();
 
   const researchData = {
     year: data.year || "",
@@ -633,15 +659,23 @@ async function adminCreateResearchPaper(request, env) {
     )
     VALUES (?, 'research', 'paper', ?, ?, ?, 'Admin', '', '', 'published')
   `).bind(
-    crypto.randomUUID(),
+    postId,
     title,
     JSON.stringify(researchData),
     data.articleLink || ""
   ).run();
 
+  await indexResearchPaperData({
+    postId,
+    title,
+    sourceUrl: data.articleLink || "",
+    pdfLink: data.pdfLink || "",
+    researchData
+  }, env);
+
   return json({
     ok: true,
-    message: "Research paper saved."
+    message: "Research paper saved and added to Paper_Talk GPT knowledge base."
   });
 }
 
@@ -784,4 +818,398 @@ async function adminCreateBlogPost(request, env) {
     ok: true,
     message: "Blog post saved."
   });
+}
+
+/* =========================
+   Paper_Talk GPT Functions
+========================= */
+
+async function indexResearchPaperPost(post, env) {
+  let researchData = {};
+
+  try {
+    researchData = JSON.parse(post.body || "{}");
+  } catch {
+    researchData = {};
+  }
+
+  return indexResearchPaperData({
+    postId: post.id,
+    title: post.title,
+    sourceUrl: post.link || "",
+    pdfLink: researchData.pdfLink || "",
+    researchData
+  }, env);
+}
+
+async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, researchData }, env) {
+  const content = [
+    `Title: ${title}`,
+    researchData.year ? `Year: ${researchData.year}` : "",
+    researchData.authors ? `Authors: ${researchData.authors}` : "",
+    researchData.journal ? `Journal: ${researchData.journal}` : "",
+    researchData.category ? `Category: ${researchData.category}` : "",
+    researchData.tags ? `Tags: ${researchData.tags}` : "",
+    researchData.abstract ? `Abstract: ${researchData.abstract}` : "",
+    researchData.description ? `Description: ${researchData.description}` : "",
+    researchData.figures ? `Figures: ${researchData.figures}` : "",
+    researchData.note ? `Note: ${researchData.note}` : "",
+    sourceUrl ? `Article link: ${sourceUrl}` : "",
+    pdfLink ? `PDF link: ${pdfLink}` : ""
+  ].filter(Boolean).join("\n\n");
+
+  await env.DB.prepare(`
+    INSERT INTO research_knowledge (
+      id,
+      post_id,
+      title,
+      source_url,
+      pdf_link,
+      content,
+      status,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP)
+    ON CONFLICT(post_id) DO UPDATE SET
+      title = excluded.title,
+      source_url = excluded.source_url,
+      pdf_link = excluded.pdf_link,
+      content = excluded.content,
+      status = 'indexed',
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(
+    crypto.randomUUID(),
+    postId,
+    title,
+    sourceUrl,
+    pdfLink,
+    content
+  ).run();
+
+  return true;
+}
+
+async function listGptThreads(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  const threads = await env.DB.prepare(`
+    SELECT *
+    FROM gpt_threads
+    WHERE user_id = ?
+    ORDER BY datetime(updated_at) DESC
+  `).bind(user.id).all();
+
+  return json({
+    ok: true,
+    threads: threads.results || []
+  });
+}
+
+async function createGptThread(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  const data = await request.json().catch(() => ({}));
+  const title = String(data.title || "New chat").trim() || "New chat";
+  const threadId = crypto.randomUUID();
+
+  await env.DB.prepare(`
+    INSERT INTO gpt_threads (
+      id,
+      user_id,
+      title,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).bind(threadId, user.id, title).run();
+
+  return json({
+    ok: true,
+    thread: {
+      id: threadId,
+      user_id: user.id,
+      title
+    }
+  });
+}
+
+async function listGptMessages(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  const url = new URL(request.url);
+  const threadId = url.searchParams.get("threadId");
+
+  if (!threadId) {
+    return json({ ok: false, error: "threadId is required." }, 400);
+  }
+
+  const thread = await env.DB.prepare(`
+    SELECT *
+    FROM gpt_threads
+    WHERE id = ?
+      AND user_id = ?
+  `).bind(threadId, user.id).first();
+
+  if (!thread) {
+    return json({ ok: false, error: "Thread not found." }, 404);
+  }
+
+  const messages = await env.DB.prepare(`
+    SELECT role, content, created_at
+    FROM gpt_messages
+    WHERE thread_id = ?
+      AND user_id = ?
+    ORDER BY datetime(created_at) ASC
+  `).bind(threadId, user.id).all();
+
+  return json({
+    ok: true,
+    messages: messages.results || []
+  });
+}
+
+async function gptChat(request, env) {
+  const user = await getSession(request, env);
+
+  if (!user) {
+    return json({ ok: false, error: "Please sign in first." }, 401);
+  }
+
+  if (!env.OPENAI_API_KEY) {
+    return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
+  }
+
+  const data = await request.json();
+  const message = String(data.message || "").trim();
+  let threadId = String(data.threadId || "").trim();
+
+  if (!message) {
+    return json({ ok: false, error: "Message is required." }, 400);
+  }
+
+  if (!threadId) {
+    threadId = crypto.randomUUID();
+
+    await env.DB.prepare(`
+      INSERT INTO gpt_threads (
+        id,
+        user_id,
+        title,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).bind(
+      threadId,
+      user.id,
+      message.slice(0, 60)
+    ).run();
+  } else {
+    const thread = await env.DB.prepare(`
+      SELECT *
+      FROM gpt_threads
+      WHERE id = ?
+        AND user_id = ?
+    `).bind(threadId, user.id).first();
+
+    if (!thread) {
+      return json({ ok: false, error: "Thread not found." }, 404);
+    }
+  }
+
+  await env.DB.prepare(`
+    INSERT INTO gpt_messages (
+      id,
+      thread_id,
+      user_id,
+      role,
+      content,
+      created_at
+    )
+    VALUES (?, ?, ?, 'user', ?, CURRENT_TIMESTAMP)
+  `).bind(
+    crypto.randomUUID(),
+    threadId,
+    user.id,
+    message
+  ).run();
+
+  const context = await searchResearchKnowledge(message, env);
+  const recentMessages = await getRecentThreadMessages(threadId, user.id, env);
+
+  const assistantText = await callOpenAIForPaperTalk({
+    userMessage: message,
+    context,
+    recentMessages
+  }, env);
+
+  await env.DB.prepare(`
+    INSERT INTO gpt_messages (
+      id,
+      thread_id,
+      user_id,
+      role,
+      content,
+      created_at
+    )
+    VALUES (?, ?, ?, 'assistant', ?, CURRENT_TIMESTAMP)
+  `).bind(
+    crypto.randomUUID(),
+    threadId,
+    user.id,
+    assistantText
+  ).run();
+
+  await env.DB.prepare(`
+    UPDATE gpt_threads
+    SET updated_at = CURRENT_TIMESTAMP,
+        title = CASE
+          WHEN title = 'New chat' THEN ?
+          ELSE title
+        END
+    WHERE id = ?
+      AND user_id = ?
+  `).bind(
+    message.slice(0, 60),
+    threadId,
+    user.id
+  ).run();
+
+  return json({
+    ok: true,
+    threadId,
+    answer: assistantText,
+    sources: context.map(item => ({
+      title: item.title,
+      source_url: item.source_url,
+      pdf_link: item.pdf_link
+    }))
+  });
+}
+
+async function searchResearchKnowledge(query, env) {
+  const terms = query
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .split(/\s+/)
+    .filter(term => term.length >= 3)
+    .slice(0, 8);
+
+  if (terms.length === 0) {
+    const latest = await env.DB.prepare(`
+      SELECT title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE status = 'indexed'
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 5
+    `).all();
+
+    return latest.results || [];
+  }
+
+  const clauses = terms.map(() => `(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)`).join(" OR ");
+  const params = [];
+
+  for (const term of terms) {
+    params.push(`%${term}%`, `%${term}%`);
+  }
+
+  const result = await env.DB.prepare(`
+    SELECT title, source_url, pdf_link, content
+    FROM research_knowledge
+    WHERE status = 'indexed'
+      AND (${clauses})
+    ORDER BY datetime(updated_at) DESC
+    LIMIT 8
+  `).bind(...params).all();
+
+  return result.results || [];
+}
+
+async function getRecentThreadMessages(threadId, userId, env) {
+  const result = await env.DB.prepare(`
+    SELECT role, content
+    FROM gpt_messages
+    WHERE thread_id = ?
+      AND user_id = ?
+    ORDER BY datetime(created_at) DESC
+    LIMIT 10
+  `).bind(threadId, userId).all();
+
+  return (result.results || []).reverse();
+}
+
+async function callOpenAIForPaperTalk({ userMessage, context, recentMessages }, env) {
+  const contextText = context.length
+    ? context.map((item, index) => {
+        return [
+          `Source ${index + 1}: ${item.title}`,
+          item.source_url ? `Article: ${item.source_url}` : "",
+          item.pdf_link ? `PDF: ${item.pdf_link}` : "",
+          item.content || ""
+        ].filter(Boolean).join("\n");
+      }).join("\n\n---\n\n")
+    : "No matching research paper context was found in the Paper_Talk knowledge base.";
+
+  const messages = [
+    {
+      role: "system",
+      content: `
+You are Paper_Talk Visium GPT, a research assistant for cancer genomics, bioinformatics, spatial transcriptomics, and Visium-related research.
+
+Rules:
+- Use the provided Paper_Talk research knowledge base when relevant.
+- If the knowledge base does not contain enough information, say that clearly.
+- Do not invent paper details.
+- Give concise but scientifically useful answers.
+- When possible, mention which uploaded Paper_Talk source you used.
+- The user may be a researcher, student, or bioinformatics learner.
+      `.trim()
+    },
+    {
+      role: "system",
+      content: `Paper_Talk research knowledge base:\n\n${contextText}`
+    },
+    ...recentMessages.map(m => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.content
+    })),
+    {
+      role: "user",
+      content: userMessage
+    }
+  ];
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: env.OPENAI_MODEL || "gpt-4o-mini",
+      messages,
+      temperature: 0.3
+    })
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    return `OpenAI API error: ${data.error?.message || "Unknown error"}`;
+  }
+
+  return data.choices?.[0]?.message?.content || "No answer was generated.";
 }
