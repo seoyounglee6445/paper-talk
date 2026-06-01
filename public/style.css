@@ -54,6 +54,35 @@ h2 {
   color: var(--main-blue);
 }
 
+.home-title-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.member-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  border: 1px solid var(--border-blue);
+  border-radius: 999px;
+  background: white;
+  color: #526174;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 8px 20px rgba(20, 40, 160, 0.08);
+}
+
+.member-pill strong {
+  color: var(--main-blue);
+  font-size: 15px;
+  font-weight: 900;
+}
+
 .card {
   background: white;
   border: 1px solid var(--border-blue);
@@ -374,7 +403,6 @@ textarea {
   color: var(--main-blue);
 }
 
-/* Home mini cards */
 .home-mini-card {
   background: white;
   border: 1px solid var(--border-blue);
@@ -396,7 +424,6 @@ textarea {
   display: none !important;
 }
 
-/* Force Home LinkedIn to hide long content even if post-card is loaded */
 #homeLinkedin .post-body,
 #homeLinkedin .post-actions,
 #homeLinkedin .post-badge {
@@ -414,27 +441,6 @@ textarea {
 
 #homeLinkedin .post-card-header {
   display: block;
-}
-
-@media (max-width: 900px) {
-  .home-three-grid,
-  .jobsite-list {
-    grid-template-columns: 1fr;
-  }
-
-  .nav {
-    flex-wrap: wrap;
-  }
-}
-
-@media (max-width: 800px) {
-  .write-form form {
-    grid-template-columns: 1fr;
-  }
-
-  .post-card-header {
-    flex-direction: column;
-  }
 }
 
 .home-list-item {
@@ -472,12 +478,6 @@ textarea {
   border: 1px solid var(--border-blue);
 }
 
-@media (max-width: 800px) {
-  .research-figures {
-    grid-template-columns: 1fr;
-  }
-}
-
 #messageInput {
   font-size: 13px;
   line-height: 1.35;
@@ -485,4 +485,29 @@ textarea {
   padding: 10px 12px;
   resize: none;
   white-space: pre-wrap;
+}
+
+@media (max-width: 900px) {
+  .home-three-grid,
+  .jobsite-list {
+    grid-template-columns: 1fr;
+  }
+
+  .nav {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 800px) {
+  .write-form form {
+    grid-template-columns: 1fr;
+  }
+
+  .post-card-header {
+    flex-direction: column;
+  }
+
+  .research-figures {
+    grid-template-columns: 1fr;
+  }
 }
