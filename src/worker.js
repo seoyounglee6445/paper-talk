@@ -2022,9 +2022,15 @@ async function gptChat(request, env) {
   const context = await searchResearchKnowledge(message, env);
   const recentMessages = await getRecentThreadMessages(threadId, user.id, env);
 
+  const generatedFramework = await generateResearchFramework({
+    userMessage: message,
+    context
+  }, env);
+
   let assistantText = await callOpenAIForPaperTalk({
     userMessage: message,
     context,
+    generatedFramework,
     recentMessages
   }, env);
 
@@ -2837,7 +2843,114 @@ async function getRecentThreadMessages(threadId, userId, env) {
   return (result.results || []).reverse();
 }
 
-async function callOpenAIForPaperTalk({ userMessage, context, recentMessages }, env) {
+
+async function generateResearchFramework({ userMessage, context }, env) {
+  const hasContext = Array.isArray(context) && context.length > 0;
+
+  const contextText = hasContext
+    ? context.slice(0, 6).map((item, index) => {
+        const sourceText = cleanBibtexText(item.matched_chunk || item.content || "");
+        return [
+          `Source ${index + 1}: ${cleanBibtexText(item.title || "")}`,
+          item.source_url ? `Article: ${item.source_url}` : "",
+          item.pdf_link ? `PDF: ${item.pdf_link}` : "",
+          sourceText.slice(0, 4500)
+        ].filter(Boolean).join("\n");
+      }).join("\n\n---\n\n")
+    : "No matching Paper_Talk context was found.";
+
+  const fallbackFramework = `
+Auto Research Reasoning Framework:
+1. Identify the user's core scientific question.
+2. Check whether Paper_Talk retrieved relevant curated papers.
+3. Extract the strongest available evidence from the retrieved sources.
+4. Identify limitations, missing validation, or weak evidence.
+5. Suggest validation strategies only when they logically follow from the retrieved context.
+6. Propose cautious research hypotheses without inventing unsupported paper details.
+  `.trim();
+
+  if (!env.OPENAI_API_KEY) return fallbackFramework;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-5",
+        messages: [
+          {
+            role: "system",
+            content: `
+You are Paper_Talk's research reasoning planner.
+
+Your job is to create a concise, question-specific research framework before the final answer is written.
+
+Use only:
+- the user's question
+- the retrieved Paper_Talk curated literature context
+
+Do not answer the user directly.
+Do not invent papers, datasets, results, sample sizes, or claims.
+Do not cite sources that are not present in the retrieved Paper_Talk context.
+
+Create a framework that helps the final assistant answer like a biomedical researcher.
+
+The framework should include:
+1. Core biological or methodological claim to evaluate
+2. Relevant evidence to extract from the retrieved sources
+3. Important limitations or uncertainty
+4. Validation strategy, if applicable
+5. Possible new hypothesis or research direction, if supported
+6. How to communicate insufficient evidence clearly
+
+Return plain text only.
+No markdown formatting.
+            `.trim()
+          },
+          {
+            role: "user",
+            content: `
+User question:
+${String(userMessage || "").slice(0, 1500)}
+
+Retrieved Paper_Talk curated literature context:
+${contextText.slice(0, 18000)}
+            `.trim()
+          }
+        ],
+        temperature: 0.2
+      })
+    });
+
+    const raw = await res.text();
+    let data = {};
+
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return fallbackFramework;
+    }
+
+    if (!res.ok) return fallbackFramework;
+
+    const framework = data?.choices?.[0]?.message?.content || "";
+    return cleanFetchedArticleText(framework).slice(0, 5000) || fallbackFramework;
+  } catch {
+    return fallbackFramework;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
+async function callOpenAIForPaperTalk({ userMessage, context, generatedFramework, recentMessages }, env) {
   const hasContext = Array.isArray(context) && context.length > 0;
 
   const contextText = hasContext
@@ -2885,6 +2998,22 @@ Rules:
     {
       role: "system",
       content: `Paper_Talk research knowledge base:\n\n${contextText}`
+    },
+    {
+      role: "system",
+      content: `Automatically generated Paper_Talk research reasoning framework:\n\n${generatedFramework || "Use careful biomedical research reasoning based on the retrieved Paper_Talk context."}`
+    },
+    {
+      role: "system",
+      content: `
+Use the automatically generated research reasoning framework to structure your answer.
+
+Important:
+- The framework is a reasoning guide, not an external evidence source.
+- Final factual claims must be grounded in the retrieved Paper_Talk research knowledge base.
+- If the retrieved sources are insufficient, say so clearly.
+- Prioritize insight, limitations, validation strategy, and cautious hypothesis generation over simple summary.
+      `.trim()
     },
     {
       role: "system",
