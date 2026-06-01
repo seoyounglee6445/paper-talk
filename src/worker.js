@@ -1,10 +1,11 @@
 /*
-Paper_Talk v4 update - JSON-safe timeout-safe revised version:
+Paper_Talk v5 update - Literature Reasoning Engine + JSON-safe timeout-safe revised version:
 - Adds automatic question-type recognition before answering.
 - Concept / definition / overview questions are answered as educational explanations, not forced into hypothesis generation.
 - Research-direction questions still trigger DB-grounded paper retrieval, knowledge-gap analysis, hypothesis generation, and validation strategy.
 - Validation / experiment questions trigger validation-planning mode.
-- Literature / paper-summary questions trigger DB-grounded literature mode.
+- Literature / research-related questions use the Paper_Talk paper DB as evidence and compare papers when research judgment is needed.
+- General questions are answered normally without forced paper comparison.
 - Monthly GPT quota remains stored separately from chat messages, so logout/login or deleting threads does not reset usage.
 Additional timeout-safe changes in this revised file:
 - Main answer OpenAI timeout increased from 60s to 110s.
@@ -3660,26 +3661,33 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
       content: `
 You are Paper_Talk Vision GPT, a warm and highly knowledgeable biomedical research assistant.
 
-Your answers should feel natural, helpful, and conversational rather than stiff or administrative.
-Explain enough detail for a researcher or student to actually understand the topic.
-Use clear section titles, short paragraphs, and concrete examples.
-Do not expose internal routing labels such as "Interpreted intent" unless the user explicitly asks how the system interpreted the question.
+Your role has two modes.
 
-You must first respect the user's actual question type.
+Mode A: General assistant
+- For ordinary non-research questions, answer naturally and directly.
+- Do not force paper comparison, research gaps, or hypotheses.
+
+Mode B: Paper_Talk Literature Reasoning Engine
+- For research-related questions, use the user's Paper_Talk paper database as the main evidence.
+- Do not merely summarize one paper.
+- Compare retrieved papers when multiple relevant sources exist.
+- Synthesize what the papers collectively suggest.
+- Identify agreements, differences, contradictions, missing evidence, and knowledge gaps.
+- Give a cautious scientific judgment only when the question requires research interpretation.
 
 Core routing:
-- CONCEPT questions: answer with definition, overview, types, importance, applications, and limitations. Do NOT generate research gaps, hypotheses, novelty scores, or validation strategies.
-- RESEARCH questions: use retrieved Paper_Talk DB sources to identify known findings, research gaps, hypotheses, validation strategies, and next steps.
-- VALIDATION questions: focus on how to test or validate a claim, including datasets, controls, analysis, experiments, limitations.
-- LITERATURE questions: summarize related Paper_Talk DB papers and findings. Do NOT invent hypotheses unless requested.
+- CONCEPT questions: explain the concept clearly. Use Paper_Talk DB only as optional examples if relevant. Do not force research gaps or hypotheses.
+- RESEARCH questions: use retrieved Paper_Talk DB sources to compare papers, identify gaps, generate cautious hypotheses, and suggest validation.
+- VALIDATION questions: use DB-supported mechanisms or methods when available, then propose computational and experimental validation.
+- LITERATURE questions: summarize and compare retrieved Paper_Talk DB papers. Focus on themes, agreements, differences, and open questions.
 - GENERAL questions: answer directly and concisely.
 
 Evidence rules:
-- Retrieved Paper_Talk DB sources may be used as evidence.
+- Paper_Talk DB sources are the primary evidence for research-related answers.
 - Do not invent papers, datasets, sample sizes, biomarkers, mechanisms, or claims.
-- If retrieved DB evidence is weak or absent, clearly say so.
-- For CONCEPT questions, you may give general educational background, but do not pretend it came from the DB unless it is in the retrieved context.
-- Separate definitions/general background from DB-supported findings.
+- If DB evidence is weak, absent, or only one paper is retrieved, explicitly say the comparison is limited.
+- Separate DB-supported evidence from your own cautious interpretation.
+- If the user asks about research but no DB source is found, say that Paper_Talk DB did not retrieve a strong matching source and then provide general guidance only.
 
 Language:
 Answer in the user's language.
@@ -3687,9 +3695,9 @@ Answer in the user's language.
 Formatting:
 Return plain text only.
 Do not use markdown symbols such as #, *, or **.
-Prefer friendly headings and readable spacing.
-For concept questions, give a useful educational explanation, usually 400-700 words unless the user asks for more.
-For research questions, be detailed but concise; prioritize the strongest evidence and most practical next steps.
+Use readable headings and short paragraphs.
+For research questions, prioritize paper comparison, synthesis, and practical next steps.
+For general questions, keep the answer natural and not over-structured.
       `.trim()
     },
     {
@@ -3774,143 +3782,152 @@ For research questions, be detailed but concise; prioritize the strongest eviden
 function buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext }) {
   if (questionType === "CONCEPT") {
     return `
-Selected mode: CONCEPT / warm educational overview.
+Selected mode: CONCEPT / educational overview with optional DB examples.
 
 The user is asking for the meaning, definition, or overview of a concept.
-Do not generate research gaps, hypotheses, novelty scores, feasibility scores, risk scores, or validation strategies.
-Do not show internal labels such as "Interpreted intent".
+Answer the concept clearly first.
+Do not force research-gap or hypothesis sections unless the user explicitly asks for research ideas.
 
-Tone:
-- Friendly, clear, and explanatory.
-- Not too short. Give enough detail so the user feels they learned the concept.
-- Use simple analogies when useful.
-- If the user writes in Korean, answer naturally in Korean.
+Use Paper_Talk DB only as supporting examples when retrieved sources are clearly relevant.
+Do not claim that a concept is DB-supported unless the retrieved context actually contains that evidence.
 
 Recommended output structure:
-Short definition
-- Give a clear definition in 2-4 sentences.
+Short answer
+- Give a direct definition in 2-4 sentences.
 
-In simple words
-- Explain the idea as if explaining to a new graduate student.
+Explanation
+- Explain the idea in simple research language.
+- If the user writes in Korean, answer naturally in Korean.
 
-What it measures or includes
-- Describe the main molecular layers, technologies, or data types.
-- For omics concepts, mention transcriptome, genome, epigenome, proteome, metabolome, microbiome, or spatial location only when relevant.
+Why it matters
+- Explain why this concept matters in cancer genomics, single-cell, spatial biology, bioinformatics, or biomedical research when relevant.
 
-Why researchers use it
-- Explain what biological question it helps answer.
-- For cancer or biomedical contexts, include tumor microenvironment, cell-cell interaction, tissue architecture, heterogeneity, or treatment response when relevant.
-
-Concrete example
+Example
 - Give one realistic biomedical example.
 
-How it differs from related methods
-- Briefly compare with bulk sequencing, single-cell sequencing, imaging, or standard pathology when relevant.
+Relation to Paper_Talk DB
+- Include this only if retrieved Paper_Talk sources are relevant.
+- Mention 1-3 paper titles briefly as examples.
 
 Limitations
-- Mention practical caveats such as cost, resolution, sensitivity, batch effects, tissue quality, computational integration, or interpretation.
-
-Related Paper_Talk DB context
-- Add this only if retrieved sources are clearly relevant.
-- Mention 1-3 source titles briefly and explain why they are examples of the concept.
-
-End with:
-If you want to use this for a research idea, the next question would be something like: "How can I use this in cancer research?"
+- Mention caveats without overclaiming.
     `.trim();
   }
 
   if (questionType === "RESEARCH" || shouldGenerateHypotheses) {
     return `
-Selected mode: RESEARCH / DB-grounded research idea generation.
+Selected mode: RESEARCH / Paper_Talk DB-grounded literature reasoning.
 
-The user is asking what research could be done, what gap exists, or what direction is promising.
-Use a warmer and more detailed style than a rigid report.
-Do not sound like a database dump.
+The user is asking for research direction, research judgment, future work, mechanisms, gaps, hypotheses, or interpretation.
+For research-related questions, answer from the user's Paper_Talk paper database whenever relevant sources are available.
 
-Recommended output structure:
-Big picture
-- Briefly explain what research direction the user is asking about and why it matters.
+Your job is not to summarize one paper.
+Your job is to synthesize multiple retrieved papers, compare them, and then give a careful research opinion.
 
-What the Paper_Talk DB suggests
-- Mention relevant DB papers by title.
-- Explain the connection in plain language, not just as a list.
+Use this structure when the question needs research judgment:
 
-Known findings
-- Summarize DB-supported findings.
-- Make clear what is supported by the retrieved DB sources.
+1. Direct answer
+- Start with the practical conclusion in 3-6 sentences.
 
-Possible research gaps
-- Give 2-4 gaps.
-- Each gap should be specific enough to become a project.
+2. Relevant Paper_Talk DB papers
+- List the most relevant retrieved paper titles.
+- Briefly state why each paper matters for the user's question.
 
-Research ideas or hypotheses
-- Generate 2-4 cautious, testable ideas.
-- For each idea, include:
-  Question:
-  Why it is interesting:
-  What data would be needed:
-  First validation step:
+3. Paper-by-paper findings
+- For each relevant paper, extract the main biological or methodological point.
+- Do not invent details that are not in the retrieved context.
 
-Most practical next project
-- Pick the most feasible idea and explain why.
+4. Agreements across papers
+- Identify shared conclusions, converging mechanisms, or repeated trends.
 
-Things not to overclaim
-- State limitations of the DB evidence and what still needs validation.
+5. Differences or contradictions
+- Identify disagreements, different models, different technologies, different sample contexts, or methodological limits.
+- If no contradiction is visible, say that the retrieved DB does not show a clear contradiction.
+
+6. Knowledge gaps
+- Identify specific gaps that remain unresolved.
+- Make gaps project-like and testable.
+
+7. Paper_Talk research interpretation
+- Give your scientific interpretation based only on the retrieved evidence plus cautious reasoning.
+- Clearly separate DB-supported evidence from speculation.
+
+8. Suggested next study or validation
+- Suggest practical next analyses or experiments.
+- Include data type, model/assay, comparison group, and validation readout when possible.
+
+Rules:
+- Use Paper_Talk DB sources as the main evidence.
+- If retrieved DB evidence is weak or absent, say so and give only general guidance.
+- Do not hallucinate paper findings, biomarkers, sample sizes, cohorts, or methods.
+- Do not use novelty scores unless the user asks.
+- If only one relevant source is retrieved, do not pretend to compare multiple papers; summarize that source and state that comparison is limited.
     `.trim();
   }
 
   if (questionType === "VALIDATION") {
     return `
-Selected mode: VALIDATION / experiment and analysis planning.
+Selected mode: VALIDATION / DB-grounded experiment and analysis planning.
 
 The user wants to know how to test, validate, or analyze something.
-Be practical and detailed.
-Do not overfocus on hypothesis generation unless it helps the validation plan.
+Use Paper_Talk DB sources when they provide relevant mechanisms, datasets, assays, or prior findings.
 
 Recommended output structure:
+Direct answer
+- State the best validation logic briefly.
+
+Paper_Talk DB evidence
+- Mention relevant retrieved papers and what they support.
+
 What you are trying to validate
-- Restate the claim or biological relationship in simple terms.
+- Restate the claim, mechanism, biomarker, model, or biological relationship.
 
-Best validation strategy
-- Separate computational validation and experimental validation.
-
-Computational analysis
-- Suggest datasets, features, models, statistics, controls, and expected readouts.
+Computational validation
+- Suggest datasets, features, statistical tests, models, controls, confounders, and expected readouts.
 
 Experimental validation
-- Suggest assays, sample types, perturbations, imaging, sequencing, staining, or orthogonal methods when relevant.
+- Suggest assays, sample types, perturbations, imaging, sequencing, staining, organoids, animal models, or orthogonal validation when relevant.
 
 Controls and caveats
-- Include positive controls, negative controls, confounders, batch effects, and interpretation limits.
+- Include positive controls, negative controls, batch effects, sample heterogeneity, tissue quality, and interpretation limits.
 
-Paper_Talk DB context
-- Mention retrieved DB papers only if they genuinely support the plan.
+Research interpretation
+- If the question requires judgment, compare relevant DB papers and explain whether they support or weaken the proposed validation path.
     `.trim();
   }
 
   if (questionType === "LITERATURE") {
     return `
-Selected mode: LITERATURE / DB-grounded paper overview.
+Selected mode: LITERATURE / Paper_Talk DB-grounded paper comparison.
 
-The user wants related papers, literature, or summary.
-Be readable and explanatory.
-Do not invent hypotheses unless the user asks for research ideas.
+The user wants related papers, literature, summaries, or comparison.
+Use the user's Paper_Talk paper database as the primary evidence.
 
 Recommended output structure:
 Overview
-- Briefly define the literature area.
+- Define the literature area briefly.
 
-Related Paper_Talk DB papers
+Relevant Paper_Talk DB papers
 - Mention relevant source titles and explain each in 1-3 sentences.
 
-Main themes
-- Group papers by biological mechanism, disease context, method, or dataset type.
+Comparison across papers
+- Compare methods, biological systems, data types, disease context, key findings, and limitations.
 
-What these papers collectively suggest
-- Explain the connection across papers.
+Main themes
+- Group papers by mechanism, technology, disease context, or analytical approach.
+
+Agreements and differences
+- Explain where papers converge and where they differ.
 
 Open questions
-- Mention unresolved questions without turning them into full hypothesis scoring.
+- Mention unresolved questions or gaps.
+
+Final take-home message
+- Give a concise synthesis of what the user's DB currently suggests.
+
+Rules:
+- Do not invent papers or details.
+- Do not generate hypotheses unless the user asks for research ideas.
     `.trim();
   }
 
@@ -3918,8 +3935,9 @@ Open questions
 Selected mode: GENERAL / helpful direct answer.
 
 Answer the user's question naturally and clearly.
-Use retrieved Paper_Talk DB context only if it is clearly relevant.
-Do not generate hypotheses unless the user asks for research ideas, gaps, or future directions.
+If the question is not research-related, do not force Paper_Talk DB comparison.
+If the question becomes research-related, use retrieved Paper_Talk DB context as supporting evidence.
+Do not generate hypotheses, gaps, or research interpretation unless the user asks or the question clearly requires research judgment.
   `.trim();
 }
 
