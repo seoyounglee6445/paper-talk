@@ -1,8 +1,9 @@
 /*
-Paper_Talk v2 update:
-- Converts the GPT from a paper summarizer into a DB-grounded hypothesis generation engine.
-- Uses retrieved Paper_Talk DB sources to extract known findings, connect papers, identify knowledge gaps, generate hypotheses, and propose validation strategies.
-- Does not use outside literature as evidence unless the user explicitly asks for general background.
+Paper_Talk v3 update:
+- Converts every user question into an automatic DB-grounded research exploration.
+- The system infers the user's likely research interest, searches related Paper_Talk DB papers, extracts known findings, identifies knowledge gaps, generates testable hypotheses, and proposes validation strategies.
+- Even simple concept questions are answered with a research-intent layer plus hypothesis-generation output.
+- Uses retrieved Paper_Talk DB sources as evidence. Outside literature is not used as evidence unless the user explicitly asks for general background.
 */
 
 export default {
@@ -2101,15 +2102,24 @@ async function gptChat(request, env) {
     message
   ).run();
 
-  // v4 auto-router:
-  // concept: answer fast without heavy DB retrieval
-  // paper: retrieve DB and answer with evidence
-  // hypothesis: retrieve DB and generate gaps/hypotheses/validation
-  const intent = classifyPaperTalkIntent(message);
-  const context = shouldSearchPaperTalkDB(intent)
-    ? await searchResearchKnowledge(message, env)
-    : [];
+  // v3-auto-hypothesis:
+  // Every user message is first interpreted as a research exploration request.
+  // The inferred intent is used to broaden DB retrieval, then the final answer must include:
+  // user interest inference, related paper evidence, knowledge gaps, hypotheses, and validation strategy.
   const recentMessages = await getRecentThreadMessages(threadId, user.id, env);
+  const autoIntent = await inferUserResearchIntent({
+    userMessage: message,
+    recentMessages
+  }, env);
+
+  const retrievalMessage = autoIntent?.retrieval_query
+    ? `${message}
+
+Auto-inferred research retrieval query:
+${autoIntent.retrieval_query}`
+    : message;
+
+  const context = await searchResearchKnowledge(retrievalMessage, env);
 
   let assistantText = await callOpenAIForPaperTalk({
     userMessage: message,
@@ -2117,7 +2127,7 @@ async function gptChat(request, env) {
     pastFrameworks: [],
     generatedFramework: "",
     recentMessages,
-    intent
+    autoIntent
   }, env);
 
   assistantText = assistantText
@@ -2164,7 +2174,6 @@ async function gptChat(request, env) {
     ok: true,
     threadId,
     answer: assistantText,
-    intent,
     quota: {
       used: quotaAfter.used,
       limit: quotaAfter.limit,
@@ -2178,7 +2187,6 @@ async function gptChat(request, env) {
     }))
   });
 }
-
 
 async function getMonthlyGptQuota(userId, env, user = null) {
   const monthlyLimit = 20;
@@ -3036,133 +3044,323 @@ async function saveGeneratedFrameworkLog({ threadId, userId, userMessage, framew
   }
 }
 
-
 async function generateResearchFramework({ userMessage, context, pastFrameworks = [] }, env) {
   const hasContext = Array.isArray(context) && context.length > 0;
-  const sources = hasContext
-    ? context.slice(0, 8).map((item, index) => {
-        const text = cleanBibtexText(item.matched_chunk || item.content || "");
-        return `Source ${index + 1}: ${cleanBibtexText(item.title || "Untitled source")}\n${text.slice(0, 700)}`;
+
+  const sourceMap = hasContext
+    ? context.slice(0, 12).map((item, index) => {
+        const sourceText = cleanBibtexText(item.matched_chunk || item.content || "");
+        return [
+          `Source ${index + 1}: ${cleanBibtexText(item.title || "Untitled source")}`,
+          item.source_url ? `Article: ${item.source_url}` : "",
+          item.pdf_link ? `PDF: ${item.pdf_link}` : "",
+          item.similarity_score ? `Similarity score: ${item.similarity_score}` : "",
+          `Available evidence excerpt: ${sourceText.slice(0, 900)}`
+        ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "No matching Paper_Talk DB context was found.";
 
-  return `Paper_Talk lightweight framework\nUser question: ${String(userMessage || "").slice(0, 1000)}\n\nRetrieved sources:\n${sources}\n\nUse DB sources as evidence when available. For hypothesis questions, connect DB-supported findings into testable hypotheses and state uncertainty.`;
+  const previousPattern = Array.isArray(pastFrameworks) && pastFrameworks.length > 0
+    ? pastFrameworks.slice(0, 3).map((item, index) => {
+        return [
+          `Previous reasoning pattern ${index + 1}`,
+          item.user_message ? `Previous question: ${String(item.user_message).slice(0, 400)}` : "",
+          String(item.framework || "").slice(0, 900)
+        ].filter(Boolean).join("\n");
+      }).join("\n\n---\n\n")
+    : "No previous reasoning pattern was retrieved.";
+
+  return `
+Paper_Talk DB-grounded Hypothesis Engine Framework
+
+User research intent:
+${String(userMessage || "").slice(0, 1000)}
+
+Retrieved DB source map:
+${sourceMap}
+
+Previous Paper_Talk reasoning style memory:
+${previousPattern}
+
+Required reasoning sequence for the final answer:
+1. Infer the user's likely research interest.
+2. Use retrieved Paper_Talk DB papers as evidence.
+3. Extract DB-supported known findings.
+4. Identify knowledge gaps inside the retrieved DB evidence.
+5. Generate cautious, testable hypotheses.
+6. Propose computational and experimental validation strategies.
+7. Rank hypotheses by novelty, feasibility, and risk.
+8. Do not invent external papers, sample sizes, datasets, mechanisms, or biomarkers not present in the DB context.
+9. If evidence is weak, explicitly say what is weak.
+10. Answer in the same language as the user.
+  `.trim();
 }
 
 
+async function inferUserResearchIntent({ userMessage, recentMessages = [] }, env) {
+  const fallback = makeFallbackResearchIntent(userMessage);
 
-function classifyPaperTalkIntent(message) {
-  const text = String(message || "").toLowerCase();
-  const korean = String(message || "");
+  if (!env.OPENAI_API_KEY) return fallback;
 
-  const hypothesisPattern = /hypothesis|hypotheses|novel|new idea|research idea|knowledge gap|gap analysis|mechanism|validation strategy|experimental design|proposal|project idea|가설|아이디어|새로운|연구\s*방향|연구\s*아이디어|검증|실험\s*디자인|실험\s*전략|공백|갭|기전|메커니즘|뭘\s*연구|무슨\s*연구|어떤\s*연구|하면\s*좋/i;
-  if (hypothesisPattern.test(text) || hypothesisPattern.test(korean)) return "hypothesis";
+  const recentText = Array.isArray(recentMessages)
+    ? recentMessages
+        .slice(-4)
+        .map(m => `${m.role || "user"}: ${String(m.content || "").slice(0, 500)}`)
+        .join("\n")
+    : "";
 
-  const paperPattern = /paper|article|publication|abstract|result|method|figure|table|author|journal|doi|pmid|source|database|db|논문|초록|결과|방법|그림|저자|저널|출처|데이터베이스|디비|이\s*논문|관련\s*논문|논문들|근거/i;
-  if (paperPattern.test(text) || paperPattern.test(korean)) return "paper";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
 
-  return "concept";
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-5",
+        messages: [
+          {
+            role: "system",
+            content: `
+You are the automatic research-intent interpreter for Paper_Talk Vision GPT.
+
+Convert any user message into a biomedical research exploration plan.
+Even if the user asks a simple definition question, infer the deeper research need.
+Return only valid JSON.
+
+JSON keys:
+- interpreted_intent: one sentence explaining what the user probably wants to understand or discover.
+- primary_domain: short field name, for example cancer genomics, spatial omics, immuno-oncology, neurodegeneration, single-cell analysis.
+- key_entities: array of important diseases, methods, genes, cell types, technologies, or biological concepts.
+- retrieval_query: concise English search query for Paper_Talk DB retrieval. Include synonyms and biomedical terms.
+- gap_axes: array of gap types to check, such as mechanism, cell type, spatial niche, cancer context, cohort validation, perturbation, multi-omics integration, clinical association.
+- hypothesis_angle: one sentence describing the kind of hypothesis that should be generated.
+- validation_angle: one sentence describing the likely validation strategy.
+
+Do not answer the user's question.
+Do not cite papers.
+Do not use markdown.
+            `.trim()
+          },
+          {
+            role: "user",
+            content: `
+Recent conversation:
+${recentText || "No recent conversation."}
+
+Current user message:
+${String(userMessage || "").slice(0, 1200)}
+            `.trim()
+          }
+        ],
+        temperature: 0,
+        max_completion_tokens: 700
+      })
+    });
+
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return fallback;
+    }
+
+    if (!res.ok) return fallback;
+
+    const content = data?.choices?.[0]?.message?.content || "";
+    const parsed = parseJsonObjectFromText(content);
+
+    if (!parsed || typeof parsed !== "object") return fallback;
+
+    return {
+      interpreted_intent: String(parsed.interpreted_intent || fallback.interpreted_intent).slice(0, 600),
+      primary_domain: String(parsed.primary_domain || fallback.primary_domain).slice(0, 160),
+      key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v).slice(0, 100)).slice(0, 12) : fallback.key_entities,
+      retrieval_query: String(parsed.retrieval_query || fallback.retrieval_query).slice(0, 700),
+      gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v).slice(0, 120)).slice(0, 10) : fallback.gap_axes,
+      hypothesis_angle: String(parsed.hypothesis_angle || fallback.hypothesis_angle).slice(0, 500),
+      validation_angle: String(parsed.validation_angle || fallback.validation_angle).slice(0, 500)
+    };
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-function shouldSearchPaperTalkDB(intent) {
-  return intent === "paper" || intent === "hypothesis";
+function parseJsonObjectFromText(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
 }
 
-async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages = [], intent = "concept" }, env) {
+function makeFallbackResearchIntent(userMessage) {
+  const message = String(userMessage || "").trim();
+  const normalized = normalizeSearchText(message);
+
+  const entities = normalized
+    .split(/\s+/)
+    .filter(v => v.length >= 3)
+    .slice(0, 8);
+
+  return {
+    interpreted_intent: message
+      ? `The user is asking about "${message}"; treat it as a request to understand the concept, find related Paper_Talk DB evidence, identify research gaps, and generate testable hypotheses.`
+      : "The user did not provide a specific topic; explore the most relevant recent Paper_Talk DB papers and generate research hypotheses.",
+    primary_domain: "biomedical research",
+    key_entities: entities,
+    retrieval_query: [message, normalized, "biomedical research mechanism knowledge gap hypothesis validation spatial omics cancer genomics single-cell multi-omics"].filter(Boolean).join(", ").slice(0, 700),
+    gap_axes: [
+      "mechanism",
+      "cell type",
+      "spatial niche",
+      "disease or cancer context",
+      "multi-omics integration",
+      "cohort validation",
+      "experimental perturbation"
+    ],
+    hypothesis_angle: "Generate cautious, testable hypotheses by connecting DB-supported findings and unresolved gaps.",
+    validation_angle: "Propose computational re-analysis plus experimental validation only when supported by retrieved DB evidence."
+  };
+}
+
+async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
   const hasContext = Array.isArray(context) && context.length > 0;
 
   const contextText = hasContext
-    ? context.slice(0, intent === "hypothesis" ? 8 : 5).map((item, index) => {
+    ? context.slice(0, 10).map((item, index) => {
         return [
           `Source ${index + 1}: ${cleanBibtexText(item.title || "")}`,
           item.source_url ? `Article: ${item.source_url}` : "",
           item.pdf_link ? `PDF: ${item.pdf_link}` : "",
-          cleanBibtexText(item.matched_chunk || item.content || "").slice(0, intent === "hypothesis" ? 1400 : 900)
+          cleanBibtexText(item.matched_chunk || item.content || "").slice(0, 2200)
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
-    : "No matching Paper_Talk DB context was retrieved for this question.";
+    : "No matching research paper context was found in the Paper_Talk knowledge base.";
 
-  const modeInstruction = (() => {
-    if (intent === "hypothesis") {
-      return `
-Mode: HYPOTHESIS ENGINE
-The user is asking for research ideas, gaps, mechanisms, validation, or hypotheses.
-Use this structure:
-1. Direct answer to the user's request in 2-3 sentences.
-2. Paper_Talk DB evidence used
-   - list source titles and the specific contribution from each source.
-3. DB-supported findings
-   - only claims supported by retrieved DB sources.
-4. Knowledge gaps inside this DB
-   - missing mechanism, cell type, spatial relation, disease context, validation, or contradiction.
-5. Hypotheses generated from this DB
-   - 2-3 testable hypotheses.
-   - for each: Statement, DB evidence link, gap addressed, validation strategy, Novelty 1-5, Feasibility 1-5, Risk 1-5.
-6. Priority ranking
-7. Evidence guardrail
-   - say what should not be overstated.
-Do not invent external papers or unsupported mechanisms.`;
-    }
+  const intent = autoIntent || makeFallbackResearchIntent(userMessage);
 
-    if (intent === "paper") {
-      return `
-Mode: PAPER/DB QUESTION ANSWER
-The user is asking about papers, DB content, evidence, methods, results, or literature.
-Use this structure:
-1. Direct answer first.
-2. Paper_Talk DB evidence
-   - cite source titles from the retrieved DB context.
-3. Interpretation
-   - explain what the sources mean.
-4. Limitations / what is missing in the DB.
-Do not generate hypotheses unless the user asks for ideas, gaps, mechanisms, or validation.`;
-    }
-
-    return `
-Mode: GENERAL CONCEPT QUESTION
-The user is asking a normal concept/background question.
-Answer directly and clearly without forcing a hypothesis format.
-Use simple language, then give a short research-context example if useful.
-Do not claim DB evidence unless DB sources were retrieved.
-Keep the answer concise.`;
-  })();
+  const intentText = [
+    `Interpreted intent: ${intent.interpreted_intent || ""}`,
+    `Primary domain: ${intent.primary_domain || ""}`,
+    `Key entities: ${Array.isArray(intent.key_entities) ? intent.key_entities.join(", ") : ""}`,
+    `Retrieval query: ${intent.retrieval_query || ""}`,
+    `Gap axes to inspect: ${Array.isArray(intent.gap_axes) ? intent.gap_axes.join(", ") : ""}`,
+    `Hypothesis angle: ${intent.hypothesis_angle || ""}`,
+    `Validation angle: ${intent.validation_angle || ""}`
+  ].filter(Boolean).join("\n");
 
   const messages = [
     {
       role: "system",
       content: `
-You are Paper_Talk Vision GPT.
+You are Paper_Talk Vision GPT, a DB-grounded biomedical hypothesis-generation engine.
 
-You must automatically choose the correct behavior based on the supplied mode:
-- GENERAL CONCEPT QUESTION: explain concepts clearly.
-- PAPER/DB QUESTION ANSWER: answer using retrieved Paper_Talk DB evidence.
-- HYPOTHESIS ENGINE: generate DB-grounded research hypotheses and validation strategies.
+Core behavior:
+Never stop at a simple definition or summary.
+For every user question, automatically perform this sequence:
+1. Infer the user's likely research interest.
+2. Search and use related Paper_Talk DB papers supplied in the retrieved context.
+3. Extract known DB-supported findings.
+4. Identify research gaps inside the retrieved DB evidence.
+5. Generate cautious, testable hypotheses.
+6. Propose validation strategies.
+7. Prioritize next-step research ideas.
+
+Evidence rules:
+- Use only retrieved Paper_Talk DB sources as scientific evidence.
+- Do not use outside literature as evidence unless the user explicitly asks for general background.
+- Do not invent papers, datasets, sample sizes, biomarkers, mechanisms, or claims.
+- If retrieved DB evidence is weak or absent, clearly say so and label hypotheses as exploratory.
+- Separate DB-supported findings from generated hypotheses.
 
 Language:
 Answer in the user's language.
 
-Evidence rules:
-- Retrieved Paper_Talk DB sources are the only scientific evidence sources.
-- For general concept questions, you may explain common scientific concepts, but do not pretend those explanations came from the DB.
-- For paper/hypothesis questions, if DB evidence is weak or absent, say so clearly.
-- Do not invent paper titles, sample sizes, biomarkers, datasets, or claims.
-- Return plain text only.
+Required output format:
+
+Auto-interpreted research intent
+- What the user probably wants to understand or discover
+- Main domain and key entities
+
+Related Paper_Talk DB papers used
+- Source 1: title — short reason it is relevant
+- Source 2: title — short reason it is relevant
+If no source was found, write: No matching Paper_Talk DB source was found.
+
+Known findings from DB
+- DB-supported finding with source title
+- DB-supported finding with source title
+
+Research gaps identified
+- Gap 1: missing mechanism / missing cell type / missing spatial context / missing validation / unresolved contradiction
+- Gap 2
+
+Generated hypotheses
+Hypothesis 1
+Statement:
+Why this follows from DB evidence:
+Knowledge gap addressed:
+Validation strategy:
+Novelty score: 1-5
+Feasibility score: 1-5
+Risk score: 1-5
+
+Hypothesis 2
+Statement:
+Why this follows from DB evidence:
+Knowledge gap addressed:
+Validation strategy:
+Novelty score: 1-5
+Feasibility score: 1-5
+Risk score: 1-5
+
+Recommended next step
+- Pick the strongest hypothesis and explain the first analysis or experiment to run.
+
+Evidence guardrail
+- State what should not be overclaimed.
+
+Keep answers concise enough to avoid timeout.
+Return plain text only. Do not use markdown symbols such as #, *, or **.
       `.trim()
     },
     {
       role: "system",
-      content: modeInstruction.trim()
+      content: `Automatic research-intent interpretation:\n\n${intentText}`
     },
     {
       role: "system",
-      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, intent === "hypothesis" ? 12000 : 6000)}`
+      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 17000)}`
+    },
+    {
+      role: "system",
+      content: hasContext
+        ? "Matching Paper_Talk DB sources were found. Use their titles and excerpts as the only evidence base."
+        : "No matching Paper_Talk DB source was found. Do not hallucinate evidence; provide only exploratory hypotheses and say that DB support is absent."
     },
     ...recentMessages
       .filter(m => m.role !== "assistant")
-      .slice(-1)
+      .slice(-2)
       .map(m => ({
         role: "user",
-        content: String(m.content || "").slice(0, 500)
+        content: String(m.content || "").slice(0, 800)
       })),
     {
       role: "user",
@@ -3175,7 +3373,7 @@ Evidence rules:
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), intent === "concept" ? 14000 : 23000);
+  const timeout = setTimeout(() => controller.abort(), 22000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -3188,8 +3386,8 @@ Evidence rules:
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5",
         messages,
-        temperature: intent === "hypothesis" ? 0.2 : 0.1,
-        max_completion_tokens: intent === "hypothesis" ? 1200 : 700
+        temperature: 0.2,
+        max_completion_tokens: 1800
       })
     });
 
@@ -3209,9 +3407,7 @@ Evidence rules:
     return data?.choices?.[0]?.message?.content || "No answer was generated.";
   } catch (error) {
     if (error && error.name === "AbortError") {
-      return intent === "concept"
-        ? "답변 생성이 지연되었습니다. 같은 질문을 한 번만 다시 보내주세요."
-        : "답변 생성 시간이 길어졌습니다. 질문 범위를 조금 좁히거나, 특정 암종/세포/기전을 지정해서 다시 물어봐 주세요.";
+      return "OpenAI API timeout. Please try a narrower question or ask about fewer mechanisms at once.";
     }
 
     return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
