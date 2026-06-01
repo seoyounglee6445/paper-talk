@@ -1,9 +1,11 @@
 /*
-Paper_Talk v3 update:
-- Converts every user question into an automatic DB-grounded research exploration.
-- The system infers the user's likely research interest, searches related Paper_Talk DB papers, extracts known findings, identifies knowledge gaps, generates testable hypotheses, and proposes validation strategies.
-- Even simple concept questions are answered with a research-intent layer plus hypothesis-generation output.
-- Uses retrieved Paper_Talk DB sources as evidence. Outside literature is not used as evidence unless the user explicitly asks for general background.
+Paper_Talk v4 update:
+- Adds automatic question-type recognition before answering.
+- Concept / definition / overview questions are answered as educational explanations, not forced into hypothesis generation.
+- Research-direction questions still trigger DB-grounded paper retrieval, knowledge-gap analysis, hypothesis generation, and validation strategy.
+- Validation / experiment questions trigger validation-planning mode.
+- Literature / paper-summary questions trigger DB-grounded literature mode.
+- Monthly GPT quota remains stored separately from chat messages, so logout/login or deleting threads does not reset usage.
 */
 
 export default {
@@ -2106,10 +2108,10 @@ async function gptChat(request, env) {
     message
   ).run();
 
-  // v3-auto-hypothesis:
-  // Every user message is first interpreted as a research exploration request.
-  // The inferred intent is used to broaden DB retrieval, then the final answer must include:
-  // user interest inference, related paper evidence, knowledge gaps, hypotheses, and validation strategy.
+  // v4-auto-router:
+  // Every user message is first classified as CONCEPT, RESEARCH, VALIDATION, LITERATURE, or GENERAL.
+  // Concept questions receive definition/overview answers.
+  // Research questions trigger DB-grounded gaps, hypotheses, and validation strategy.
   const recentMessages = await getRecentThreadMessages(threadId, user.id, env);
   const autoIntent = await inferUserResearchIntent({
     userMessage: message,
@@ -3206,20 +3208,45 @@ async function inferUserResearchIntent({ userMessage, recentMessages = [] }, env
           {
             role: "system",
             content: `
-You are the automatic research-intent interpreter for Paper_Talk Vision GPT.
+You are the automatic question-type and research-intent interpreter for Paper_Talk Vision GPT.
 
-Convert any user message into a biomedical research exploration plan.
-Even if the user asks a simple definition question, infer the deeper research need.
+First classify the user's actual intent. Do not force every question into hypothesis generation.
+
 Return only valid JSON.
 
-JSON keys:
-- interpreted_intent: one sentence explaining what the user probably wants to understand or discover.
-- primary_domain: short field name, for example cancer genomics, spatial omics, immuno-oncology, neurodegeneration, single-cell analysis.
+Required JSON keys:
+- question_type: one of CONCEPT, RESEARCH, VALIDATION, LITERATURE, GENERAL.
+- should_generate_hypotheses: boolean.
+- should_use_db_evidence: boolean.
+- interpreted_intent: one sentence explaining what the user is actually asking for.
+- primary_domain: short field name, for example spatial omics, cancer genomics, immuno-oncology, neurodegeneration, single-cell analysis.
 - key_entities: array of important diseases, methods, genes, cell types, technologies, or biological concepts.
 - retrieval_query: concise English search query for Paper_Talk DB retrieval. Include synonyms and biomedical terms.
-- gap_axes: array of gap types to check, such as mechanism, cell type, spatial niche, cancer context, cohort validation, perturbation, multi-omics integration, clinical association.
-- hypothesis_angle: one sentence describing the kind of hypothesis that should be generated.
-- validation_angle: one sentence describing the likely validation strategy.
+- gap_axes: array of gap types to check only if the user wants research directions.
+- hypothesis_angle: one sentence only if hypotheses are appropriate; otherwise empty string.
+- validation_angle: one sentence only if validation planning is appropriate; otherwise empty string.
+- answer_style: one of educational_overview, hypothesis_generation, validation_plan, literature_review, concise_answer.
+
+Classification rules:
+CONCEPT:
+- The user asks "what is", "define", "meaning", "overview", "explain", "개념", "정의", "무슨 뜻", "뭐야", "뭐지".
+- Answer with definition, overview, types, why it matters, examples, limitations.
+- Do NOT generate research gaps, hypotheses, novelty scores, or validation strategies unless the user explicitly asks for research ideas.
+
+RESEARCH:
+- The user asks for research ideas, gaps, hypotheses, future directions, "what should I study", "연구 주제", "가설", "gap", "future work".
+- Generate DB-grounded gaps, hypotheses, and validation strategies.
+
+VALIDATION:
+- The user asks how to test, validate, design experiments, analyze datasets, controls, statistics, protocol.
+- Focus on validation strategy. Generate hypotheses only if needed.
+
+LITERATURE:
+- The user asks for papers, DB sources, summaries, related studies, literature review.
+- Focus on retrieved papers and findings. Do not invent hypotheses unless asked.
+
+GENERAL:
+- Use a direct concise answer.
 
 Do not answer the user's question.
 Do not cite papers.
@@ -3238,7 +3265,7 @@ ${String(userMessage || "").slice(0, 1200)}
           }
         ],
         temperature: 0,
-        max_completion_tokens: 700
+        max_completion_tokens: 800
       })
     });
 
@@ -3257,20 +3284,62 @@ ${String(userMessage || "").slice(0, 1200)}
 
     if (!parsed || typeof parsed !== "object") return fallback;
 
+    const questionType = normalizeQuestionType(parsed.question_type || fallback.question_type);
+    const shouldGenerateHypotheses =
+      typeof parsed.should_generate_hypotheses === "boolean"
+        ? parsed.should_generate_hypotheses
+        : questionType === "RESEARCH";
+
+    const shouldUseDbEvidence =
+      typeof parsed.should_use_db_evidence === "boolean"
+        ? parsed.should_use_db_evidence
+        : ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType);
+
     return {
+      question_type: questionType,
+      should_generate_hypotheses: shouldGenerateHypotheses,
+      should_use_db_evidence: shouldUseDbEvidence,
       interpreted_intent: String(parsed.interpreted_intent || fallback.interpreted_intent).slice(0, 600),
       primary_domain: String(parsed.primary_domain || fallback.primary_domain).slice(0, 160),
       key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v).slice(0, 100)).slice(0, 12) : fallback.key_entities,
       retrieval_query: String(parsed.retrieval_query || fallback.retrieval_query).slice(0, 700),
       gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v).slice(0, 120)).slice(0, 10) : fallback.gap_axes,
-      hypothesis_angle: String(parsed.hypothesis_angle || fallback.hypothesis_angle).slice(0, 500),
-      validation_angle: String(parsed.validation_angle || fallback.validation_angle).slice(0, 500)
+      hypothesis_angle: shouldGenerateHypotheses ? String(parsed.hypothesis_angle || fallback.hypothesis_angle).slice(0, 500) : "",
+      validation_angle: String(parsed.validation_angle || fallback.validation_angle).slice(0, 500),
+      answer_style: normalizeAnswerStyle(parsed.answer_style || fallback.answer_style)
     };
   } catch {
     return fallback;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function normalizeQuestionType(value) {
+  const label = String(value || "").trim().toUpperCase();
+  if (["CONCEPT", "RESEARCH", "VALIDATION", "LITERATURE", "GENERAL"].includes(label)) return label;
+  return "GENERAL";
+}
+
+function normalizeAnswerStyle(value) {
+  const label = String(value || "").trim().toLowerCase();
+  if (["educational_overview", "hypothesis_generation", "validation_plan", "literature_review", "concise_answer"].includes(label)) return label;
+  return "concise_answer";
+}
+
+function inferQuestionTypeHeuristically(userMessage) {
+  const message = String(userMessage || "").toLowerCase();
+
+  const conceptPattern = /(what is|what are|define|definition|meaning|overview|explain|introduction to|개념|정의|뜻|무슨 뜻|뭐야|뭐지|무엇|설명|개요)/i;
+  const researchPattern = /(research idea|hypothesis|hypotheses|knowledge gap|gap|future direction|what should i study|study idea|project idea|연구 주제|연구 아이디어|가설|연구 방향|뭘 연구|무슨 연구|future work)/i;
+  const validationPattern = /(validate|validation|experiment|experimental design|protocol|control|statistic|analysis plan|test this|검증|실험|프로토콜|대조군|분석 방법|어떻게 확인)/i;
+  const literaturePattern = /(paper|papers|literature|review|summarize|related studies|논문|문헌|리뷰|요약|관련 연구)/i;
+
+  if (researchPattern.test(message)) return "RESEARCH";
+  if (validationPattern.test(message)) return "VALIDATION";
+  if (literaturePattern.test(message)) return "LITERATURE";
+  if (conceptPattern.test(message)) return "CONCEPT";
+  return "GENERAL";
 }
 
 function parseJsonObjectFromText(value) {
@@ -3293,32 +3362,56 @@ function parseJsonObjectFromText(value) {
 function makeFallbackResearchIntent(userMessage) {
   const message = String(userMessage || "").trim();
   const normalized = normalizeSearchText(message);
+  const questionType = inferQuestionTypeHeuristically(message);
 
   const entities = normalized
     .split(/\s+/)
     .filter(v => v.length >= 3)
     .slice(0, 8);
 
+  const shouldGenerateHypotheses = questionType === "RESEARCH";
+  const shouldUseDbEvidence = ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType);
+
+  const answerStyle =
+    questionType === "CONCEPT" ? "educational_overview" :
+    questionType === "RESEARCH" ? "hypothesis_generation" :
+    questionType === "VALIDATION" ? "validation_plan" :
+    questionType === "LITERATURE" ? "literature_review" :
+    "concise_answer";
+
   return {
+    question_type: questionType,
+    should_generate_hypotheses: shouldGenerateHypotheses,
+    should_use_db_evidence: shouldUseDbEvidence,
     interpreted_intent: message
-      ? `The user is asking about "${message}"; treat it as a request to understand the concept, find related Paper_Talk DB evidence, identify research gaps, and generate testable hypotheses.`
-      : "The user did not provide a specific topic; explore the most relevant recent Paper_Talk DB papers and generate research hypotheses.",
+      ? questionType === "CONCEPT"
+        ? `The user is asking for a definition or overview of "${message}", not for hypothesis generation.`
+        : `The user is asking about "${message}" with question type ${questionType}.`
+      : "The user did not provide a specific topic.",
     primary_domain: "biomedical research",
     key_entities: entities,
-    retrieval_query: [message, normalized, "biomedical research mechanism knowledge gap hypothesis validation spatial omics cancer genomics single-cell multi-omics"].filter(Boolean).join(", ").slice(0, 700),
-    gap_axes: [
-      "mechanism",
-      "cell type",
-      "spatial niche",
-      "disease or cancer context",
-      "multi-omics integration",
-      "cohort validation",
-      "experimental perturbation"
-    ],
-    hypothesis_angle: "Generate cautious, testable hypotheses by connecting DB-supported findings and unresolved gaps.",
-    validation_angle: "Propose computational re-analysis plus experimental validation only when supported by retrieved DB evidence."
+    retrieval_query: [message, normalized, "biomedical research cancer genomics spatial omics single-cell multi-omics"].filter(Boolean).join(", ").slice(0, 700),
+    gap_axes: shouldGenerateHypotheses
+      ? [
+          "mechanism",
+          "cell type",
+          "spatial niche",
+          "disease or cancer context",
+          "multi-omics integration",
+          "cohort validation",
+          "experimental perturbation"
+        ]
+      : [],
+    hypothesis_angle: shouldGenerateHypotheses
+      ? "Generate cautious, testable hypotheses by connecting DB-supported findings and unresolved gaps."
+      : "",
+    validation_angle: questionType === "VALIDATION"
+      ? "Propose computational and experimental validation steps with controls and limitations."
+      : "",
+    answer_style: answerStyle
   };
 }
+
 
 async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
   const hasContext = Array.isArray(context) && context.length > 0;
@@ -3335,8 +3428,15 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
     : "No matching research paper context was found in the Paper_Talk knowledge base.";
 
   const intent = autoIntent || makeFallbackResearchIntent(userMessage);
+  const questionType = normalizeQuestionType(intent.question_type || "GENERAL");
+  const answerStyle = normalizeAnswerStyle(intent.answer_style || "concise_answer");
+  const shouldGenerateHypotheses = Boolean(intent.should_generate_hypotheses);
 
   const intentText = [
+    `Question type: ${questionType}`,
+    `Answer style: ${answerStyle}`,
+    `Should generate hypotheses: ${shouldGenerateHypotheses ? "yes" : "no"}`,
+    `Should use DB evidence: ${intent.should_use_db_evidence ? "yes" : "no"}`,
     `Interpreted intent: ${intent.interpreted_intent || ""}`,
     `Primary domain: ${intent.primary_domain || ""}`,
     `Key entities: ${Array.isArray(intent.key_entities) ? intent.key_entities.join(", ") : ""}`,
@@ -3346,84 +3446,46 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
     `Validation angle: ${intent.validation_angle || ""}`
   ].filter(Boolean).join("\n");
 
+  const modeInstruction = buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext });
+
   const messages = [
     {
       role: "system",
       content: `
-You are Paper_Talk Vision GPT, a DB-grounded biomedical hypothesis-generation engine.
+You are Paper_Talk Vision GPT, a biomedical research assistant.
 
-Core behavior:
-Never stop at a simple definition or summary.
-For every user question, automatically perform this sequence:
-1. Infer the user's likely research interest.
-2. Search and use related Paper_Talk DB papers supplied in the retrieved context.
-3. Extract known DB-supported findings.
-4. Identify research gaps inside the retrieved DB evidence.
-5. Generate cautious, testable hypotheses.
-6. Propose validation strategies.
-7. Prioritize next-step research ideas.
+You must first respect the user's actual question type.
+
+Core routing:
+- CONCEPT questions: answer with definition, overview, types, importance, applications, and limitations. Do NOT generate research gaps, hypotheses, novelty scores, or validation strategies.
+- RESEARCH questions: use retrieved Paper_Talk DB sources to identify known findings, research gaps, hypotheses, validation strategies, and next steps.
+- VALIDATION questions: focus on how to test or validate a claim, including datasets, controls, analysis, experiments, limitations.
+- LITERATURE questions: summarize related Paper_Talk DB papers and findings. Do NOT invent hypotheses unless requested.
+- GENERAL questions: answer directly and concisely.
 
 Evidence rules:
-- Use only retrieved Paper_Talk DB sources as scientific evidence.
-- Do not use outside literature as evidence unless the user explicitly asks for general background.
+- Retrieved Paper_Talk DB sources may be used as evidence.
 - Do not invent papers, datasets, sample sizes, biomarkers, mechanisms, or claims.
-- If retrieved DB evidence is weak or absent, clearly say so and label hypotheses as exploratory.
-- Separate DB-supported findings from generated hypotheses.
+- If retrieved DB evidence is weak or absent, clearly say so.
+- For CONCEPT questions, you may give general educational background, but do not pretend it came from the DB unless it is in the retrieved context.
+- Separate definitions/general background from DB-supported findings.
 
 Language:
 Answer in the user's language.
 
-Required output format:
-
-Auto-interpreted research intent
-- What the user probably wants to understand or discover
-- Main domain and key entities
-
-Related Paper_Talk DB papers used
-- Source 1: title — short reason it is relevant
-- Source 2: title — short reason it is relevant
-If no source was found, write: No matching Paper_Talk DB source was found.
-
-Known findings from DB
-- DB-supported finding with source title
-- DB-supported finding with source title
-
-Research gaps identified
-- Gap 1: missing mechanism / missing cell type / missing spatial context / missing validation / unresolved contradiction
-- Gap 2
-
-Generated hypotheses
-Hypothesis 1
-Statement:
-Why this follows from DB evidence:
-Knowledge gap addressed:
-Validation strategy:
-Novelty score: 1-5
-Feasibility score: 1-5
-Risk score: 1-5
-
-Hypothesis 2
-Statement:
-Why this follows from DB evidence:
-Knowledge gap addressed:
-Validation strategy:
-Novelty score: 1-5
-Feasibility score: 1-5
-Risk score: 1-5
-
-Recommended next step
-- Pick the strongest hypothesis and explain the first analysis or experiment to run.
-
-Evidence guardrail
-- State what should not be overclaimed.
-
+Formatting:
+Return plain text only.
+Do not use markdown symbols such as #, *, or **.
 Keep answers concise enough to avoid timeout.
-Return plain text only. Do not use markdown symbols such as #, *, or **.
       `.trim()
     },
     {
       role: "system",
-      content: `Automatic research-intent interpretation:\n\n${intentText}`
+      content: `Automatic question interpretation:\n\n${intentText}`
+    },
+    {
+      role: "system",
+      content: modeInstruction
     },
     {
       role: "system",
@@ -3432,8 +3494,8 @@ Return plain text only. Do not use markdown symbols such as #, *, or **.
     {
       role: "system",
       content: hasContext
-        ? "Matching Paper_Talk DB sources were found. Use their titles and excerpts as the only evidence base."
-        : "No matching Paper_Talk DB source was found. Do not hallucinate evidence; provide only exploratory hypotheses and say that DB support is absent."
+        ? "Matching Paper_Talk DB sources were found. Use their titles and excerpts only when relevant to the selected answer mode."
+        : "No matching Paper_Talk DB source was found. Do not hallucinate evidence."
     },
     ...recentMessages
       .filter(m => m.role !== "assistant")
@@ -3466,8 +3528,8 @@ Return plain text only. Do not use markdown symbols such as #, *, or **.
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5",
         messages,
-        temperature: 0.2,
-        max_completion_tokens: 1800
+        temperature: questionType === "CONCEPT" ? 0.1 : 0.2,
+        max_completion_tokens: questionType === "CONCEPT" ? 1000 : 1800
       })
     });
 
@@ -3494,6 +3556,155 @@ Return plain text only. Do not use markdown symbols such as #, *, or **.
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext }) {
+  if (questionType === "CONCEPT") {
+    return `
+Selected mode: CONCEPT / educational overview.
+
+The user is asking for meaning, definition, or overview.
+Do not output:
+- Interpreted intent
+- Research gaps
+- Generated hypotheses
+- Novelty score
+- Feasibility score
+- Risk score
+- Validation strategy
+
+Required output format:
+Definition
+- Give a clear 1-3 sentence definition.
+
+Simple explanation
+- Explain the concept in plain language.
+
+Main types or components
+- List the major subtypes, technologies, or components if relevant.
+
+Why it matters
+- Explain why the concept is useful in biomedical or cancer research.
+
+Example
+- Give one concrete example.
+
+Limitations
+- Briefly mention common limitations or caveats.
+
+If retrieved DB sources are relevant, add:
+Related Paper_Talk DB context
+- Mention 1-3 relevant DB source titles briefly.
+
+Do not force hypothesis generation.
+    `.trim();
+  }
+
+  if (questionType === "RESEARCH" || shouldGenerateHypotheses) {
+    return `
+Selected mode: RESEARCH / DB-grounded hypothesis generation.
+
+Required output format:
+Auto-interpreted research intent
+- What the user probably wants to understand or discover
+- Main domain and key entities
+
+Related Paper_Talk DB papers used
+- Source 1: title — short reason it is relevant
+- Source 2: title — short reason it is relevant
+If no source was found, write: No matching Paper_Talk DB source was found.
+
+Known findings from DB
+- DB-supported finding with source title
+- DB-supported finding with source title
+
+Research gaps identified
+- Gap 1
+- Gap 2
+
+Generated hypotheses
+Hypothesis 1
+Statement:
+Why this follows from DB evidence:
+Knowledge gap addressed:
+Validation strategy:
+Novelty score: 1-5
+Feasibility score: 1-5
+Risk score: 1-5
+
+Hypothesis 2
+Statement:
+Why this follows from DB evidence:
+Knowledge gap addressed:
+Validation strategy:
+Novelty score: 1-5
+Feasibility score: 1-5
+Risk score: 1-5
+
+Recommended next step
+- Pick the strongest hypothesis and explain the first analysis or experiment to run.
+
+Evidence guardrail
+- State what should not be overclaimed.
+    `.trim();
+  }
+
+  if (questionType === "VALIDATION") {
+    return `
+Selected mode: VALIDATION / experiment and analysis planning.
+
+Required output format:
+Question interpreted as
+- Briefly state the validation goal.
+
+Assumption or claim to validate
+- State what is being tested.
+
+Recommended validation strategy
+- Computational analysis
+- Experimental validation
+- Controls
+- Expected readouts
+- Statistical or interpretation caveats
+
+Relevant Paper_Talk DB context
+- Mention retrieved sources only if relevant.
+
+Limitations
+- State what this validation cannot prove.
+    `.trim();
+  }
+
+  if (questionType === "LITERATURE") {
+    return `
+Selected mode: LITERATURE / DB-grounded paper overview.
+
+Required output format:
+Scope
+- State what literature or DB topic is being summarized.
+
+Related Paper_Talk DB papers
+- Source 1: title — key point
+- Source 2: title — key point
+
+Main findings
+- Summarize DB-supported findings.
+
+How the papers connect
+- Explain relationships between methods, diseases, mechanisms, or technologies.
+
+Open questions
+- Mention unresolved questions only as open questions, not as full hypotheses unless asked.
+    `.trim();
+  }
+
+  return `
+Selected mode: GENERAL / concise answer.
+
+Answer the user's question directly.
+Use retrieved Paper_Talk DB context only if it is clearly relevant.
+Do not generate hypotheses unless the user asks for research ideas, gaps, or future directions.
+  `.trim();
 }
 
 
