@@ -429,10 +429,12 @@ async function sendMessage() {
   scrollChatToBottom();
 
   chatController = new AbortController();
+  let timedOut = false;
 
   const timeout = setTimeout(() => {
+    timedOut = true;
     if (chatController) chatController.abort();
-  }, 30000);
+  }, 120000);
 
   try {
     const res = await fetch("/api/gpt/chat", {
@@ -473,7 +475,12 @@ async function sendMessage() {
     removeLastThinking();
 
     if (error.name === "AbortError") {
-      addMessage("assistant", "Cancelled or timed out. Please try again.");
+      addMessage(
+        "assistant",
+        timedOut
+          ? "Request timed out after 120 seconds. Please try a narrower question."
+          : "Request cancelled."
+      );
     } else {
       addMessage("assistant", error.message || "Request failed.");
     }
