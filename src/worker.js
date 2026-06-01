@@ -329,10 +329,12 @@ async function apiMe(request, env) {
       ok: false,
       user: null,
       quota: {
-        used: 0,
+        used: null,
         limit: 20,
-        remaining: 20
-      }
+        remaining: null,
+        monthKey: getCurrentMonthKey()
+      },
+      message: "Please sign in to use Paper_Talk Vision GPT."
     });
   }
 
@@ -344,7 +346,9 @@ async function apiMe(request, env) {
     quota: {
       used: quota.used,
       limit: quota.limit,
-      remaining: quota.remaining
+      remaining: quota.remaining,
+      monthKey: quota.monthKey,
+      resetsAt: quota.resetsAt
     }
   });
 }
@@ -2168,7 +2172,10 @@ ${autoIntent.retrieval_query}`
     user.id
   ).run();
 
-  const quotaAfter = await getMonthlyGptQuota(user.id, env, user);
+  // Count exactly one successful GPT answer against the user's monthly quota.
+  // Quota is stored separately from chat messages, so deleting a thread will not restore usage.
+  // A new month_key is created automatically every month, giving the user a fresh 20 questions.
+  const quotaAfter = await incrementMonthlyGptUsage(user.id, env);
 
   return json({
     ok: true,
@@ -2177,7 +2184,9 @@ ${autoIntent.retrieval_query}`
     quota: {
       used: quotaAfter.used,
       limit: quotaAfter.limit,
-      remaining: quotaAfter.remaining
+      remaining: quotaAfter.remaining,
+      monthKey: quotaAfter.monthKey,
+      resetsAt: quotaAfter.resetsAt
     },
     sources: context.map(item => ({
       title: item.title,
@@ -2188,12 +2197,29 @@ ${autoIntent.retrieval_query}`
   });
 }
 
-async function getMonthlyGptQuota(userId, env, user = null) {
-  const monthlyLimit = 20;
+function getCurrentMonthKey(date = new Date()) {
+  return date.toISOString().slice(0, 7);
+}
 
-  const now = new Date();
-  const monthKey = now.toISOString().slice(0, 7);
+function getNextMonthResetIso(date = new Date()) {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  return new Date(Date.UTC(year, month + 1, 1, 0, 0, 0)).toISOString();
+}
 
+async function ensureGptMonthlyUsageTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS gpt_monthly_usage (
+      user_id TEXT NOT NULL,
+      month_key TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, month_key)
+    )
+  `).run();
+}
+
+async function getLegacyMonthlyMessageCount(userId, monthKey, env) {
   const result = await env.DB.prepare(`
     SELECT COUNT(*) AS used
     FROM gpt_messages
@@ -2202,14 +2228,68 @@ async function getMonthlyGptQuota(userId, env, user = null) {
       AND substr(created_at, 1, 7) = ?
   `).bind(userId, monthKey).first();
 
-  const used = result ? Number(result.used || 0) : 0;
+  return result ? Number(result.used || 0) : 0;
+}
+
+async function getMonthlyGptQuota(userId, env, user = null) {
+  const monthlyLimit = 20;
+  const now = new Date();
+  const monthKey = getCurrentMonthKey(now);
+
+  await ensureGptMonthlyUsageTable(env);
+
+  const row = await env.DB.prepare(`
+    SELECT used
+    FROM gpt_monthly_usage
+    WHERE user_id = ?
+      AND month_key = ?
+  `).bind(userId, monthKey).first();
+
+  // Backward-compatible migration:
+  // If this table is newly created, preserve this month's already-used count
+  // from existing gpt_messages so users do not get an accidental extra 20.
+  if (!row) {
+    const legacyUsed = await getLegacyMonthlyMessageCount(userId, monthKey, env);
+
+    await env.DB.prepare(`
+      INSERT INTO gpt_monthly_usage (user_id, month_key, used, updated_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    `).bind(userId, monthKey, legacyUsed).run();
+
+    return {
+      used: legacyUsed,
+      limit: monthlyLimit,
+      remaining: Math.max(monthlyLimit - legacyUsed, 0),
+      monthKey,
+      resetsAt: getNextMonthResetIso(now)
+    };
+  }
+
+  const used = Number(row.used || 0);
 
   return {
     used,
     limit: monthlyLimit,
     remaining: Math.max(monthlyLimit - used, 0),
-    monthKey
+    monthKey,
+    resetsAt: getNextMonthResetIso(now)
   };
+}
+
+async function incrementMonthlyGptUsage(userId, env) {
+  const monthKey = getCurrentMonthKey();
+
+  await ensureGptMonthlyUsageTable(env);
+
+  await env.DB.prepare(`
+    INSERT INTO gpt_monthly_usage (user_id, month_key, used, updated_at)
+    VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, month_key) DO UPDATE SET
+      used = used + 1,
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(userId, monthKey).run();
+
+  return getMonthlyGptQuota(userId, env);
 }
 
 async function deleteGptThread(request, env) {
