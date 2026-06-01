@@ -602,6 +602,15 @@ function getTodayKey(date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
+function getVisitorIp(request) {
+  return (
+    request.headers.get("CF-Connecting-IP") ||
+    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
+    request.headers.get("X-Real-IP") ||
+    "unknown"
+  );
+}
+
 async function ensureDailyVisitsTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS daily_visits (
@@ -610,20 +619,58 @@ async function ensureDailyVisitsTable(env) {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
+
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS daily_visit_ips (
+      visit_date TEXT NOT NULL,
+      ip_hash TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (visit_date, ip_hash)
+    )
+  `).run();
 }
 
 async function publicTodayVisitCount(request, env) {
   const todayKey = getTodayKey();
+  const visitorIp = getVisitorIp(request);
+  const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}`);
 
   await ensureDailyVisitsTable(env);
 
-  await env.DB.prepare(`
-    INSERT INTO daily_visits (visit_date, count, updated_at)
-    VALUES (?, 1, CURRENT_TIMESTAMP)
-    ON CONFLICT(visit_date) DO UPDATE SET
-      count = count + 1,
-      updated_at = CURRENT_TIMESTAMP
-  `).bind(todayKey).run();
+  const insertIpResult = await env.DB.prepare(`
+    INSERT OR IGNORE INTO daily_visit_ips (
+      visit_date,
+      ip_hash,
+      created_at
+    )
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+  `).bind(todayKey, ipHash).run();
+
+  const isNewVisitor =
+    Number(insertIpResult?.meta?.changes || 0) > 0;
+
+  if (isNewVisitor) {
+    await env.DB.prepare(`
+      INSERT INTO daily_visits (
+        visit_date,
+        count,
+        updated_at
+      )
+      VALUES (?, 1, CURRENT_TIMESTAMP)
+      ON CONFLICT(visit_date) DO UPDATE SET
+        count = count + 1,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(todayKey).run();
+  } else {
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO daily_visits (
+        visit_date,
+        count,
+        updated_at
+      )
+      VALUES (?, 0, CURRENT_TIMESTAMP)
+    `).bind(todayKey).run();
+  }
 
   const result = await env.DB.prepare(`
     SELECT count
@@ -634,7 +681,8 @@ async function publicTodayVisitCount(request, env) {
   return json({
     ok: true,
     date: todayKey,
-    total: result ? Number(result.count || 0) : 0
+    total: result ? Number(result.count || 0) : 0,
+    counted: isNewVisitor
   });
 }
 
