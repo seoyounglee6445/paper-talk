@@ -1,5 +1,5 @@
 /*
-Paper_Talk v4 update - timeout-safe revised version:
+Paper_Talk v4 update - JSON-safe timeout-safe revised version:
 - Adds automatic question-type recognition before answering.
 - Concept / definition / overview questions are answered as educational explanations, not forced into hypothesis generation.
 - Research-direction questions still trigger DB-grounded paper retrieval, knowledge-gap analysis, hypothesis generation, and validation strategy.
@@ -7,13 +7,14 @@ Paper_Talk v4 update - timeout-safe revised version:
 - Literature / paper-summary questions trigger DB-grounded literature mode.
 - Monthly GPT quota remains stored separately from chat messages, so logout/login or deleting threads does not reset usage.
 Additional timeout-safe changes in this revised file:
-- Added /api/test-openai to verify the real OpenAI chat request, not just whether the key exists.
-- Removed extra OpenAI calls from intent classification and retrieval-query expansion; both now use fast rule-based logic.
-- Main answer OpenAI timeout is capped at 25s so the browser/frontend request is less likely to abort first.
-- Retrieved DB context passed to the answer model is reduced to 5,000 characters.
-- Retrieved source count and vector topK are reduced for faster RAG.
-- Main answer max_completion_tokens is reduced to 700/900.
-- Transient OpenAI failures are returned as clear diagnostic messages instead of being hidden by generic cancellation text.
+- Main answer OpenAI timeout increased from 22s to 60s.
+- Retrieved DB context passed to the answer model reduced from 17,000 to 8,000 characters.
+- Retrieved source count reduced from 10 to 6 and each matched chunk from 2,200 to 1,200 characters.
+- Main answer max_completion_tokens reduced from 1000/1800 to 900/1200.
+- Prompt wording shortened to reduce long generations and lower timeout risk.
+- Adds /api/test-openai to test the real OpenAI request, not only secret existence.
+- Adds JSON-safe OpenAI response parsing so HTML/error pages do not crash the frontend as "Unexpected token <".
+- Uses gpt-4o-mini as the safe default model when OPENAI_MODEL is not set.
 */
 
 export default {
@@ -22,15 +23,23 @@ export default {
     const pathname = url.pathname.replace(/\/+$/, "") || "/";
 
     try {
+      if (request.method === "OPTIONS" && pathname.startsWith("/api/")) {
+        return new Response(null, {
+          status: 204,
+          headers: corsHeaders()
+        });
+      }
+
       if (pathname === "/api/test-secret") {
         return json({
           hasKey: !!env.OPENAI_API_KEY,
+          hasModel: !!env.OPENAI_MODEL,
           model: env.OPENAI_MODEL || "gpt-4o-mini"
         });
       }
 
       if (pathname === "/api/test-openai") {
-        return testOpenAI(request, env);
+        return testOpenAI(env);
       }
 
       if (pathname === "/auth/google") return googleLogin(request, env);
@@ -126,125 +135,96 @@ export default {
 
       return new Response("Not found", { status: 404 });
     } catch (error) {
-      return json({
-        ok: false,
-        error: error?.message || "Worker server error"
-      }, 500);
+      if (pathname.startsWith("/api/")) {
+        return json({
+          ok: false,
+          error: error?.message || "Worker server error"
+        }, 500);
+      }
+
+      return new Response(error?.message || "Worker server error", { status: 500 });
     }
   }
 };
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Admin-Key"
+  };
+}
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
+      ...corsHeaders(),
       ...headers
     }
   });
 }
 
-async function callOpenAIChatCompletion({
-  env,
-  messages,
-  temperature = 0.1,
-  maxCompletionTokens = 300,
-  timeoutMs = 25000
-}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+async function readJsonResponseSafely(response, label = "HTTP request") {
+  const contentType = response.headers.get("Content-Type") || "";
+  const rawText = await response.text();
+
+  let data = null;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    const preview = rawText
+      .replace(/\s+/g, " ")
+      .slice(0, 700);
+
+    throw new Error(
+      `${label} returned non-JSON response. HTTP ${response.status}. Content-Type: ${contentType || "unknown"}. Preview: ${preview}`
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `${label} failed. HTTP ${response.status}. ${data?.error?.message || JSON.stringify(data).slice(0, 700)}`
+    );
+  }
+
+  return data;
+}
+
+async function testOpenAI(env) {
+  if (!env.OPENAI_API_KEY) {
+    return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
+  }
 
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      signal: controller.signal,
       headers: {
         "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-4o-mini",
-        messages,
-        temperature,
-        max_completion_tokens: maxCompletionTokens
+        messages: [
+          { role: "user", content: "Say hello in one short sentence." }
+        ],
+        temperature: 0,
+        max_tokens: 30
       })
     });
 
-    const raw = await res.text();
-    let data = {};
-
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      return {
-        ok: false,
-        status: res.status,
-        error: "OpenAI returned non-JSON response.",
-        rawPreview: raw.slice(0, 500)
-      };
-    }
-
-    if (!res.ok) {
-      return {
-        ok: false,
-        status: res.status,
-        error: data?.error?.message || `OpenAI HTTP ${res.status}`,
-        rawPreview: raw.slice(0, 500)
-      };
-    }
-
-    return {
+    const data = await readJsonResponseSafely(response, "OpenAI test request");
+    return json({
       ok: true,
-      status: res.status,
-      content: data?.choices?.[0]?.message?.content || "",
-      rawPreview: raw.slice(0, 500)
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      status: 0,
-      error: error?.name === "AbortError"
-        ? `OpenAI request timed out after ${Math.round(timeoutMs / 1000)} seconds.`
-        : (error?.message || "OpenAI request failed.")
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function testOpenAI(request, env) {
-  if (!env.OPENAI_API_KEY) {
-    return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
-  }
-
-  const startedAt = Date.now();
-
-  try {
-    const result = await callOpenAIChatCompletion({
-      env,
-      messages: [
-        { role: "user", content: "Reply with exactly: hello" }
-      ],
-      temperature: 0,
-      maxCompletionTokens: 20,
-      timeoutMs: 15000
+      model: env.OPENAI_MODEL || "gpt-4o-mini",
+      answer: data?.choices?.[0]?.message?.content || "No answer returned."
     });
-
-    return json({
-      ok: result.ok,
-      status: result.status,
-      model: env.OPENAI_MODEL || "gpt-4o-mini",
-      elapsedMs: Date.now() - startedAt,
-      answer: result.content || "",
-      error: result.error || "",
-      rawPreview: result.rawPreview || ""
-    }, result.ok ? 200 : 500);
   } catch (error) {
     return json({
       ok: false,
       model: env.OPENAI_MODEL || "gpt-4o-mini",
-      elapsedMs: Date.now() - startedAt,
-      error: error?.message || "Unknown test-openai error"
+      error: error?.message || "Unknown OpenAI test error"
     }, 500);
   }
 }
@@ -2349,6 +2329,33 @@ ${autoIntent.retrieval_query}`
     .replace(/#/g, "")
     .replace(/\*/g, "");
 
+  const assistantFailed =
+    /^OpenAI API timeout/i.test(assistantText) ||
+    /^OpenAI API request failed/i.test(assistantText) ||
+    /^OpenAI answer-generation request/i.test(assistantText) ||
+    /returned non-JSON response/i.test(assistantText);
+
+  if (assistantFailed) {
+    return json({
+      ok: false,
+      threadId,
+      error: assistantText,
+      quota: {
+        used: quotaBefore.used,
+        limit: quotaBefore.limit,
+        remaining: quotaBefore.remaining,
+        monthKey: quotaBefore.monthKey,
+        resetsAt: quotaBefore.resetsAt
+      },
+      sources: context.map(item => ({
+        title: item.title,
+        source_url: item.source_url,
+        pdf_link: item.pdf_link,
+        similarity_score: item.similarity_score || null
+      }))
+    }, 502);
+  }
+
   await env.DB.prepare(`
     INSERT INTO gpt_messages (
       id,
@@ -2545,9 +2552,9 @@ async function searchResearchKnowledge(query, env) {
   const userQuery = String(query || "").trim();
 
   if (!userQuery) {
-    const latestKnowledge = await latestResearchKnowledge(env, 6);
+    const latestKnowledge = await latestResearchKnowledge(env, 12);
     if (latestKnowledge.length > 0) return latestKnowledge;
-    return latestResearchPostsAsKnowledge(env, 6);
+    return latestResearchPostsAsKnowledge(env, 12);
   }
 
   const allResults = [];
@@ -2569,7 +2576,7 @@ async function searchResearchKnowledge(query, env) {
     }
   }
 
-  let semanticMerged = mergeKnowledgeResults(allResults).slice(0, 6);
+  let semanticMerged = mergeKnowledgeResults(allResults).slice(0, 12);
   if (semanticMerged.length > 0) {
     return semanticMerged;
   }
@@ -2595,48 +2602,33 @@ async function searchResearchKnowledge(query, env) {
     }
   }
 
-  const merged = mergeKnowledgeResults(allResults).slice(0, 6);
+  const merged = mergeKnowledgeResults(allResults).slice(0, 12);
   if (merged.length > 0) return merged;
 
   return [];
 }
 
 async function buildRetrievalQueries(userQuery, env) {
-  const original = String(userQuery || "").trim();
-  const queries = [original].filter(Boolean);
+  const queries = [String(userQuery || "").trim()].filter(Boolean);
 
-  const normalized = normalizeSearchText(original);
-  if (normalized && normalized !== original.toLowerCase()) {
+  // Add a cheap normalization pass.
+  const normalized = normalizeSearchText(userQuery);
+  if (normalized && normalized !== userQuery.toLowerCase()) {
     queries.push(normalized);
   }
 
-  const translated = makeFastBiomedicalRetrievalQuery(original);
-  if (translated) queries.push(translated);
+  // Use the OpenAI model as a query translator/expander.
+  // This is not keyword mapping. It lets any natural-language question become
+  // a scientific retrieval query for English abstracts/full text.
+  const expanded = await expandQuestionForResearchRetrieval(userQuery, env);
+  if (expanded) queries.push(expanded);
 
-  return [...new Set(queries.map(v => String(v || "").trim()).filter(Boolean))].slice(0, 3);
-}
-
-function makeFastBiomedicalRetrievalQuery(userQuery) {
-  const value = String(userQuery || "").toLowerCase();
-  const terms = [];
-
-  const map = [
-    [/spatial|공간|스페이셜/, "spatial transcriptomics spatial omics tissue architecture tumor microenvironment"],
-    [/single[- ]?cell|싱글셀|단일세포/, "single-cell RNA-seq single cell genomics cell type heterogeneity"],
-    [/cancer|tumou?r|암|종양/, "cancer tumor microenvironment oncology treatment response"],
-    [/liquid biopsy|액체생검/, "liquid biopsy circulating tumor DNA ctDNA biomarker"],
-    [/immune|immuno|면역/, "immune microenvironment immuno-oncology T cell macrophage"],
-    [/metastasis|전이/, "metastasis invasion cancer progression"],
-    [/alzheimer|알츠하이머/, "Alzheimer disease neurodegeneration brain spatial transcriptomics"],
-    [/multi[- ]?omics|멀티오믹스/, "multi-omics transcriptome genome epigenome proteome metabolome integration"],
-    [/발전|future|direction|trend|전망/, "future direction technology development computational analysis clinical translation"]
-  ];
-
-  for (const [regex, phrase] of map) {
-    if (regex.test(value)) terms.push(phrase);
+  // If the model returns comma-separated terms, also add a compact space-joined query.
+  if (expanded && expanded.includes(",")) {
+    queries.push(expanded.split(",").map(v => v.trim()).filter(Boolean).join(" "));
   }
 
-  return [...new Set(terms)].join(" ");
+  return [...new Set(queries.map(v => String(v || "").trim()).filter(Boolean))].slice(0, 4);
 }
 
 async function expandQuestionForResearchRetrieval(userQuery, env) {
@@ -2675,8 +2667,7 @@ async function expandQuestionForResearchRetrieval(userQuery, env) {
       })
     });
 
-    const raw = await res.text();
-    const data = JSON.parse(raw);
+    const data = await readJsonResponseSafely(res, "OpenAI retrieval expansion request");
     const value = data?.choices?.[0]?.message?.content || "";
 
     return cleanFetchedArticleText(value)
@@ -2695,7 +2686,7 @@ async function vectorSemanticSearch(query, env) {
   const queryEmbedding = await createEmbedding(query, env);
 
   const vectorResult = await env.VECTORIZE.query(queryEmbedding, {
-    topK: 8,
+    topK: 18,
     returnMetadata: "all"
   });
 
@@ -3402,10 +3393,230 @@ Required reasoning sequence for the final answer:
 
 
 async function inferUserResearchIntent({ userMessage, recentMessages = [] }, env) {
-  // Timeout-safe rule-based intent detection.
-  // This avoids an extra OpenAI request before the main answer request.
-  return makeFallbackResearchIntent(userMessage);
+  const fallback = makeFallbackResearchIntent(userMessage);
+
+  if (!env.OPENAI_API_KEY) return fallback;
+
+  const recentText = Array.isArray(recentMessages)
+    ? recentMessages
+        .slice(-4)
+        .map(m => `${m.role || "user"}: ${String(m.content || "").slice(0, 500)}`)
+        .join("\n")
+    : "";
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `
+You are the automatic question-type and research-intent interpreter for Paper_Talk Vision GPT.
+
+First classify the user's actual intent. Do not force every question into hypothesis generation.
+
+Return only valid JSON.
+
+Required JSON keys:
+- question_type: one of CONCEPT, RESEARCH, VALIDATION, LITERATURE, GENERAL.
+- should_generate_hypotheses: boolean.
+- should_use_db_evidence: boolean.
+- interpreted_intent: one sentence explaining what the user is actually asking for.
+- primary_domain: short field name, for example spatial omics, cancer genomics, immuno-oncology, neurodegeneration, single-cell analysis.
+- key_entities: array of important diseases, methods, genes, cell types, technologies, or biological concepts.
+- retrieval_query: concise English search query for Paper_Talk DB retrieval. Include synonyms and biomedical terms.
+- gap_axes: array of gap types to check only if the user wants research directions.
+- hypothesis_angle: one sentence only if hypotheses are appropriate; otherwise empty string.
+- validation_angle: one sentence only if validation planning is appropriate; otherwise empty string.
+- answer_style: one of educational_overview, hypothesis_generation, validation_plan, literature_review, concise_answer.
+
+Classification rules:
+CONCEPT:
+- The user asks "what is", "define", "meaning", "overview", "explain", "개념", "정의", "무슨 뜻", "뭐야", "뭐지".
+- Answer with definition, overview, types, why it matters, examples, limitations.
+- Do NOT generate research gaps, hypotheses, novelty scores, or validation strategies unless the user explicitly asks for research ideas.
+
+RESEARCH:
+- The user asks for research ideas, gaps, hypotheses, future directions, "what should I study", "연구 주제", "가설", "gap", "future work".
+- Generate DB-grounded gaps, hypotheses, and validation strategies.
+
+VALIDATION:
+- The user asks how to test, validate, design experiments, analyze datasets, controls, statistics, protocol.
+- Focus on validation strategy. Generate hypotheses only if needed.
+
+LITERATURE:
+- The user asks for papers, DB sources, summaries, related studies, literature review.
+- Focus on retrieved papers and findings. Do not invent hypotheses unless asked.
+
+GENERAL:
+- Use a direct concise answer.
+
+Do not answer the user's question.
+Do not cite papers.
+Do not use markdown.
+            `.trim()
+          },
+          {
+            role: "user",
+            content: `
+Recent conversation:
+${recentText || "No recent conversation."}
+
+Current user message:
+${String(userMessage || "").slice(0, 1200)}
+            `.trim()
+          }
+        ],
+        temperature: 0,
+        max_tokens: 800
+      })
+    });
+
+    const data = await readJsonResponseSafely(res, "OpenAI intent-classification request");
+
+    const content = data?.choices?.[0]?.message?.content || "";
+    const parsed = parseJsonObjectFromText(content);
+
+    if (!parsed || typeof parsed !== "object") return fallback;
+
+    const questionType = normalizeQuestionType(parsed.question_type || fallback.question_type);
+    const shouldGenerateHypotheses =
+      typeof parsed.should_generate_hypotheses === "boolean"
+        ? parsed.should_generate_hypotheses
+        : questionType === "RESEARCH";
+
+    const shouldUseDbEvidence =
+      typeof parsed.should_use_db_evidence === "boolean"
+        ? parsed.should_use_db_evidence
+        : ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType);
+
+    return {
+      question_type: questionType,
+      should_generate_hypotheses: shouldGenerateHypotheses,
+      should_use_db_evidence: shouldUseDbEvidence,
+      interpreted_intent: String(parsed.interpreted_intent || fallback.interpreted_intent).slice(0, 600),
+      primary_domain: String(parsed.primary_domain || fallback.primary_domain).slice(0, 160),
+      key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v).slice(0, 100)).slice(0, 12) : fallback.key_entities,
+      retrieval_query: String(parsed.retrieval_query || fallback.retrieval_query).slice(0, 700),
+      gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v).slice(0, 120)).slice(0, 10) : fallback.gap_axes,
+      hypothesis_angle: shouldGenerateHypotheses ? String(parsed.hypothesis_angle || fallback.hypothesis_angle).slice(0, 500) : "",
+      validation_angle: String(parsed.validation_angle || fallback.validation_angle).slice(0, 500),
+      answer_style: normalizeAnswerStyle(parsed.answer_style || fallback.answer_style)
+    };
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
+
+function normalizeQuestionType(value) {
+  const label = String(value || "").trim().toUpperCase();
+  if (["CONCEPT", "RESEARCH", "VALIDATION", "LITERATURE", "GENERAL"].includes(label)) return label;
+  return "GENERAL";
+}
+
+function normalizeAnswerStyle(value) {
+  const label = String(value || "").trim().toLowerCase();
+  if (["educational_overview", "hypothesis_generation", "validation_plan", "literature_review", "concise_answer"].includes(label)) return label;
+  return "concise_answer";
+}
+
+function inferQuestionTypeHeuristically(userMessage) {
+  const message = String(userMessage || "").toLowerCase();
+
+  const conceptPattern = /(what is|what are|define|definition|meaning|overview|explain|introduction to|개념|정의|뜻|무슨 뜻|뭐야|뭐지|무엇|설명|개요)/i;
+  const researchPattern = /(research idea|hypothesis|hypotheses|knowledge gap|gap|future direction|what should i study|study idea|project idea|연구 주제|연구 아이디어|가설|연구 방향|뭘 연구|무슨 연구|future work)/i;
+  const validationPattern = /(validate|validation|experiment|experimental design|protocol|control|statistic|analysis plan|test this|검증|실험|프로토콜|대조군|분석 방법|어떻게 확인)/i;
+  const literaturePattern = /(paper|papers|literature|review|summarize|related studies|논문|문헌|리뷰|요약|관련 연구)/i;
+
+  if (researchPattern.test(message)) return "RESEARCH";
+  if (validationPattern.test(message)) return "VALIDATION";
+  if (literaturePattern.test(message)) return "LITERATURE";
+  if (conceptPattern.test(message)) return "CONCEPT";
+  return "GENERAL";
+}
+
+function parseJsonObjectFromText(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function makeFallbackResearchIntent(userMessage) {
+  const message = String(userMessage || "").trim();
+  const normalized = normalizeSearchText(message);
+  const questionType = inferQuestionTypeHeuristically(message);
+
+  const entities = normalized
+    .split(/\s+/)
+    .filter(v => v.length >= 3)
+    .slice(0, 8);
+
+  const shouldGenerateHypotheses = questionType === "RESEARCH";
+  const shouldUseDbEvidence = ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType);
+
+  const answerStyle =
+    questionType === "CONCEPT" ? "educational_overview" :
+    questionType === "RESEARCH" ? "hypothesis_generation" :
+    questionType === "VALIDATION" ? "validation_plan" :
+    questionType === "LITERATURE" ? "literature_review" :
+    "concise_answer";
+
+  return {
+    question_type: questionType,
+    should_generate_hypotheses: shouldGenerateHypotheses,
+    should_use_db_evidence: shouldUseDbEvidence,
+    interpreted_intent: message
+      ? questionType === "CONCEPT"
+        ? `The user is asking for a definition or overview of "${message}", not for hypothesis generation.`
+        : `The user is asking about "${message}" with question type ${questionType}.`
+      : "The user did not provide a specific topic.",
+    primary_domain: "biomedical research",
+    key_entities: entities,
+    retrieval_query: [message, normalized, "biomedical research cancer genomics spatial omics single-cell multi-omics"].filter(Boolean).join(", ").slice(0, 700),
+    gap_axes: shouldGenerateHypotheses
+      ? [
+          "mechanism",
+          "cell type",
+          "spatial niche",
+          "disease or cancer context",
+          "multi-omics integration",
+          "cohort validation",
+          "experimental perturbation"
+        ]
+      : [],
+    hypothesis_angle: shouldGenerateHypotheses
+      ? "Generate cautious, testable hypotheses by connecting DB-supported findings and unresolved gaps."
+      : "",
+    validation_angle: questionType === "VALIDATION"
+      ? "Propose computational and experimental validation steps with controls and limitations."
+      : "",
+    answer_style: answerStyle
+  };
+}
+
 
 async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
   const hasContext = Array.isArray(context) && context.length > 0;
@@ -3416,7 +3627,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
           `Source ${index + 1}: ${cleanBibtexText(item.title || "")}`,
           item.source_url ? `Article: ${item.source_url}` : "",
           item.pdf_link ? `PDF: ${item.pdf_link}` : "",
-          cleanBibtexText(item.matched_chunk || item.content || "").slice(0, 900)
+          cleanBibtexText(item.matched_chunk || item.content || "").slice(0, 1200)
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "No matching research paper context was found in the Paper_Talk knowledge base.";
@@ -3476,7 +3687,7 @@ Formatting:
 Return plain text only.
 Do not use markdown symbols such as #, *, or **.
 Prefer friendly headings and readable spacing.
-For concept questions, give a useful educational explanation, usually 250-450 words unless the user asks for more.
+For concept questions, give a useful educational explanation, usually 400-700 words unless the user asks for more.
 For research questions, be detailed but concise; prioritize the strongest evidence and most practical next steps.
       `.trim()
     },
@@ -3490,7 +3701,7 @@ For research questions, be detailed but concise; prioritize the strongest eviden
     },
     {
       role: "system",
-      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 5000)}`
+      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 8000)}`
     },
     {
       role: "system",
@@ -3516,7 +3727,7 @@ For research questions, be detailed but concise; prioritize the strongest eviden
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -3530,7 +3741,7 @@ For research questions, be detailed but concise; prioritize the strongest eviden
         model: env.OPENAI_MODEL || "gpt-4o-mini",
         messages,
         temperature: questionType === "CONCEPT" ? 0.1 : 0.2,
-        max_completion_tokens: questionType === "CONCEPT" ? 700 : 900
+        max_tokens: questionType === "CONCEPT" ? 900 : 1200
       })
     });
 
@@ -3550,7 +3761,7 @@ For research questions, be detailed but concise; prioritize the strongest eviden
     return data?.choices?.[0]?.message?.content || "No answer was generated.";
   } catch (error) {
     if (error && error.name === "AbortError") {
-      return "OpenAI API timeout after 25 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
+      return "OpenAI API timeout after 60 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
     }
 
     return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
