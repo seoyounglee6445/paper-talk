@@ -2027,6 +2027,14 @@ async function gptChat(request, env) {
     context
   }, env);
 
+  await saveGeneratedFrameworkLog({
+    threadId,
+    userId: user.id,
+    userMessage: message,
+    framework: generatedFramework,
+    context
+  }, env);
+
   let assistantText = await callOpenAIForPaperTalk({
     userMessage: message,
     context,
@@ -2843,6 +2851,54 @@ async function getRecentThreadMessages(threadId, userId, env) {
   return (result.results || []).reverse();
 }
 
+
+async function saveGeneratedFrameworkLog({ threadId, userId, userMessage, framework, context }, env) {
+  // Store the generated framework so Paper_Talk can accumulate its research reasoning patterns over time.
+  // This is optional and fail-safe: if the table has not been created yet, chat will still work.
+  try {
+    if (!env.DB || !framework) return false;
+
+    const sourceSummary = Array.isArray(context)
+      ? context.slice(0, 8).map((item, index) => ({
+          index: index + 1,
+          title: item.title || "",
+          source_url: item.source_url || "",
+          pdf_link: item.pdf_link || "",
+          similarity_score: item.similarity_score || null
+        }))
+      : [];
+
+    const frameworkWithSources = [
+      String(framework || "").trim(),
+      sourceSummary.length
+        ? "\n\nRetrieved Paper_Talk sources used for this framework:\n" + JSON.stringify(sourceSummary, null, 2)
+        : ""
+    ].filter(Boolean).join("");
+
+    await env.DB.prepare(`
+      INSERT INTO gpt_framework_logs (
+        id,
+        thread_id,
+        user_id,
+        user_message,
+        framework,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).bind(
+      crypto.randomUUID(),
+      threadId,
+      userId,
+      String(userMessage || "").slice(0, 4000),
+      frameworkWithSources.slice(0, 24000)
+    ).run();
+
+    return true;
+  } catch (error) {
+    // Do not block the chat if framework logging fails.
+    return false;
+  }
+}
 
 async function generateResearchFramework({ userMessage, context }, env) {
   const hasContext = Array.isArray(context) && context.length > 0;
