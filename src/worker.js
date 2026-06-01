@@ -2101,33 +2101,17 @@ async function gptChat(request, env) {
     message
   ).run();
 
+  // v3-lite:
+  // To avoid browser/Worker timeout, this route now uses one main OpenAI call.
+  // It still searches the Paper_Talk DB, but skips the extra framework-generation call.
   const context = await searchResearchKnowledge(message, env);
   const recentMessages = await getRecentThreadMessages(threadId, user.id, env);
-
-  const pastFrameworks = await retrievePastFrameworks({
-    userMessage: message,
-    context
-  }, env);
-
-  const generatedFramework = await generateResearchFramework({
-    userMessage: message,
-    context,
-    pastFrameworks
-  }, env);
-
-  await saveGeneratedFrameworkLog({
-    threadId,
-    userId: user.id,
-    userMessage: message,
-    framework: generatedFramework,
-    context
-  }, env);
 
   let assistantText = await callOpenAIForPaperTalk({
     userMessage: message,
     context,
-    pastFrameworks,
-    generatedFramework,
+    pastFrameworks: [],
+    generatedFramework: "",
     recentMessages
   }, env);
 
@@ -3238,147 +3222,96 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
   const hasContext = Array.isArray(context) && context.length > 0;
 
   const contextText = hasContext
-    ? context.slice(0, 12).map((item, index) => {
+    ? context.slice(0, 8).map((item, index) => {
         return [
           `Source ${index + 1}: ${cleanBibtexText(item.title || "")}`,
           item.source_url ? `Article: ${item.source_url}` : "",
           item.pdf_link ? `PDF: ${item.pdf_link}` : "",
-          cleanBibtexText(item.matched_chunk || item.content || "")
+          cleanBibtexText(item.matched_chunk || item.content || "").slice(0, 1800)
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "No matching research paper context was found in the Paper_Talk knowledge base.";
 
-  const pastFrameworksText = Array.isArray(pastFrameworks) && pastFrameworks.length > 0
-    ? pastFrameworks.slice(0, 8).map((item, index) => {
-        return [
-          `Past Paper_Talk framework ${index + 1}`,
-          item.user_message ? `Previous question: ${String(item.user_message).slice(0, 800)}` : "",
-          String(item.framework || "").slice(0, 2500)
-        ].filter(Boolean).join("\n");
-      }).join("\n\n---\n\n")
-    : "No previous Paper_Talk reasoning frameworks were retrieved.";
+  const isIdeaQuestion = /hypothesis|idea|gap|mechanism|validation|research|study|project|novel|가설|아이디어|연구|기전|메커니즘|검증|공백|뭘|뭐지|추천|방향/i.test(String(userMessage || ""));
 
   const messages = [
     {
       role: "system",
       content: `
-You are Paper_Talk Hypothesis GPT, a research idea generation engine for cancer genomics, bioinformatics, spatial transcriptomics, single-cell analysis, and Visium-related research.
+You are Paper_Talk Vision GPT.
 
-Core identity:
-- You are not a generic paper summarizer.
-- You generate research ideas from the user's own Paper_Talk DB.
-- Your job is to connect papers inside the DB and turn those connections into knowledge gaps, hypotheses, and validation plans.
+You answer using only the retrieved Paper_Talk DB sources as scientific evidence.
+Do not use outside literature as evidence.
+Do not invent paper details.
+If DB evidence is insufficient, say what is missing.
 
-Evidence rules:
-- Use only the provided Paper_Talk research knowledge base as scientific evidence.
-- The knowledge base may include fetched article text, Crossref metadata, Europe PMC/PubMed abstracts, PMC full text, admin descriptions, or notes.
-- Previous frameworks are reasoning style memory only. They are not scientific evidence.
-- Do not use outside knowledge as evidence unless the user explicitly asks for general background.
-- Do not invent paper details, datasets, sample sizes, results, methods, biomarkers, mechanisms, or conclusions.
-- If DB evidence is insufficient, say exactly what is missing.
+Language:
+Answer in the user's language.
 
-Behavior rules:
-- The user may ask in Korean, English, or mixed Korean-English. Answer in the user's language.
-- If the user asks for a paper summary, summarize from DB evidence but still add a small "Research insight from this DB" section when useful.
-- If the user asks for ideas, hypotheses, mechanisms, gaps, novelty, projects, research direction, or "what should I study", use the full hypothesis-generation format.
-- If matching Paper_Talk sources are found, say clearly that the answer is based on Paper_Talk DB sources.
-- Mention source titles when making claims.
-- Distinguish "DB-supported finding" from "hypothesis generated from DB connections".
-- Give concise but scientifically useful answers.
-- Return plain text only.
-- Do not use Markdown symbols such as **, __, #, or decorative bullets.
-      `.trim()
-    },
-    {
-      role: "system",
-      content: `Paper_Talk DB research sources:\n\n${contextText}`
-    },
-    {
-      role: "system",
-      content: `Paper_Talk internal hypothesis-generation framework:\n\n${generatedFramework || "Use careful biomedical research reasoning based only on the retrieved Paper_Talk DB context."}`
-    },
-    {
-      role: "system",
-      content: `
-When the user wants research ideas, mechanisms, gaps, validation, or hypotheses, structure the answer exactly like this:
+For simple concept questions:
+Answer directly and briefly, then add "Paper_Talk DB note" if DB evidence was found.
+
+For research idea, gap, hypothesis, mechanism, or validation questions:
+Use this compact format:
 
 Paper_Talk DB evidence used
-List the DB sources by Source number and title.
-For each source, write one short line: "what this source contributes".
-Do not cite papers that are not in the retrieved DB context.
+- Source 1: title — one short contribution
+- Source 2: title — one short contribution
 
 DB-supported findings
-Write 3 to 6 findings.
-Each finding must end with a source reference such as "(Source 1: title)".
-Do not state a finding if no retrieved source supports it.
+- finding with source title
+- finding with source title
 
-Cross-paper connection
-Explain how the retrieved DB sources connect to each other.
-Use wording like "Source 1 suggests..., Source 2 adds..., therefore the DB connection is..."
-This section should be the bridge from literature to idea generation.
-
-Knowledge gaps inside the DB
-Identify what remains missing or unresolved inside the retrieved Paper_Talk DB.
-Examples: missing mechanism, missing spatial localization, missing cell-cell interaction evidence, missing validation, missing cancer-type specificity, or unresolved contradiction.
+Knowledge gap inside this DB
+- what is missing or unresolved
 
 Hypotheses generated from this DB
-Generate 3 to 5 cautious, testable hypotheses.
-For each hypothesis use this format:
-Hypothesis N:
+Hypothesis 1:
 Statement:
 DB evidence link:
-Knowledge gap addressed:
-Why it is novel:
-What remains uncertain:
-Validation strategy:
+Validation:
 Novelty score: 1-5
 Feasibility score: 1-5
 Risk score: 1-5
 
-Validation strategy
-Separate into:
-Computational validation:
-Experimental validation:
-Clinical or cohort validation, only if supported by the DB context.
+Hypothesis 2:
+Statement:
+DB evidence link:
+Validation:
+Novelty score: 1-5
+Feasibility score: 1-5
+Risk score: 1-5
 
 Priority ranking
-Rank the hypotheses from highest priority to lowest priority.
-Use the scores above and explain the ranking in one sentence each.
+- rank the hypotheses briefly
 
 Evidence guardrail
-End with one sentence stating what should not be overstated because the current DB evidence is limited.
+- one sentence on what should not be overstated
 
-Do not force every section when the user asks a very narrow factual question.
-If no relevant DB context exists, do not hallucinate. Say that Paper_Talk DB does not yet contain enough evidence and suggest what paper types should be added.
+Keep the answer concise enough to finish quickly.
+Return plain text only.
       `.trim()
     },
     {
       role: "system",
-      content: `
-Use both the previous Paper_Talk reasoning frameworks and the newly generated framework to organize your answer.
-
-Important:
-- Frameworks are reasoning guides only.
-- Final scientific claims must be grounded in the retrieved Paper_Talk DB sources.
-- Prioritize cross-paper reasoning, knowledge gaps, cautious hypotheses, and validation strategy over simple summary.
-      `.trim()
+      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 14000)}`
     },
     {
       role: "system",
       content: hasContext
-        ? "Important: Matching Paper_Talk DB sources were found. Do not answer that the paper is absent from the knowledge base. Use the provided source titles/content."
-        : "Important: No matching Paper_Talk DB source was found."
+        ? "Matching Paper_Talk DB sources were found. Use their titles and content as the evidence base."
+        : "No matching Paper_Talk DB source was found. Do not hallucinate evidence."
     },
     ...recentMessages
       .filter(m => m.role !== "assistant")
-      .slice(-4)
+      .slice(-2)
       .map(m => ({
         role: "user",
-        content: m.content
+        content: String(m.content || "").slice(0, 800)
       })),
     {
       role: "user",
-      content: userMessage
+      content: String(userMessage || "").slice(0, 1500)
     }
   ];
 
@@ -3387,7 +3320,7 @@ Important:
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 20000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -3400,7 +3333,8 @@ Important:
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5",
         messages,
-        temperature: 0.15
+        temperature: isIdeaQuestion ? 0.2 : 0.1,
+        max_completion_tokens: 1400
       })
     });
 
@@ -3420,7 +3354,7 @@ Important:
     return data?.choices?.[0]?.message?.content || "No answer was generated.";
   } catch (error) {
     if (error && error.name === "AbortError") {
-      return "OpenAI API timeout. Please try again.";
+      return "OpenAI API timeout. Please try a narrower question or ask about fewer mechanisms at once.";
     }
 
     return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
