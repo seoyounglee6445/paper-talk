@@ -29,8 +29,14 @@ CREATE TABLE IF NOT EXISTS research_knowledge (
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
-ALTER TABLE research_knowledge ADD COLUMN search_text TEXT;
-ALTER TABLE research_knowledge ADD COLUMN keywords TEXT;
+CREATE TABLE IF NOT EXISTS gpt_framework_logs (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  user_message TEXT NOT NULL,
+  framework TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE INDEX IF NOT EXISTS idx_gpt_threads_user_id
 ON gpt_threads(user_id);
@@ -52,3 +58,12 @@ ON research_knowledge(status);
 
 CREATE INDEX IF NOT EXISTS idx_research_knowledge_updated_at
 ON research_knowledge(updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_gpt_framework_logs_thread_id
+ON gpt_framework_logs(thread_id);
+
+CREATE INDEX IF NOT EXISTS idx_gpt_framework_logs_user_id
+ON gpt_framework_logs(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_gpt_framework_logs_created_at
+ON gpt_framework_logs(created_at);
