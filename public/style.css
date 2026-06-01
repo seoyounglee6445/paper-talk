@@ -478,3 +478,11 @@ textarea {
   }
 }
 
+#messageInput {
+  font-size: 13px;
+  line-height: 1.35;
+  min-height: 46px;
+  padding: 10px 12px;
+  resize: none;
+  white-space: pre-wrap;
+}
