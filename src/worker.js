@@ -2561,30 +2561,27 @@ async function searchResearchKnowledge(query, env) {
 
   const allResults = [];
 
-  // True semantic RAG:
-  // 1) Expand/translate the user's natural question into English scientific retrieval text.
-  //    This lets Korean questions like "알츠하이머 연구가 뭐가 있지?" match English paper text
-  //    such as "Alzheimer's disease, amyloid plaque, oligodendrocyte".
-  // 2) Query Vectorize with both the original question and the expanded retrieval query.
-  // 3) Use deterministic DB title/content search only as a fallback/safety net.
-  const retrievalQueries = await buildRetrievalQueries(userQuery, env);
+  // v7 retrieval fix:
+  // Previously, Vectorize could return some weak/irrelevant semantic matches and the function returned early,
+  // so deterministic D1 hits such as "RNA velocity" in research_knowledge were never added.
+  // This version ALWAYS runs deterministic phrase/entity search as a safety net and merges it with Vectorize.
+  const keyPhrases = extractScientificKeyPhrases(userQuery);
 
-  // A) Semantic Vectorize search first.
-  for (const retrievalQuery of retrievalQueries) {
+  // A) Exact phrase/entity D1 search first. This catches terms like:
+  // RNA velocity, spatial transcriptomics, single-cell RNA-seq, TFvelo, SIRV, Visium, Xenium, CosMx.
+  for (const phrase of keyPhrases) {
     try {
-      allResults.push(...await vectorSemanticSearch(retrievalQuery, env));
+      allResults.push(...await exactPhraseKnowledgeSearch(phrase, env));
     } catch {
-      // Continue with other retrieval methods.
+      // Continue.
     }
   }
 
-  let semanticMerged = mergeKnowledgeResults(allResults).slice(0, 12);
-  if (semanticMerged.length > 0) {
-    return semanticMerged;
-  }
+  // B) Expand/translate the user's natural question into English scientific retrieval text.
+  const retrievalQueries = await buildRetrievalQueries(userQuery, env);
 
-  // B) Deterministic DB fallback with expanded English retrieval queries.
-  for (const retrievalQuery of retrievalQueries) {
+  // C) Deterministic DB fallback with both extracted key phrases and expanded queries.
+  for (const retrievalQuery of [...keyPhrases, ...retrievalQueries]) {
     try {
       allResults.push(...await directResearchKnowledgeSearch(retrievalQuery, env));
     } catch {
@@ -2604,180 +2601,180 @@ async function searchResearchKnowledge(query, env) {
     }
   }
 
+  // D) Semantic Vectorize search is still useful, but it should not block D1 exact matches.
+  for (const retrievalQuery of retrievalQueries) {
+    try {
+      allResults.push(...await vectorSemanticSearch(retrievalQuery, env));
+    } catch {
+      // Continue with other retrieval methods.
+    }
+  }
+
   const merged = mergeKnowledgeResults(allResults).slice(0, 12);
   if (merged.length > 0) return merged;
 
   return [];
 }
 
-
-function extractPriorityRetrievalPhrases(value) {
-  const normalized = normalizeSearchText(value);
-  if (!normalized) return [];
-
+function extractScientificKeyPhrases(query) {
+  const original = String(query || "");
+  const lower = original.toLowerCase();
   const phrases = [];
 
-  // Domain phrase dictionary. These are not hard-coded answers; they are retrieval anchors
-  // so Korean or long instruction-style questions still find English paper titles/content.
-  const knownPhrases = [
+  const knownPatterns = [
     "rna velocity",
-    "spatial inference of rna velocity",
-    "trajectory inference",
-    "cellrank",
-    "dynamo",
-    "scvelo",
-    "tfvelo",
-    "sirv",
+    "single-cell rna-seq",
+    "single cell rna-seq",
+    "scrna-seq",
+    "scrnaseq",
     "spatial transcriptomics",
     "spatial transcriptome",
-    "spatial omics",
-    "single cell",
-    "single-cell",
-    "single cell rna seq",
-    "single-cell rna-seq",
-    "scrna seq",
-    "scrna-seq",
     "visium",
     "xenium",
     "cosmx",
-    "stereo seq",
+    "merscope",
+    "stereoseq",
     "stereo-seq",
-    "merfish",
     "seqfish",
     "seqfish+",
-    "spacec",
+    "merfish",
+    "tfvelo",
+    "sirv",
+    "cellrank",
+    "scvelo",
+    "dynamo",
+    "trajectory inference",
+    "pseudotime",
     "tumor microenvironment",
-    "immune microenvironment",
     "cancer genomics",
-    "multi omics",
-    "multi-omics",
-    "gene regulation",
-    "cell cell interaction",
-    "cell-cell interaction",
-    "ligand receptor",
-    "copy number",
-    "cnv",
-    "gwas",
-    "colocalization",
-    "locuscompare",
+    "liquid biopsy",
+    "immune checkpoint",
     "tnbc",
-    "ovarian cancer",
     "breast cancer",
     "lung cancer",
+    "colon cancer",
+    "colorectal cancer",
     "glioblastoma",
-    "alzheimer",
-    "neurodegeneration"
+    "melanoma",
+    "metastasis",
+    "clonal evolution",
+    "copy number variation",
+    "cnv",
+    "gwas",
+    "eqtl",
+    "locuscompare"
   ];
 
-  for (const phrase of knownPhrases) {
-    const p = normalizeSearchText(phrase);
-    if (p && normalized.includes(p)) {
-      phrases.push(p);
+  for (const pattern of knownPatterns) {
+    if (lower.includes(pattern)) phrases.push(pattern);
+  }
+
+  // Capture biomedical-looking English phrases around important words.
+  const english = original
+    .replace(/[\n\r]+/g, " ")
+    .match(/[A-Za-z][A-Za-z0-9+\-]*([\s\-/]+[A-Za-z][A-Za-z0-9+\-]*){0,4}/g) || [];
+
+  for (const item of english) {
+    const cleaned = cleanRetrievalPhrase(item);
+    if (!cleaned) continue;
+    if (/velocity|transcript|single|spatial|cancer|tumor|immune|genom|sequenc|rna|dna|cell|gwas|eqtl|visium|xenium|cosmx|tfvelo|sirv/i.test(cleaned)) {
+      phrases.push(cleaned.toLowerCase());
     }
   }
 
-  // Preserve explicit scientific noun phrases with common separators/capitalization.
-  const original = String(value || "");
-
-  const explicitPatterns = [
-    /\bRNA\s+velocity\b/gi,
-    /\bspatial\s+transcriptomics?\b/gi,
-    /\bsingle[-\s]?cell\s+RNA[-\s]?seq\b/gi,
-    /\bscRNA[-\s]?seq\b/gi,
-    /\bcell[-\s]?cell\s+interaction\b/gi,
-    /\bligand[-\s]?receptor\b/gi,
-    /\btumou?r\s+microenvironment\b/gi,
-    /\btrajectory\s+inference\b/gi,
-    /\bgene\s+regulation\b/gi,
-    /\bTFvelo\b/gi,
-    /\bSIRV\b/gi,
-    /\bscVelo\b/gi,
-    /\bCellRank\b/gi,
-    /\bDynamo\b/gi
-  ];
-
-  for (const pattern of explicitPatterns) {
-    const matches = original.match(pattern) || [];
-    for (const match of matches) {
-      const cleaned = normalizeSearchText(match);
-      if (cleaned) phrases.push(cleaned);
-    }
-  }
-
-  // Pull out short English biomedical phrases after removing instruction words.
-  const cleaned = stripQuestionIntentWords(normalized);
-  const words = cleaned
-    .split(/\s+/)
-    .filter(word => word.length >= 3)
-    .filter(word => !/^(paper|talk|database|db|saved|stored|based|only|compare|analysis|analyze|common|difference|gap|future|direction|explain|관련|저장된|기준으로|공통점|차이점|현재|향후|발전|방향|설명해줘)$/.test(word));
-
-  // Add adjacent 2-3 word phrases because title/content often match phrases better than whole questions.
-  for (let i = 0; i < words.length - 1; i++) {
-    const bigram = `${words[i]} ${words[i + 1]}`;
-    if (bigram.length >= 7) phrases.push(bigram);
-  }
-
-  for (let i = 0; i < words.length - 2; i++) {
-    const trigram = `${words[i]} ${words[i + 1]} ${words[i + 2]}`;
-    if (trigram.length >= 10) phrases.push(trigram);
-  }
-
-  // If a phrase contains RNA and velocity separated by other words, still add the canonical phrase.
-  if (normalized.includes("rna") && normalized.includes("velocity")) {
-    phrases.unshift("rna velocity");
-  }
+  // If the query includes Korean plus an English term, the English term is often the most important retrieval key.
+  const compact = normalizeSearchText(original);
+  if (compact.includes("rna velocity")) phrases.push("rna velocity");
+  if (compact.includes("spatial")) phrases.push("spatial");
+  if (compact.includes("velocity")) phrases.push("velocity");
 
   return [...new Set(
     phrases
-      .map(v => normalizeSearchText(v))
+      .map(cleanRetrievalPhrase)
       .filter(v => v.length >= 3)
-  )].slice(0, 16);
-}
-
-
-async function buildRetrievalQueries(userQuery, env) {
-  const raw = String(userQuery || "").trim();
-  const queries = [];
-
-  // Priority scientific phrases first. This prevents long Korean instruction-style
-  // questions from being searched as one impossible phrase.
-  const priorityPhrases = extractPriorityRetrievalPhrases(raw);
-  queries.push(...priorityPhrases);
-
-  if (raw) queries.push(raw);
-
-  const normalized = normalizeSearchText(raw);
-  if (normalized && normalized !== raw.toLowerCase()) {
-    queries.push(normalized);
-  }
-
-  const stripped = stripQuestionIntentWords(normalized);
-  if (stripped && stripped !== normalized) {
-    queries.push(stripped);
-  }
-
-  // Use OpenAI only as an optional query translator/expander. Deterministic phrase
-  // extraction above must already work even if this times out.
-  const expanded = await expandQuestionForResearchRetrieval(raw, env);
-  if (expanded) {
-    queries.push(expanded);
-
-    const expandedPhrases = extractPriorityRetrievalPhrases(expanded);
-    queries.push(...expandedPhrases);
-
-    if (expanded.includes(",")) {
-      queries.push(...expanded.split(",").map(v => v.trim()).filter(Boolean));
-      queries.push(expanded.split(",").map(v => v.trim()).filter(Boolean).join(" "));
-    }
-  }
-
-  return [...new Set(
-    queries
-      .map(v => String(v || "").trim())
-      .filter(Boolean)
   )].slice(0, 10);
 }
 
+function cleanRetrievalPhrase(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/paper_talk/g, " ")
+    .replace(/\b(db|paper|papers|article|articles|study|studies|research|related|compare|analysis|analyze|explain|only|based|basis|common|difference|gap|future|direction)\b/g, " ")
+    .replace(/논문|연구|관련|비교|분석|공통점|차이점|현재|향후|발전|방향|설명|기준|저장된|만|으로|해줘/g, " ")
+    .replace(/[^a-z0-9+\-\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function exactPhraseKnowledgeSearch(phrase, env) {
+  const cleaned = cleanRetrievalPhrase(phrase);
+  if (!cleaned || cleaned.length < 3) return [];
+
+  const like = `%${cleaned}%`;
+
+  const result = await env.DB.prepare(`
+    SELECT title, source_url, pdf_link, content
+    FROM research_knowledge
+    WHERE status = 'indexed'
+      AND (
+        LOWER(title) LIKE ?
+        OR LOWER(content) LIKE ?
+      )
+    ORDER BY
+      CASE
+        WHEN LOWER(title) LIKE ? THEN 0
+        WHEN LOWER(content) LIKE ? THEN 1
+        ELSE 2
+      END,
+      datetime(updated_at) DESC
+    LIMIT 12
+  `).bind(like, like, like, like).all();
+
+  return (result.results || []).map(item => ({
+    ...item,
+    title: cleanBibtexText(item.title),
+    content: cleanBibtexText(item.content),
+    matched_chunk: makeMatchedChunk(item.content || "", cleaned),
+    similarity_score: null,
+    from_exact_phrase_search: true
+  }));
+}
+
+function makeMatchedChunk(content, phrase) {
+  const text = cleanBibtexText(content || "");
+  const lower = text.toLowerCase();
+  const key = String(phrase || "").toLowerCase();
+  const index = key ? lower.indexOf(key) : -1;
+
+  if (index < 0) return text.slice(0, 1600);
+
+  const start = Math.max(0, index - 500);
+  const end = Math.min(text.length, index + 1500);
+  return text.slice(start, end);
+}
+
+async function buildRetrievalQueries(userQuery, env) {
+  const queries = [String(userQuery || "").trim()].filter(Boolean);
+
+  // Add a cheap normalization pass.
+  const normalized = normalizeSearchText(userQuery);
+  if (normalized && normalized !== userQuery.toLowerCase()) {
+    queries.push(normalized);
+  }
+
+  // Use the OpenAI model as a query translator/expander.
+  // This is not keyword mapping. It lets any natural-language question become
+  // a scientific retrieval query for English abstracts/full text.
+  const expanded = await expandQuestionForResearchRetrieval(userQuery, env);
+  if (expanded) queries.push(expanded);
+
+  // If the model returns comma-separated terms, also add a compact space-joined query.
+  if (expanded && expanded.includes(",")) {
+    queries.push(expanded.split(",").map(v => v.trim()).filter(Boolean).join(" "));
+  }
+
+  return [...new Set(queries.map(v => String(v || "").trim()).filter(Boolean))].slice(0, 4);
+}
 
 async function expandQuestionForResearchRetrieval(userQuery, env) {
   if (!env.OPENAI_API_KEY) return "";
@@ -2870,26 +2867,14 @@ async function vectorSemanticSearch(query, env) {
 }
 
 async function directResearchKnowledgeSearch(query, env) {
-  const rawQuery = String(query || "").trim();
-  const normalizedQuery = normalizeSearchText(rawQuery);
-  const priorityPhrases = extractPriorityRetrievalPhrases(rawQuery);
-  const tokens = getImportantSearchTokens(rawQuery);
-  const cleaned = stripQuestionIntentWords(normalizedQuery);
+  const tokens = getImportantSearchTokens(query);
+  const cleaned = stripQuestionIntentWords(normalizeSearchText(query));
   const results = [];
 
-  // A) Highest-signal phrase search. This fixes cases like:
-  // "Paper_Talk DB에 저장된 논문들만 기준으로 RNA velocity 관련 논문들을 비교..."
-  // by searching "rna velocity" instead of the whole instruction.
-  const phraseCandidates = [
-    ...priorityPhrases,
-    cleaned,
-    normalizedQuery
-  ]
-    .map(v => normalizeSearchText(v))
-    .filter(v => v && v.length >= 3);
-
-  for (const phrase of [...new Set(phraseCandidates)].slice(0, 12)) {
+  // A) Try a broad cleaned phrase against title/content.
+  if (cleaned && cleaned.length >= 8) {
     try {
+      const phrase = cleaned.slice(0, 160);
       const phraseResult = await env.DB.prepare(`
         SELECT title, source_url, pdf_link, content
         FROM research_knowledge
@@ -2898,71 +2883,27 @@ async function directResearchKnowledgeSearch(query, env) {
             LOWER(title) LIKE ?
             OR LOWER(content) LIKE ?
           )
-        ORDER BY
-          CASE
-            WHEN LOWER(title) LIKE ? THEN 0
-            WHEN LOWER(content) LIKE ? THEN 1
-            ELSE 2
-          END,
-          datetime(updated_at) DESC
-        LIMIT 12
-      `).bind(
-        `%${phrase}%`,
-        `%${phrase}%`,
-        `%${phrase}%`,
-        `%${phrase}%`
-      ).all();
-
-      results.push(...(phraseResult.results || []).map(item => ({
-        ...item,
-        matched_phrase: phrase,
-        from_direct_phrase_search: true
-      })));
-    } catch {
-      // Continue.
-    }
-  }
-
-  // B) OR-token search. This is intentionally broader than the old strict AND search
-  // because biomedical questions often include Korean instruction words plus English terms.
-  const importantTokens = tokens
-    .map(v => normalizeSearchText(v))
-    .filter(v => v.length >= 3)
-    .filter(v => !["paper", "talk", "database", "saved", "stored", "based", "only", "compare", "analysis", "analyze"].includes(v))
-    .slice(0, 10);
-
-  if (importantTokens.length > 0) {
-    try {
-      const clauses = [];
-      const params = [];
-
-      for (const token of importantTokens) {
-        clauses.push(`LOWER(title) LIKE ?`);
-        params.push(`%${token}%`);
-        clauses.push(`LOWER(content) LIKE ?`);
-        params.push(`%${token}%`);
-      }
-
-      const tokenResult = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-          AND (${clauses.join(" OR ")})
         ORDER BY datetime(updated_at) DESC
-        LIMIT 12
-      `).bind(...params).all();
+        LIMIT 8
+      `).bind(`%${phrase}%`, `%${phrase}%`).all();
 
-      results.push(...(tokenResult.results || []).map(item => ({
-        ...item,
-        from_direct_token_search: true
-      })));
+      results.push(...(phraseResult.results || []));
     } catch {
       // Continue.
     }
   }
 
-  // C) If there are multiple precise tokens, try strict title/content intersection as an extra signal.
-  const titleTokens = importantTokens.slice(0, Math.min(importantTokens.length, 5));
+  if (!tokens.length) {
+    return results.map(item => ({
+      ...item,
+      title: cleanBibtexText(item.title),
+      content: cleanBibtexText(item.content),
+      matched_chunk: cleanBibtexText(item.content || "")
+    }));
+  }
+
+  // B) Strong title match: require multiple important tokens in the title.
+  const titleTokens = tokens.slice(0, Math.min(tokens.length, 6));
   if (titleTokens.length >= 2) {
     try {
       const titleClauses = titleTokens.map(() => `LOWER(title) LIKE ?`).join(" AND ");
@@ -2977,25 +2918,73 @@ async function directResearchKnowledgeSearch(query, env) {
         LIMIT 8
       `).bind(...titleParams).all();
 
-      results.push(...(titleResult.results || []).map(item => ({
-        ...item,
-        from_direct_title_intersection: true
-      })));
+      results.push(...(titleResult.results || []));
     } catch {
       // Continue.
     }
+  }
+
+  // C) Strong content match: require at least two important tokens in content.
+  const contentTokens = tokens.slice(0, Math.min(tokens.length, 5));
+  if (contentTokens.length >= 2) {
+    try {
+      const contentClauses = contentTokens.map(() => `LOWER(content) LIKE ?`).join(" AND ");
+      const contentParams = contentTokens.map(token => `%${token}%`);
+
+      const contentResult = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND (${contentClauses})
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 8
+      `).bind(...contentParams).all();
+
+      results.push(...(contentResult.results || []));
+    } catch {
+      // Continue.
+    }
+  }
+
+  // D) Broad OR fallback across title AND content.
+  // This is important for expanded queries such as:
+  // "Alzheimer disease, amyloid plaque, neurodegeneration, brain, spatial transcriptomics".
+  try {
+    const broadTokens = tokens.slice(0, 10);
+    if (broadTokens.length > 0) {
+      const orClauses = broadTokens
+        .map(() => `(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)`)
+        .join(" OR ");
+
+      const orParams = [];
+      for (const token of broadTokens) {
+        orParams.push(`%${token}%`, `%${token}%`);
+      }
+
+      const broadResult = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND (${orClauses})
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 12
+      `).bind(...orParams).all();
+
+      results.push(...(broadResult.results || []));
+    }
+  } catch {
+    // Continue.
   }
 
   return mergeKnowledgeResults((results || []).map(item => ({
     ...item,
     title: cleanBibtexText(item.title),
     content: cleanBibtexText(item.content),
-    matched_chunk: cleanBibtexText(item.matched_chunk || item.content || ""),
+    matched_chunk: cleanBibtexText(item.content || ""),
     similarity_score: null,
     from_direct_db_search: true
   })));
 }
-
 
 function getImportantSearchTokens(query) {
   const stopWords = new Set([
@@ -3134,14 +3123,6 @@ async function keywordFallbackSearch(query, env) {
   if (words.length >= 5) phrases.push(words.slice(0, 5).join(" "));
 
   const knownPhrases = [
-    "rna velocity",
-    "spatial inference of rna velocity",
-    "trajectory inference",
-    "tfvelo",
-    "sirv",
-    "scvelo",
-    "cellrank",
-    "dynamo",
     "single-cell spatial atlas",
     "high-grade serous ovarian cancer",
     "spatial tumor ecosystems",
@@ -3849,7 +3830,7 @@ Evidence rules:
 - Do not invent papers, datasets, sample sizes, biomarkers, mechanisms, or claims.
 - If DB evidence is weak, absent, or only one paper is retrieved, explicitly say the comparison is limited.
 - Separate DB-supported evidence from your own cautious interpretation.
-- If the user asks about research but no DB source is found, say that Paper_Talk DB did not retrieve a strong matching source and then provide general guidance only.
+- If the user asks about research and DB sources are provided, you must use those sources and must not say that no related papers were found. If no DB source is provided, say that Paper_Talk DB did not retrieve a strong matching source and then provide general guidance only.
 
 Language:
 Answer in the user's language.
@@ -3877,7 +3858,7 @@ For general questions, keep the answer natural and not over-structured.
     {
       role: "system",
       content: hasContext
-        ? "Matching Paper_Talk DB sources were found. Use their titles and excerpts only when relevant to the selected answer mode."
+        ? "Matching Paper_Talk DB sources were found. For research-related questions, you must cite/use these retrieved titles and excerpts as the basis of the answer. Do not say related papers were not found when this context is present."
         : "No matching Paper_Talk DB source was found. Do not hallucinate evidence."
     },
     ...recentMessages
