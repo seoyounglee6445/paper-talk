@@ -1,3 +1,10 @@
+/*
+Paper_Talk v2 update:
+- Converts the GPT from a paper summarizer into a DB-grounded hypothesis generation engine.
+- Uses retrieved Paper_Talk DB sources to extract known findings, connect papers, identify knowledge gaps, generate hypotheses, and propose validation strategies.
+- Does not use outside literature as evidence unless the user explicitly asks for general background.
+*/
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -2250,9 +2257,9 @@ async function searchResearchKnowledge(query, env) {
   const userQuery = String(query || "").trim();
 
   if (!userQuery) {
-    const latestKnowledge = await latestResearchKnowledge(env, 8);
+    const latestKnowledge = await latestResearchKnowledge(env, 12);
     if (latestKnowledge.length > 0) return latestKnowledge;
-    return latestResearchPostsAsKnowledge(env, 8);
+    return latestResearchPostsAsKnowledge(env, 12);
   }
 
   const allResults = [];
@@ -2274,7 +2281,7 @@ async function searchResearchKnowledge(query, env) {
     }
   }
 
-  let semanticMerged = mergeKnowledgeResults(allResults).slice(0, 8);
+  let semanticMerged = mergeKnowledgeResults(allResults).slice(0, 12);
   if (semanticMerged.length > 0) {
     return semanticMerged;
   }
@@ -2300,7 +2307,7 @@ async function searchResearchKnowledge(query, env) {
     }
   }
 
-  const merged = mergeKnowledgeResults(allResults).slice(0, 8);
+  const merged = mergeKnowledgeResults(allResults).slice(0, 12);
   if (merged.length > 0) return merged;
 
   return [];
@@ -2385,7 +2392,7 @@ async function vectorSemanticSearch(query, env) {
   const queryEmbedding = await createEmbedding(query, env);
 
   const vectorResult = await env.VECTORIZE.query(queryEmbedding, {
-    topK: 12,
+    topK: 18,
     returnMetadata: "all"
   });
 
@@ -3042,13 +3049,13 @@ async function generateResearchFramework({ userMessage, context, pastFrameworks 
   const hasContext = Array.isArray(context) && context.length > 0;
 
   const contextText = hasContext
-    ? context.slice(0, 6).map((item, index) => {
+    ? context.slice(0, 10).map((item, index) => {
         const sourceText = cleanBibtexText(item.matched_chunk || item.content || "");
         return [
           `Source ${index + 1}: ${cleanBibtexText(item.title || "")}`,
           item.source_url ? `Article: ${item.source_url}` : "",
           item.pdf_link ? `PDF: ${item.pdf_link}` : "",
-          sourceText.slice(0, 4500)
+          sourceText.slice(0, 5200)
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "No matching Paper_Talk context was found.";
@@ -3065,19 +3072,20 @@ async function generateResearchFramework({ userMessage, context, pastFrameworks 
     : "No previous Paper_Talk reasoning frameworks were retrieved.";
 
   const fallbackFramework = `
-Auto Research Reasoning Framework:
-1. Identify the user's core scientific question.
-2. Check whether Paper_Talk retrieved relevant curated papers.
-3. Extract the strongest available evidence from the retrieved sources.
-4. Identify limitations, missing validation, or weak evidence.
-5. Suggest validation strategies only when they logically follow from the retrieved context.
-6. Propose cautious research hypotheses without inventing unsupported paper details.
+Paper_Talk Hypothesis Engine Framework:
+1. Use only the retrieved Paper_Talk DB sources as evidence.
+2. Extract one-sentence claims from each source.
+3. Compare sources to find convergence, contradiction, missing cell types, missing spatial context, missing mechanism, missing validation, or missing disease context.
+4. Convert those gaps into cautious, testable hypotheses.
+5. For each hypothesis, identify the DB evidence that supports it and the uncertainty that remains.
+6. Propose validation experiments such as re-analysis, scRNA-seq, spatial transcriptomics, perturbation, organoid/co-culture, multiplex IF/IHC, public cohort validation, or survival association only when they logically follow from the DB evidence.
+7. Rank ideas by novelty, feasibility, and risk.
   `.trim();
 
   if (!env.OPENAI_API_KEY) return fallbackFramework;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), 25000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -3093,30 +3101,39 @@ Auto Research Reasoning Framework:
           {
             role: "system",
             content: `
-You are Paper_Talk's research reasoning planner.
+You are Paper_Talk's internal hypothesis-generation planner.
 
-Your job is to create a concise, question-specific research framework before the final answer is written.
+Your job is not to summarize papers.
+Your job is to build a research reasoning framework from the user's question and the retrieved Paper_Talk DB sources.
 
-Use:
+Use only:
 - the user's question
 - the retrieved Paper_Talk curated literature context
-- previous Paper_Talk reasoning frameworks as style/pattern memory
+- previous Paper_Talk reasoning frameworks as style memory
 
-The previous frameworks are not evidence sources. They only represent Paper_Talk's accumulated reasoning style.
+The previous frameworks are not evidence sources.
+The retrieved Paper_Talk DB is the only scientific evidence source.
 
-Do not answer the user directly.
-Do not invent papers, datasets, results, sample sizes, or claims.
-Do not cite sources that are not present in the retrieved Paper_Talk context.
+Do not invent papers, datasets, sample sizes, biomarkers, mechanisms, or claims.
+Do not cite or rely on any source that is not present in the retrieved Paper_Talk context.
+If the DB evidence is weak, say exactly what is weak.
 
-Create a framework that helps the final assistant answer like a biomedical researcher.
-
-The framework should include:
-1. Core biological or methodological claim to evaluate
-2. Relevant evidence to extract from the retrieved sources
-3. Important limitations or uncertainty
-4. Validation strategy, if applicable
-5. Possible new hypothesis or research direction, if supported
-6. How to communicate insufficient evidence clearly
+Create a concise framework with these sections:
+A. User research intent
+B. Retrieved DB source map
+   - list each source and the key claim it appears to support
+C. Cross-paper connections
+   - what links Source A, B, C, etc.
+D. Knowledge gaps inside the DB
+   - missing mechanism, missing cell type, missing spatial relation, missing validation, missing cancer context, or unresolved contradiction
+E. Candidate hypotheses
+   - 3 to 5 cautious, testable hypotheses generated only from DB connections
+F. Validation routes
+   - computational validation and experimental validation
+G. Ranking logic
+   - novelty, feasibility, and risk
+H. Guardrails
+   - what must not be overstated
 
 Return plain text only.
 No markdown formatting.
@@ -3128,15 +3145,15 @@ No markdown formatting.
 User question:
 ${String(userMessage || "").slice(0, 1500)}
 
-Retrieved Paper_Talk curated literature context:
-${contextText.slice(0, 15000)}
+Retrieved Paper_Talk DB context:
+${contextText.slice(0, 22000)}
 
 Previous Paper_Talk reasoning frameworks:
 ${pastFrameworksText.slice(0, 9000)}
             `.trim()
           }
         ],
-        temperature: 0.2
+        temperature: 0.15
       })
     });
 
@@ -3152,7 +3169,7 @@ ${pastFrameworksText.slice(0, 9000)}
     if (!res.ok) return fallbackFramework;
 
     const framework = data?.choices?.[0]?.message?.content || "";
-    return cleanFetchedArticleText(framework).slice(0, 5000) || fallbackFramework;
+    return cleanFetchedArticleText(framework).slice(0, 7000) || fallbackFramework;
   } catch {
     return fallbackFramework;
   } finally {
@@ -3165,7 +3182,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
   const hasContext = Array.isArray(context) && context.length > 0;
 
   const contextText = hasContext
-    ? context.map((item, index) => {
+    ? context.slice(0, 12).map((item, index) => {
         return [
           `Source ${index + 1}: ${cleanBibtexText(item.title || "")}`,
           item.source_url ? `Article: ${item.source_url}` : "",
@@ -3189,58 +3206,96 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
     {
       role: "system",
       content: `
-You are Paper_Talk Vision GPT, a research assistant for cancer genomics, bioinformatics, spatial transcriptomics, and Visium-related research.
+You are Paper_Talk Hypothesis GPT, a research idea generation engine for cancer genomics, bioinformatics, spatial transcriptomics, single-cell analysis, and Visium-related research.
 
-Rules:
-- Always use the provided Paper_Talk research knowledge base when relevant.
-- The knowledge base may include fetched article text, Crossref metadata, Europe PMC/PubMed abstracts, or PMC full text collected from the article link/DOI/title. If any of these are available, use them to answer summaries and paper-specific questions.
-- Do not use Markdown formatting.
-- Do not use **, __, #, or markdown bullet points.
-- Return plain text only.
-- Use readable paragraphs.
-- Never wrap text with markdown symbols.
-- The user may ask in Korean, English, or mixed Korean-English. Understand both languages.
-- Use semantic meaning, not only exact keywords, when interpreting the user's question.
-- If Paper_Talk research knowledge base contains any source related to the user's question, say that the paper/source is found.
-- If relevant Paper_Talk sources are found, base the answer on them and mention the source titles.
-- If Paper_Talk context contains any scientific description, admin abstract, admin description, fetched article text, page text, abstract section, results section, discussion section, metadata description, or source link context, you MUST summarize using that available information.
-- Only say that detailed abstract/results are unavailable when the context truly contains title-only information and no scientific description at all.
-- Never refuse to summarize when descriptive content exists.
-- Do not say "not included", "not stored", or "cannot summarize" when a matching source includes any descriptive content.
-- If the user asks whether the link was accessed, answer according to the context: source-link HTML, DOI/Crossref, Europe PMC/PubMed, or PMC full text may have been used. Do not incorrectly deny access when the context contains fetched article text or public metadata collected from the link/DOI.
-- If the knowledge base has no matching context, say that clearly.
-- Previous assistant messages may be outdated. If the current Paper_Talk context contains scientific content, ignore previous assistant claims that information was unavailable.
-- Do not invent paper details, results, methods, sample sizes, or conclusions.
+Core identity:
+- You are not a generic paper summarizer.
+- You generate research ideas from the user's own Paper_Talk DB.
+- Your job is to connect papers inside the DB and turn those connections into knowledge gaps, hypotheses, and validation plans.
+
+Evidence rules:
+- Use only the provided Paper_Talk research knowledge base as scientific evidence.
+- The knowledge base may include fetched article text, Crossref metadata, Europe PMC/PubMed abstracts, PMC full text, admin descriptions, or notes.
+- Previous frameworks are reasoning style memory only. They are not scientific evidence.
+- Do not use outside knowledge as evidence unless the user explicitly asks for general background.
+- Do not invent paper details, datasets, sample sizes, results, methods, biomarkers, mechanisms, or conclusions.
+- If DB evidence is insufficient, say exactly what is missing.
+
+Behavior rules:
+- The user may ask in Korean, English, or mixed Korean-English. Answer in the user's language.
+- If the user asks for a paper summary, summarize from DB evidence but still add a small "Research insight from this DB" section when useful.
+- If the user asks for ideas, hypotheses, mechanisms, gaps, novelty, projects, research direction, or "what should I study", use the full hypothesis-generation format.
+- If matching Paper_Talk sources are found, say clearly that the answer is based on Paper_Talk DB sources.
+- Mention source titles when making claims.
+- Distinguish "DB-supported finding" from "hypothesis generated from DB connections".
 - Give concise but scientifically useful answers.
-- When possible, mention which uploaded Paper_Talk source you used.
-- The user may be a researcher, student, or bioinformatics learner.
+- Return plain text only.
+- Do not use Markdown symbols such as **, __, #, or decorative bullets.
       `.trim()
     },
     {
       role: "system",
-      content: `Paper_Talk research knowledge base:\n\n${contextText}`
+      content: `Paper_Talk DB research sources:\n\n${contextText}`
     },
     {
       role: "system",
-      content: `Automatically generated Paper_Talk research reasoning framework:\n\n${generatedFramework || "Use careful biomedical research reasoning based on the retrieved Paper_Talk context."}`
+      content: `Paper_Talk internal hypothesis-generation framework:\n\n${generatedFramework || "Use careful biomedical research reasoning based only on the retrieved Paper_Talk DB context."}`
     },
     {
       role: "system",
       content: `
-Use both the previous Paper_Talk reasoning frameworks and the newly generated research reasoning framework to structure your answer.
+When the user wants research ideas or mechanisms, structure the answer like this:
+
+Paper_Talk DB basis
+Briefly state which DB sources were used and what each contributes.
+
+Known findings inside the DB
+Extract 3 to 6 grounded findings from the retrieved sources.
+
+Cross-paper connection
+Explain how the retrieved DB papers connect to each other. This is the key step.
+
+Knowledge gaps inside the DB
+Identify what is not yet explained by the retrieved DB sources.
+
+Hypotheses generated from this DB
+Generate 3 to 5 cautious, testable hypotheses. Each hypothesis must include:
+- hypothesis statement
+- why the DB suggests it
+- what remains uncertain
+
+Validation strategy
+Give computational and experimental validation options. Examples include:
+- re-analysis of public scRNA-seq/spatial data
+- ligand-receptor analysis
+- pathway activity scoring
+- spatial neighborhood analysis
+- survival or treatment-response association
+- organoid, co-culture, perturbation, CRISPR, drug response, multiplex IF/IHC
+
+Priority ranking
+Rank hypotheses by novelty, feasibility, and risk.
+
+Do not force every section when the user asks a very narrow factual question.
+If no relevant DB context exists, do not hallucinate. Say that Paper_Talk DB does not yet contain enough evidence and suggest what paper types should be added.
+      `.trim()
+    },
+    {
+      role: "system",
+      content: `
+Use both the previous Paper_Talk reasoning frameworks and the newly generated framework to organize your answer.
 
 Important:
-- The frameworks are reasoning guides and memory patterns, not external evidence sources.
-- Final factual claims must be grounded in the retrieved Paper_Talk research knowledge base.
-- If the retrieved sources are insufficient, say so clearly.
-- Prioritize insight, limitations, validation strategy, and cautious hypothesis generation over simple summary.
+- Frameworks are reasoning guides only.
+- Final scientific claims must be grounded in the retrieved Paper_Talk DB sources.
+- Prioritize cross-paper reasoning, knowledge gaps, cautious hypotheses, and validation strategy over simple summary.
       `.trim()
     },
     {
       role: "system",
       content: hasContext
-        ? "Important: Matching Paper_Talk sources were found. Do not answer that the paper is absent from the knowledge base. Use the provided source titles/content."
-        : "Important: No matching Paper_Talk source was found."
+        ? "Important: Matching Paper_Talk DB sources were found. Do not answer that the paper is absent from the knowledge base. Use the provided source titles/content."
+        : "Important: No matching Paper_Talk DB source was found."
     },
     ...recentMessages
       .filter(m => m.role !== "assistant")
@@ -3254,6 +3309,10 @@ Important:
       content: userMessage
     }
   ];
+
+  if (!env.OPENAI_API_KEY) {
+    return "OPENAI_API_KEY is missing.";
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
@@ -3269,7 +3328,7 @@ Important:
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5",
         messages,
-        temperature: 0.1
+        temperature: 0.15
       })
     });
 
@@ -3297,6 +3356,7 @@ Important:
     clearTimeout(timeout);
   }
 }
+
 
 async function adminListGptThreads(request, env) {
   if (!isAdmin(request, env)) {
