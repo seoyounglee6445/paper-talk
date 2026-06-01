@@ -63,8 +63,8 @@
       </div>
 
       <div>
-        <label>Year</label>
-        <input name="year" placeholder="2026">
+        <label>Article Link</label>
+        <input name="articleLink" placeholder="https://doi.org/...">
       </div>
 
       <div>
@@ -73,23 +73,13 @@
       </div>
 
       <div>
+        <label>Year</label>
+        <input name="year" placeholder="2026">
+      </div>
+
+      <div>
         <label>Journal</label>
         <input name="journal" placeholder="Journal name">
-      </div>
-
-      <div>
-        <label>Category</label>
-        <input name="category" placeholder="Cancer genomics, single-cell, spatial...">
-      </div>
-
-      <div class="full-row">
-        <label>Abstract</label>
-        <textarea name="abstract" placeholder="Paste abstract here"></textarea>
-      </div>
-
-      <div>
-        <label>Article Link</label>
-        <input name="articleLink" placeholder="https://doi.org/...">
       </div>
 
       <div>
@@ -97,14 +87,24 @@
         <input name="pdfLink" placeholder="Google Drive, PDF, or file link">
       </div>
 
-      <div class="full-row">
-        <label>Figure Image URLs</label>
-        <textarea name="figures" placeholder="One image URL per line"></textarea>
+      <div>
+        <label>Category</label>
+        <input name="category" placeholder="Cancer genomics, single-cell, spatial...">
       </div>
 
       <div>
         <label>Tags</label>
         <input name="tags" placeholder="RNA velocity, single-cell, spatial">
+      </div>
+
+      <div class="full-row">
+        <label>Abstract</label>
+        <textarea name="abstract" placeholder="Paste abstract here"></textarea>
+      </div>
+
+      <div class="full-row">
+        <label>Figure Image URLs</label>
+        <textarea name="figures" placeholder="One image URL per line"></textarea>
       </div>
 
       <div class="full-row">
@@ -292,6 +292,68 @@
     <button onclick="loadAdminPosts()">Load Posts</button>
   </section>
 
+
+  <section id="editPostBox" class="card write-form" style="display:none;">
+    <h2>Edit Post</h2>
+    <p>Change Section and Category, then save. For example, set Section to Research Paper and Category to Research Paper to move a Study post into Research.</p>
+
+    <form onsubmit="saveEditedPost(event)">
+      <input type="hidden" id="editPostId">
+
+      <div>
+        <label>Section</label>
+        <select id="editSection" required onchange="syncEditTypeOptions()">
+          <option value="research">Research Paper</option>
+          <option value="study">Study Materials</option>
+          <option value="community">Community</option>
+          <option value="career">Career</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Category / Type</label>
+        <select id="editType" required>
+          <option value="paper">Research Paper</option>
+          <option value="study_post">Study</option>
+          <option value="methodology_page">Methodology</option>
+          <option value="blog">Blog</option>
+          <option value="linkedin">LinkedIn Promotion</option>
+          <option value="job">Job Posting</option>
+          <option value="jobsite">Job Website</option>
+          <option value="collaboration">Collaboration Hub</option>
+          <option value="question">Question / Discussion</option>
+          <option value="conference_notice">Conference Notice</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Status</label>
+        <select id="editStatus" required>
+          <option value="published">Published</option>
+          <option value="pending">Pending</option>
+        </select>
+      </div>
+
+      <div class="full-row">
+        <label>Title</label>
+        <input id="editTitle" required>
+      </div>
+
+      <div class="full-row">
+        <label>Link</label>
+        <input id="editLink" placeholder="https://...">
+      </div>
+
+      <div class="full-row">
+        <label>Body / JSON Body</label>
+        <textarea id="editBody" rows="14" placeholder="Post body or JSON body"></textarea>
+      </div>
+
+      <button type="submit">Save Changes</button>
+      <button type="button" onclick="cancelEditPost()">Cancel</button>
+    </form>
+  </section>
+
   <h2>Posts</h2>
   <div id="adminPostList"></div>
 </main>
@@ -300,6 +362,7 @@
 const ADMIN_KEY_STORAGE = "paperTalkAdminKey";
 const ADMIN_KEY_EXPIRES = "paperTalkAdminKeyExpires";
 const ONE_HOUR = 60 * 60 * 1000;
+let adminLoadedPosts = [];
 
 function escapeHtml(value) {
   return String(value || "")
@@ -614,6 +677,8 @@ async function loadAdminPosts() {
     return;
   }
 
+  adminLoadedPosts = data.posts || [];
+
   if (!data.posts.length) {
     box.innerHTML = "<p>No posts found.</p>";
     return;
@@ -707,12 +772,138 @@ async function loadAdminPosts() {
 
         <div class="post-actions">
           ${post.status === "pending" ? `<button onclick="approvePost('${post.id}')">Approve</button>` : ""}
+          <button onclick="editPost('${post.id}')">Edit</button>
           <button class="danger-btn" onclick="deletePost('${post.id}')">Delete</button>
         </div>
       </article>
     `;
   }).join("");
 }
+
+
+function syncEditTypeOptions() {
+  const section = document.getElementById("editSection").value;
+  const type = document.getElementById("editType");
+
+  const allowed = {
+    research: ["paper"],
+    study: ["study_post", "methodology_page", "blog"],
+    community: ["question", "collaboration"],
+    career: ["linkedin", "job", "jobsite", "conference_notice"]
+  };
+
+  const values = allowed[section] || [];
+
+  Array.from(type.options).forEach(option => {
+    option.hidden = values.length ? !values.includes(option.value) : false;
+  });
+
+  if (values.length && !values.includes(type.value)) {
+    type.value = values[0];
+  }
+}
+
+function editPost(id) {
+  const post = adminLoadedPosts.find(item => item.id === id);
+
+  if (!post) {
+    alert("Post not found. Please reload posts.");
+    return;
+  }
+
+  document.getElementById("editPostId").value = post.id;
+  document.getElementById("editSection").value = post.section || "study";
+  document.getElementById("editType").value = post.type || "blog";
+  document.getElementById("editStatus").value = post.status || "published";
+  document.getElementById("editTitle").value = post.title || "";
+  document.getElementById("editLink").value = post.link || "";
+  document.getElementById("editBody").value = post.body || "";
+
+  syncEditTypeOptions();
+
+  document.getElementById("editPostBox").style.display = "block";
+  document.getElementById("editPostBox").scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+}
+
+function cancelEditPost() {
+  document.getElementById("editPostBox").style.display = "none";
+}
+
+async function saveEditedPost(e) {
+  if (e) e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const id = document.getElementById("editPostId").value;
+  const section = document.getElementById("editSection").value;
+  const type = document.getElementById("editType").value;
+  const status = document.getElementById("editStatus").value;
+  const title = document.getElementById("editTitle").value.trim();
+  const link = document.getElementById("editLink").value.trim();
+  let body = document.getElementById("editBody").value;
+
+  if (section === "research" && type === "paper") {
+    let parsed = {};
+
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      parsed = { abstract: body || "" };
+    }
+
+    body = JSON.stringify({
+      year: parsed.year || "",
+      authors: parsed.authors || parsed.author || "",
+      journal: parsed.journal || parsed.websiteName || "",
+      abstract: parsed.abstract || parsed.summary || parsed.body || "",
+      category: parsed.category || "Cancer biology",
+      figures: parsed.figures || "",
+      pdfLink: parsed.pdfLink || "",
+      tags: parsed.tags || "",
+      description: parsed.description || parsed.summary || "",
+      note: parsed.note || "",
+      articleLink: parsed.articleLink || parsed.sourceUrl || parsed.link || link || ""
+    }, null, 2);
+  }
+
+  if (!id || !title) {
+    alert("Post ID and title are required.");
+    return;
+  }
+
+  const res = await fetch("/api/admin/post/update", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({
+      id,
+      section,
+      type,
+      status,
+      title,
+      link,
+      body
+    })
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Update failed. Please make sure worker.js has /api/admin/post/update.");
+    return;
+  }
+
+  alert("Post updated.");
+  document.getElementById("editPostBox").style.display = "none";
+  await loadAdminPosts();
+}
+
 
 async function approvePost(id) {
   const key = requireAdminKey();
