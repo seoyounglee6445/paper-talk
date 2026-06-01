@@ -45,6 +45,7 @@ export default {
 
       if (pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
       if (pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
+      if (pathname === "/api/public/users/count" && request.method === "GET") return publicUserCount(request, env);
       if (pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
       if (pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
       if (pathname === "/api/admin/post/update" && request.method === "POST") return adminUpdatePost(request, env);
@@ -594,6 +595,18 @@ async function adminUserCount(request, env) {
   return json({
     ok: true,
     total: result ? result.total : 0
+  });
+}
+
+async function publicUserCount(request, env) {
+  const result = await env.DB.prepare(`
+    SELECT COUNT(*) AS total
+    FROM users
+  `).first();
+
+  return json({
+    ok: true,
+    total: result ? Number(result.total || 0) : 0
   });
 }
 
@@ -3452,7 +3465,12 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
     {
       role: "system",
       content: `
-You are Paper_Talk Vision GPT, a biomedical research assistant.
+You are Paper_Talk Vision GPT, a warm and highly knowledgeable biomedical research assistant.
+
+Your answers should feel natural, helpful, and conversational rather than stiff or administrative.
+Explain enough detail for a researcher or student to actually understand the topic.
+Use clear section titles, short paragraphs, and concrete examples.
+Do not expose internal routing labels such as "Interpreted intent" unless the user explicitly asks how the system interpreted the question.
 
 You must first respect the user's actual question type.
 
@@ -3476,7 +3494,9 @@ Answer in the user's language.
 Formatting:
 Return plain text only.
 Do not use markdown symbols such as #, *, or **.
-Keep answers concise enough to avoid timeout.
+Prefer friendly headings and readable spacing.
+For concept questions, give a richer educational explanation, usually 700-1200 words if the topic needs it.
+For research questions, be detailed but avoid unnecessary repetition.
       `.trim()
     },
     {
@@ -3561,91 +3581,88 @@ Keep answers concise enough to avoid timeout.
 function buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext }) {
   if (questionType === "CONCEPT") {
     return `
-Selected mode: CONCEPT / educational overview.
+Selected mode: CONCEPT / warm educational overview.
 
-The user is asking for meaning, definition, or overview.
-Do not output:
-- Interpreted intent
-- Research gaps
-- Generated hypotheses
-- Novelty score
-- Feasibility score
-- Risk score
-- Validation strategy
+The user is asking for the meaning, definition, or overview of a concept.
+Do not generate research gaps, hypotheses, novelty scores, feasibility scores, risk scores, or validation strategies.
+Do not show internal labels such as "Interpreted intent".
 
-Required output format:
-Definition
-- Give a clear 1-3 sentence definition.
+Tone:
+- Friendly, clear, and explanatory.
+- Not too short. Give enough detail so the user feels they learned the concept.
+- Use simple analogies when useful.
+- If the user writes in Korean, answer naturally in Korean.
 
-Simple explanation
-- Explain the concept in plain language.
+Recommended output structure:
+Short definition
+- Give a clear definition in 2-4 sentences.
 
-Main types or components
-- List the major subtypes, technologies, or components if relevant.
+In simple words
+- Explain the idea as if explaining to a new graduate student.
 
-Why it matters
-- Explain why the concept is useful in biomedical or cancer research.
+What it measures or includes
+- Describe the main molecular layers, technologies, or data types.
+- For omics concepts, mention transcriptome, genome, epigenome, proteome, metabolome, microbiome, or spatial location only when relevant.
 
-Example
-- Give one concrete example.
+Why researchers use it
+- Explain what biological question it helps answer.
+- For cancer or biomedical contexts, include tumor microenvironment, cell-cell interaction, tissue architecture, heterogeneity, or treatment response when relevant.
+
+Concrete example
+- Give one realistic biomedical example.
+
+How it differs from related methods
+- Briefly compare with bulk sequencing, single-cell sequencing, imaging, or standard pathology when relevant.
 
 Limitations
-- Briefly mention common limitations or caveats.
+- Mention practical caveats such as cost, resolution, sensitivity, batch effects, tissue quality, computational integration, or interpretation.
 
-If retrieved DB sources are relevant, add:
 Related Paper_Talk DB context
-- Mention 1-3 relevant DB source titles briefly.
+- Add this only if retrieved sources are clearly relevant.
+- Mention 1-3 source titles briefly and explain why they are examples of the concept.
 
-Do not force hypothesis generation.
+End with:
+If you want to use this for a research idea, the next question would be something like: "How can I use this in cancer research?"
     `.trim();
   }
 
   if (questionType === "RESEARCH" || shouldGenerateHypotheses) {
     return `
-Selected mode: RESEARCH / DB-grounded hypothesis generation.
+Selected mode: RESEARCH / DB-grounded research idea generation.
 
-Required output format:
-Auto-interpreted research intent
-- What the user probably wants to understand or discover
-- Main domain and key entities
+The user is asking what research could be done, what gap exists, or what direction is promising.
+Use a warmer and more detailed style than a rigid report.
+Do not sound like a database dump.
 
-Related Paper_Talk DB papers used
-- Source 1: title — short reason it is relevant
-- Source 2: title — short reason it is relevant
-If no source was found, write: No matching Paper_Talk DB source was found.
+Recommended output structure:
+Big picture
+- Briefly explain what research direction the user is asking about and why it matters.
 
-Known findings from DB
-- DB-supported finding with source title
-- DB-supported finding with source title
+What the Paper_Talk DB suggests
+- Mention relevant DB papers by title.
+- Explain the connection in plain language, not just as a list.
 
-Research gaps identified
-- Gap 1
-- Gap 2
+Known findings
+- Summarize DB-supported findings.
+- Make clear what is supported by the retrieved DB sources.
 
-Generated hypotheses
-Hypothesis 1
-Statement:
-Why this follows from DB evidence:
-Knowledge gap addressed:
-Validation strategy:
-Novelty score: 1-5
-Feasibility score: 1-5
-Risk score: 1-5
+Possible research gaps
+- Give 2-4 gaps.
+- Each gap should be specific enough to become a project.
 
-Hypothesis 2
-Statement:
-Why this follows from DB evidence:
-Knowledge gap addressed:
-Validation strategy:
-Novelty score: 1-5
-Feasibility score: 1-5
-Risk score: 1-5
+Research ideas or hypotheses
+- Generate 2-4 cautious, testable ideas.
+- For each idea, include:
+  Question:
+  Why it is interesting:
+  What data would be needed:
+  First validation step:
 
-Recommended next step
-- Pick the strongest hypothesis and explain the first analysis or experiment to run.
+Most practical next project
+- Pick the most feasible idea and explain why.
 
-Evidence guardrail
-- State what should not be overclaimed.
+Things not to overclaim
+- State limitations of the DB evidence and what still needs validation.
     `.trim();
   }
 
@@ -3653,25 +3670,28 @@ Evidence guardrail
     return `
 Selected mode: VALIDATION / experiment and analysis planning.
 
-Required output format:
-Question interpreted as
-- Briefly state the validation goal.
+The user wants to know how to test, validate, or analyze something.
+Be practical and detailed.
+Do not overfocus on hypothesis generation unless it helps the validation plan.
 
-Assumption or claim to validate
-- State what is being tested.
+Recommended output structure:
+What you are trying to validate
+- Restate the claim or biological relationship in simple terms.
 
-Recommended validation strategy
-- Computational analysis
-- Experimental validation
-- Controls
-- Expected readouts
-- Statistical or interpretation caveats
+Best validation strategy
+- Separate computational validation and experimental validation.
 
-Relevant Paper_Talk DB context
-- Mention retrieved sources only if relevant.
+Computational analysis
+- Suggest datasets, features, models, statistics, controls, and expected readouts.
 
-Limitations
-- State what this validation cannot prove.
+Experimental validation
+- Suggest assays, sample types, perturbations, imaging, sequencing, staining, or orthogonal methods when relevant.
+
+Controls and caveats
+- Include positive controls, negative controls, confounders, batch effects, and interpretation limits.
+
+Paper_Talk DB context
+- Mention retrieved DB papers only if they genuinely support the plan.
     `.trim();
   }
 
@@ -3679,34 +3699,36 @@ Limitations
     return `
 Selected mode: LITERATURE / DB-grounded paper overview.
 
-Required output format:
-Scope
-- State what literature or DB topic is being summarized.
+The user wants related papers, literature, or summary.
+Be readable and explanatory.
+Do not invent hypotheses unless the user asks for research ideas.
+
+Recommended output structure:
+Overview
+- Briefly define the literature area.
 
 Related Paper_Talk DB papers
-- Source 1: title — key point
-- Source 2: title — key point
+- Mention relevant source titles and explain each in 1-3 sentences.
 
-Main findings
-- Summarize DB-supported findings.
+Main themes
+- Group papers by biological mechanism, disease context, method, or dataset type.
 
-How the papers connect
-- Explain relationships between methods, diseases, mechanisms, or technologies.
+What these papers collectively suggest
+- Explain the connection across papers.
 
 Open questions
-- Mention unresolved questions only as open questions, not as full hypotheses unless asked.
+- Mention unresolved questions without turning them into full hypothesis scoring.
     `.trim();
   }
 
   return `
-Selected mode: GENERAL / concise answer.
+Selected mode: GENERAL / helpful direct answer.
 
-Answer the user's question directly.
+Answer the user's question naturally and clearly.
 Use retrieved Paper_Talk DB context only if it is clearly relevant.
 Do not generate hypotheses unless the user asks for research ideas, gaps, or future directions.
   `.trim();
 }
-
 
 async function adminListGptThreads(request, env) {
   if (!isAdmin(request, env)) {
