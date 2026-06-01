@@ -20,26 +20,30 @@ gtag('config', 'G-WWSD3F58L6');
 <link rel="stylesheet" href="/style.css">
 
 <style>
-.home-stats-card {
-  margin: 24px 0 28px;
-  padding: 22px;
-  max-width: 345px;
-  background: white;
+.home-title-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.member-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
   border: 1px solid #b7c4ff;
-  border-radius: 18px;
-  box-shadow: 0 18px 40px rgba(20, 45, 140, 0.08);
-}
-
-.home-stats-card span {
-  display: block;
+  border-radius: 999px;
+  background: white;
   color: #526174;
+  font-size: 13px;
   font-weight: 700;
-  margin-bottom: 8px;
+  box-shadow: 0 10px 24px rgba(20, 45, 140, 0.08);
 }
 
-.home-stats-card strong {
+.member-pill strong {
   color: #071f9f;
-  font-size: 32px;
+  font-size: 16px;
   font-weight: 800;
 }
 </style>
@@ -59,15 +63,15 @@ gtag('config', 'G-WWSD3F58L6');
 </header>
 
 <main class="container">
-  <h1>Paper_Talk</h1>
-  <p>Research paper, conference notice, and LinkedIn networking platform.</p>
-
-  <div class="home-stats-card">
-    <div>
-      <span>Registered members</span>
+  <h1 class="home-title-row">
+    <span>Paper_Talk</span>
+    <span class="member-pill">
+      Registered members
       <strong id="memberCount">Loading...</strong>
-    </div>
-  </div>
+    </span>
+  </h1>
+
+  <p>Research paper, conference notice, and LinkedIn networking platform.</p>
 
   <section class="home-three-grid">
     <div class="home-column">
