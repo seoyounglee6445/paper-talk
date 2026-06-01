@@ -62,7 +62,7 @@ h2 {
   margin-bottom: 18px;
 }
 
-.member-pill {
+.visit-pill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -77,7 +77,7 @@ h2 {
   box-shadow: 0 8px 20px rgba(20, 40, 160, 0.08);
 }
 
-.member-pill strong {
+.visit-pill strong {
   color: var(--main-blue);
   font-size: 15px;
   font-weight: 900;
