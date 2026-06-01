@@ -45,7 +45,7 @@ export default {
 
       if (pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
       if (pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
-      if (pathname === "/api/public/users/count" && request.method === "GET") return publicUserCount(request, env);
+      if (pathname === "/api/public/visits/today" && request.method === "GET") return publicTodayVisitCount(request, env);
       if (pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
       if (pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
       if (pathname === "/api/admin/post/update" && request.method === "POST") return adminUpdatePost(request, env);
@@ -598,15 +598,43 @@ async function adminUserCount(request, env) {
   });
 }
 
-async function publicUserCount(request, env) {
+function getTodayKey(date = new Date()) {
+  return date.toISOString().slice(0, 10);
+}
+
+async function ensureDailyVisitsTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS daily_visits (
+      visit_date TEXT PRIMARY KEY,
+      count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+}
+
+async function publicTodayVisitCount(request, env) {
+  const todayKey = getTodayKey();
+
+  await ensureDailyVisitsTable(env);
+
+  await env.DB.prepare(`
+    INSERT INTO daily_visits (visit_date, count, updated_at)
+    VALUES (?, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(visit_date) DO UPDATE SET
+      count = count + 1,
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(todayKey).run();
+
   const result = await env.DB.prepare(`
-    SELECT COUNT(*) AS total
-    FROM users
-  `).first();
+    SELECT count
+    FROM daily_visits
+    WHERE visit_date = ?
+  `).bind(todayKey).first();
 
   return json({
     ok: true,
-    total: result ? Number(result.total || 0) : 0
+    date: todayKey,
+    total: result ? Number(result.count || 0) : 0
   });
 }
 
