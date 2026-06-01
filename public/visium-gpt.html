@@ -240,7 +240,7 @@ Ask about papers, validation, gaps, or research ideas..."
         <span id="quotaText">Questions left: 20/20</span>
 
         <button id="sendBtn">Send</button>
-        <button id="stopBtn" style="display:none;">Stop</button>
+        <button id="stopBtn" style="display:none;">Cancel</button>
       </div>
     </section>
   </section>
@@ -473,7 +473,7 @@ async function sendMessage() {
     removeLastThinking();
 
     if (error.name === "AbortError") {
-      addMessage("assistant", "Stopped or timed out. Please try again.");
+      addMessage("assistant", "Cancelled or timed out. Please try again.");
     } else {
       addMessage("assistant", error.message || "Request failed.");
     }
