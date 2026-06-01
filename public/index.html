@@ -66,8 +66,8 @@ gtag('config', 'G-WWSD3F58L6');
   <h1 class="home-title-row">
     <span>Paper_Talk</span>
     <span class="member-pill">
-      Registered members
-      <strong id="memberCount">Loading...</strong>
+      Today’s visits
+      <strong id="todayVisitCount">Loading...</strong>
     </span>
   </h1>
 
@@ -97,7 +97,7 @@ gtag('config', 'G-WWSD3F58L6');
 const HOME_LIMIT = 5;
 
 document.addEventListener("DOMContentLoaded", () => {
-  loadMemberCount();
+  loadTodayVisitCount();
   loadHomePapers();
   loadHomeConference();
   loadHomeLinkedIn();
@@ -108,12 +108,12 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString();
 }
 
-async function loadMemberCount() {
-  const box = document.getElementById("memberCount");
+async function loadTodayVisitCount() {
+  const box = document.getElementById("todayVisitCount");
   if (!box) return;
 
   try {
-    const res = await fetch("/api/public/users/count");
+    const res = await fetch("/api/public/visits/today");
     const data = await res.json();
 
     box.textContent = data.ok
