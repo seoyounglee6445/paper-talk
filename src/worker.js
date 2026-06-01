@@ -37,6 +37,7 @@ export default {
       if (pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
       if (pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
       if (pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
+      if (pathname === "/api/admin/post/update" && request.method === "POST") return adminUpdatePost(request, env);
 
       if (pathname === "/api/admin/research/import-linkedin-csv" && request.method === "POST") {
         return adminImportLinkedInCsv(request, env);
@@ -684,6 +685,80 @@ async function adminDeletePost(request, env) {
   `).bind(data.id).run();
 
   return json({ ok: true });
+}
+
+
+async function adminUpdatePost(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json().catch(() => ({}));
+
+  const id = String(data.id || "").trim();
+  const section = String(data.section || "").trim();
+  const type = String(data.type || "").trim();
+  const status = String(data.status || "published").trim();
+  const title = String(data.title || "").trim();
+  const body = String(data.body || "");
+  const link = String(data.link || "").trim();
+
+  if (!id || !section || !type || !title) {
+    return json({
+      ok: false,
+      error: "id, section, type, and title are required."
+    }, 400);
+  }
+
+  await env.DB.prepare(`
+    UPDATE posts
+    SET section = ?,
+        type = ?,
+        title = ?,
+        body = ?,
+        link = ?,
+        status = ?
+    WHERE id = ?
+  `).bind(
+    section,
+    type,
+    title,
+    body,
+    link,
+    status,
+    id
+  ).run();
+
+  if (section === "research" && type === "paper" && status === "published") {
+    const post = await env.DB.prepare(`
+      SELECT *
+      FROM posts
+      WHERE id = ?
+    `).bind(id).first();
+
+    if (post) {
+      await indexResearchPaperPost(post, env);
+    }
+  } else {
+    await env.DB.prepare(`
+      DELETE FROM research_knowledge
+      WHERE post_id = ?
+    `).bind(id).run();
+
+    if (env.VECTORIZE) {
+      try {
+        const ids = Array.from({ length: 24 }, (_, index) => `${id}:${index}`);
+        await env.VECTORIZE.deleteByIds(ids);
+      } catch {
+        // Ignore Vectorize cleanup errors.
+      }
+    }
+  }
+
+  return json({
+    ok: true,
+    message: "Post updated."
+  });
 }
 
 async function adminCreateResearchPaper(request, env) {
