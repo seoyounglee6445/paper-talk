@@ -321,8 +321,8 @@ async function apiMe(request, env) {
       user: null,
       quota: {
         used: 0,
-        limit: 10,
-        remaining: 10
+        limit: 20,
+        remaining: 20
       }
     });
   }
@@ -1963,7 +1963,7 @@ async function gptChat(request, env) {
   if (quotaBefore.used >= quotaBefore.limit) {
     return json({
       ok: false,
-      error: "Monthly limit reached. You have used all 10 questions for this month. Your quota will reset automatically next month.",
+      error: "Monthly limit reached. You have used all 20 questions for this month. Your quota will reset automatically next month.",
       quota: {
         used: quotaBefore.used,
         limit: quotaBefore.limit,
@@ -2022,9 +2022,15 @@ async function gptChat(request, env) {
   const context = await searchResearchKnowledge(message, env);
   const recentMessages = await getRecentThreadMessages(threadId, user.id, env);
 
-  const generatedFramework = await generateResearchFramework({
+  const pastFrameworks = await retrievePastFrameworks({
     userMessage: message,
     context
+  }, env);
+
+  const generatedFramework = await generateResearchFramework({
+    userMessage: message,
+    context,
+    pastFrameworks
   }, env);
 
   await saveGeneratedFrameworkLog({
@@ -2038,6 +2044,7 @@ async function gptChat(request, env) {
   let assistantText = await callOpenAIForPaperTalk({
     userMessage: message,
     context,
+    pastFrameworks,
     generatedFramework,
     recentMessages
   }, env);
@@ -2101,7 +2108,7 @@ async function gptChat(request, env) {
 }
 
 async function getMonthlyGptQuota(userId, env, user = null) {
-  const monthlyLimit = 10;
+  const monthlyLimit = 20;
 
   const now = new Date();
   const monthKey = now.toISOString().slice(0, 7);
@@ -2852,6 +2859,62 @@ async function getRecentThreadMessages(threadId, userId, env) {
 }
 
 
+
+async function retrievePastFrameworks({ userMessage, context }, env) {
+  // Retrieve previous Paper_Talk reasoning patterns so the system can behave more like a research twin.
+  // This is fail-safe: if the log table does not exist yet, chat still works.
+  try {
+    if (!env.DB) return [];
+
+    const queryText = [
+      String(userMessage || ""),
+      ...(Array.isArray(context)
+        ? context.slice(0, 5).map(item => [item.title, item.matched_chunk, item.content].filter(Boolean).join(" "))
+        : [])
+    ].join(" ");
+
+    const tokens = getImportantSearchTokens(queryText)
+      .filter(token => token.length >= 4)
+      .slice(0, 8);
+
+    let rows = [];
+
+    if (tokens.length > 0) {
+      const clauses = tokens.map(() => `(LOWER(user_message) LIKE ? OR LOWER(framework) LIKE ?)`).join(" OR ");
+      const params = tokens.flatMap(token => [`%${token}%`, `%${token}%`]);
+
+      const result = await env.DB.prepare(`
+        SELECT user_message, framework, created_at
+        FROM gpt_framework_logs
+        WHERE ${clauses}
+        ORDER BY datetime(created_at) DESC
+        LIMIT 8
+      `).bind(...params).all();
+
+      rows = result.results || [];
+    }
+
+    if (!rows.length) {
+      const recent = await env.DB.prepare(`
+        SELECT user_message, framework, created_at
+        FROM gpt_framework_logs
+        ORDER BY datetime(created_at) DESC
+        LIMIT 5
+      `).all();
+
+      rows = recent.results || [];
+    }
+
+    return rows.map(row => ({
+      user_message: String(row.user_message || "").slice(0, 1000),
+      framework: String(row.framework || "").slice(0, 5000),
+      created_at: row.created_at || ""
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function saveGeneratedFrameworkLog({ threadId, userId, userMessage, framework, context }, env) {
   // Store the generated framework so Paper_Talk can accumulate its research reasoning patterns over time.
   // This is optional and fail-safe: if the table has not been created yet, chat will still work.
@@ -2900,7 +2963,7 @@ async function saveGeneratedFrameworkLog({ threadId, userId, userMessage, framew
   }
 }
 
-async function generateResearchFramework({ userMessage, context }, env) {
+async function generateResearchFramework({ userMessage, context, pastFrameworks = [] }, env) {
   const hasContext = Array.isArray(context) && context.length > 0;
 
   const contextText = hasContext
@@ -2914,6 +2977,17 @@ async function generateResearchFramework({ userMessage, context }, env) {
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "No matching Paper_Talk context was found.";
+
+  const pastFrameworksText = Array.isArray(pastFrameworks) && pastFrameworks.length > 0
+    ? pastFrameworks.slice(0, 8).map((item, index) => {
+        return [
+          `Past framework ${index + 1}`,
+          item.user_message ? `Previous question: ${String(item.user_message).slice(0, 800)}` : "",
+          item.created_at ? `Created at: ${item.created_at}` : "",
+          String(item.framework || "").slice(0, 2500)
+        ].filter(Boolean).join("\n");
+      }).join("\n\n---\n\n")
+    : "No previous Paper_Talk reasoning frameworks were retrieved.";
 
   const fallbackFramework = `
 Auto Research Reasoning Framework:
@@ -2948,9 +3022,12 @@ You are Paper_Talk's research reasoning planner.
 
 Your job is to create a concise, question-specific research framework before the final answer is written.
 
-Use only:
+Use:
 - the user's question
 - the retrieved Paper_Talk curated literature context
+- previous Paper_Talk reasoning frameworks as style/pattern memory
+
+The previous frameworks are not evidence sources. They only represent Paper_Talk's accumulated reasoning style.
 
 Do not answer the user directly.
 Do not invent papers, datasets, results, sample sizes, or claims.
@@ -2977,7 +3054,10 @@ User question:
 ${String(userMessage || "").slice(0, 1500)}
 
 Retrieved Paper_Talk curated literature context:
-${contextText.slice(0, 18000)}
+${contextText.slice(0, 15000)}
+
+Previous Paper_Talk reasoning frameworks:
+${pastFrameworksText.slice(0, 9000)}
             `.trim()
           }
         ],
@@ -3006,7 +3086,7 @@ ${contextText.slice(0, 18000)}
 }
 
 
-async function callOpenAIForPaperTalk({ userMessage, context, generatedFramework, recentMessages }, env) {
+async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages }, env) {
   const hasContext = Array.isArray(context) && context.length > 0;
 
   const contextText = hasContext
@@ -3019,6 +3099,16 @@ async function callOpenAIForPaperTalk({ userMessage, context, generatedFramework
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "No matching research paper context was found in the Paper_Talk knowledge base.";
+
+  const pastFrameworksText = Array.isArray(pastFrameworks) && pastFrameworks.length > 0
+    ? pastFrameworks.slice(0, 8).map((item, index) => {
+        return [
+          `Past Paper_Talk framework ${index + 1}`,
+          item.user_message ? `Previous question: ${String(item.user_message).slice(0, 800)}` : "",
+          String(item.framework || "").slice(0, 2500)
+        ].filter(Boolean).join("\n");
+      }).join("\n\n---\n\n")
+    : "No previous Paper_Talk reasoning frameworks were retrieved.";
 
   const messages = [
     {
@@ -3062,10 +3152,10 @@ Rules:
     {
       role: "system",
       content: `
-Use the automatically generated research reasoning framework to structure your answer.
+Use both the previous Paper_Talk reasoning frameworks and the newly generated research reasoning framework to structure your answer.
 
 Important:
-- The framework is a reasoning guide, not an external evidence source.
+- The frameworks are reasoning guides and memory patterns, not external evidence sources.
 - Final factual claims must be grounded in the retrieved Paper_Talk research knowledge base.
 - If the retrieved sources are insufficient, say so clearly.
 - Prioritize insight, limitations, validation strategy, and cautious hypothesis generation over simple summary.
