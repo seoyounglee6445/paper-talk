@@ -1,11 +1,17 @@
 /*
-Paper_Talk v4 update:
+Paper_Talk v4 update - timeout-safe revised version:
 - Adds automatic question-type recognition before answering.
 - Concept / definition / overview questions are answered as educational explanations, not forced into hypothesis generation.
 - Research-direction questions still trigger DB-grounded paper retrieval, knowledge-gap analysis, hypothesis generation, and validation strategy.
 - Validation / experiment questions trigger validation-planning mode.
 - Literature / paper-summary questions trigger DB-grounded literature mode.
 - Monthly GPT quota remains stored separately from chat messages, so logout/login or deleting threads does not reset usage.
+Additional timeout-safe changes in this revised file:
+- Main answer OpenAI timeout increased from 22s to 60s.
+- Retrieved DB context passed to the answer model reduced from 17,000 to 8,000 characters.
+- Retrieved source count reduced from 10 to 6 and each matched chunk from 2,200 to 1,200 characters.
+- Main answer max_completion_tokens reduced from 1000/1800 to 900/1200.
+- Prompt wording shortened to reduce long generations and lower timeout risk.
 */
 
 export default {
@@ -3506,12 +3512,12 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
   const hasContext = Array.isArray(context) && context.length > 0;
 
   const contextText = hasContext
-    ? context.slice(0, 10).map((item, index) => {
+    ? context.slice(0, 6).map((item, index) => {
         return [
           `Source ${index + 1}: ${cleanBibtexText(item.title || "")}`,
           item.source_url ? `Article: ${item.source_url}` : "",
           item.pdf_link ? `PDF: ${item.pdf_link}` : "",
-          cleanBibtexText(item.matched_chunk || item.content || "").slice(0, 2200)
+          cleanBibtexText(item.matched_chunk || item.content || "").slice(0, 1200)
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "No matching research paper context was found in the Paper_Talk knowledge base.";
@@ -3571,8 +3577,8 @@ Formatting:
 Return plain text only.
 Do not use markdown symbols such as #, *, or **.
 Prefer friendly headings and readable spacing.
-For concept questions, give a richer educational explanation, usually 700-1200 words if the topic needs it.
-For research questions, be detailed but avoid unnecessary repetition.
+For concept questions, give a useful educational explanation, usually 400-700 words unless the user asks for more.
+For research questions, be detailed but concise; prioritize the strongest evidence and most practical next steps.
       `.trim()
     },
     {
@@ -3585,7 +3591,7 @@ For research questions, be detailed but avoid unnecessary repetition.
     },
     {
       role: "system",
-      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 17000)}`
+      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 8000)}`
     },
     {
       role: "system",
@@ -3611,7 +3617,7 @@ For research questions, be detailed but avoid unnecessary repetition.
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 22000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -3625,7 +3631,7 @@ For research questions, be detailed but avoid unnecessary repetition.
         model: env.OPENAI_MODEL || "gpt-5",
         messages,
         temperature: questionType === "CONCEPT" ? 0.1 : 0.2,
-        max_completion_tokens: questionType === "CONCEPT" ? 1000 : 1800
+        max_completion_tokens: questionType === "CONCEPT" ? 900 : 1200
       })
     });
 
@@ -3645,7 +3651,7 @@ For research questions, be detailed but avoid unnecessary repetition.
     return data?.choices?.[0]?.message?.content || "No answer was generated.";
   } catch (error) {
     if (error && error.name === "AbortError") {
-      return "OpenAI API timeout. Please try a narrower question or ask about fewer mechanisms at once.";
+      return "OpenAI API timeout after 60 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
     }
 
     return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
