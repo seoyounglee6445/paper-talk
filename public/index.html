@@ -46,6 +46,11 @@ gtag('config', 'G-WWSD3F58L6');
   font-size: 16px;
   font-weight: 800;
 }
+
+.error-text {
+  color: #b00020;
+  font-size: 14px;
+}
 </style>
 </head>
 
@@ -103,9 +108,61 @@ document.addEventListener("DOMContentLoaded", () => {
   loadHomeLinkedIn();
 });
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function formatDate(value) {
   if (!value) return "";
-  return new Date(value).toLocaleDateString();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString();
+}
+
+async function readJsonSafely(response, label = "API request") {
+  const contentType = response.headers.get("content-type") || "";
+  const text = await response.text();
+
+  if (!contentType.includes("application/json")) {
+    console.error(`${label} returned non-JSON response`, {
+      status: response.status,
+      contentType,
+      preview: text.slice(0, 800)
+    });
+
+    throw new Error(
+      `${label} returned non-JSON response. HTTP ${response.status}.`
+    );
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    console.error(`${label} returned invalid JSON`, {
+      status: response.status,
+      preview: text.slice(0, 800),
+      error
+    });
+
+    throw new Error(
+      `${label} returned invalid JSON. HTTP ${response.status}.`
+    );
+  }
+}
+
+function renderEmpty(box, message) {
+  if (!box) return;
+  box.innerHTML = `<p class="empty-posts">${escapeHtml(message)}</p>`;
+}
+
+function renderError(box, message) {
+  if (!box) return;
+  box.innerHTML = `<p class="error-text">${escapeHtml(message)}</p>`;
 }
 
 async function loadTodayVisitCount() {
@@ -113,81 +170,118 @@ async function loadTodayVisitCount() {
   if (!box) return;
 
   try {
-    const res = await fetch("/api/public/visits/today");
-    const data = await res.json();
+    const res = await fetch("/api/public/visits/today", {
+      headers: {
+        "Accept": "application/json"
+      }
+    });
+
+    const data = await readJsonSafely(res, "Today visits API");
 
     box.textContent = data.ok
       ? Number(data.total || 0).toLocaleString()
       : "-";
-  } catch {
+  } catch (error) {
+    console.error(error);
     box.textContent = "-";
   }
 }
 
-async function loadHomePapers() {
-  const res = await fetch("/api/posts?section=research&type=paper&page=1");
-  const data = await res.json();
+async function fetchPosts(section, type, label) {
+  const params = new URLSearchParams({
+    section,
+    type,
+    page: "1"
+  });
 
+  const res = await fetch("/api/posts?" + params.toString(), {
+    headers: {
+      "Accept": "application/json"
+    }
+  });
+
+  const data = await readJsonSafely(res, label);
+
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || `${label} failed.`);
+  }
+
+  return Array.isArray(data.posts) ? data.posts : [];
+}
+
+async function loadHomePapers() {
   const box = document.getElementById("homePapers");
   if (!box) return;
 
-  const posts = (data.posts || []).slice(0, HOME_LIMIT);
+  try {
+    const posts = (await fetchPosts("research", "paper", "Home papers API"))
+      .slice(0, HOME_LIMIT);
 
-  if (posts.length === 0) {
-    box.innerHTML = `<p class="empty-posts">No papers yet.</p>`;
-    return;
+    if (posts.length === 0) {
+      renderEmpty(box, "No papers yet.");
+      return;
+    }
+
+    box.innerHTML = posts.map(p => `
+      <div class="home-list-item">
+        <h3>${escapeHtml(p.title)}</h3>
+        <p>Research Paper · ${formatDate(p.created_at)}</p>
+      </div>
+    `).join("");
+  } catch (error) {
+    console.error(error);
+    renderError(box, "Could not load latest papers.");
   }
-
-  box.innerHTML = posts.map(p => `
-    <div class="home-list-item">
-      <h3>${escapeHtml(p.title)}</h3>
-      <p>Research Paper · ${formatDate(p.created_at)}</p>
-    </div>
-  `).join("");
 }
 
 async function loadHomeConference() {
-  const res = await fetch("/api/posts?section=community&type=conference_notice&page=1");
-  const data = await res.json();
-
   const box = document.getElementById("homeConference");
   if (!box) return;
 
-  const posts = (data.posts || []).slice(0, HOME_LIMIT);
+  try {
+    const posts = (await fetchPosts("community", "conference_notice", "Conference notices API"))
+      .slice(0, HOME_LIMIT);
 
-  if (posts.length === 0) {
-    box.innerHTML = `<p class="empty-posts">No conference notices yet.</p>`;
-    return;
+    if (posts.length === 0) {
+      renderEmpty(box, "No conference notices yet.");
+      return;
+    }
+
+    box.innerHTML = posts.map(p => `
+      <div class="home-list-item">
+        <h3>${escapeHtml(p.title)}</h3>
+        <p>Conference Notice · ${formatDate(p.created_at)}</p>
+      </div>
+    `).join("");
+  } catch (error) {
+    console.error(error);
+    renderError(box, "Could not load conference notices.");
   }
-
-  box.innerHTML = posts.map(p => `
-    <div class="home-list-item">
-      <h3>${escapeHtml(p.title)}</h3>
-      <p>Conference Notice · ${formatDate(p.created_at)}</p>
-    </div>
-  `).join("");
 }
 
 async function loadHomeLinkedIn() {
-  const res = await fetch("/api/posts?section=career&type=linkedin&page=1");
-  const data = await res.json();
-
   const box = document.getElementById("homeLinkedin");
   if (!box) return;
 
-  const posts = (data.posts || []).slice(0, HOME_LIMIT);
+  try {
+    const posts = (await fetchPosts("career", "linkedin", "LinkedIn posts API"))
+      .slice(0, HOME_LIMIT);
 
-  if (posts.length === 0) {
-    box.innerHTML = `<p class="empty-posts">No LinkedIn posts yet.</p>`;
-    return;
+    if (posts.length === 0) {
+      renderEmpty(box, "No LinkedIn posts yet.");
+      return;
+    }
+
+    box.innerHTML = posts.map(p => `
+      <div class="home-list-item">
+        <h3>${escapeHtml(p.title)}</h3>
+        <p>LinkedIn Promotion · ${formatDate(p.created_at)}</p>
+      </div>
+    `).join("");
+  } catch (error) {
+    console.error(error);
+    renderError(box, "Could not load LinkedIn posts.");
   }
-
-  box.innerHTML = posts.map(p => `
-    <div class="home-list-item">
-      <h3>${escapeHtml(p.title)}</h3>
-      <p>LinkedIn Promotion · ${formatDate(p.created_at)}</p>
-    </div>
-  `).join("");
 }
 </script>
 </body>
