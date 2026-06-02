@@ -1,5 +1,5 @@
 /*
-Paper_Talk v26 update - calm explanatory research-mentor answer style + automatic question keyword extraction:
+Paper_Talk v27 update - forced removal of report-style GPT answers + calm research explanation style:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -30,6 +30,7 @@ Paper_Talk v26 update - calm explanatory research-mentor answer style + automati
 - v26: GPT answers should use a calm explanatory research-mentor style: not a report, not casual chat.
 - v26: GPT must not create sections like Direct answer, Relevant papers, Paper-by-paper findings, Agreements, Contradictions, or Knowledge gaps unless the user explicitly asks.
 - v26: Retrieved papers must be woven naturally into the explanation as evidence, not dumped as a paper list.
+- v27: If GPT still returns report headings such as Direct answer / Relevant papers / Paper-by-paper findings, Worker automatically rewrites the answer into calm explanatory prose before saving it.
 */
 
 export default {
@@ -3360,8 +3361,8 @@ Paper_Talk Vision GPT answer style rules:
   Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다.
   최근 spatial transcriptomics 연구들을 보면 조직 내 세포 분포나 niche 구조를 정교하게 설명하는 연구는 상당히 많이 축적되어 있습니다. 반면, 세포가 특정 공간에서 어떤 방향으로 분화하거나 상태 전이를 겪는지까지 설명하는 연구는 상대적으로 적습니다.
   그래서 Spatial + RNA velocity, 또는 Spatial + longitudinal sample 분석 같은 접근이 좋은 연구 주제가 될 수 있습니다.
-- 위 예시처럼 자연스러운 설명문 형태로 답하세요. 번호가 필요할 때만 최소한으로 사용하고, 기본은 짧은 문단 중심으로 작성하세요.
-- 다음과 같은 섹션명은 사용하지 마세요: "Direct answer", "Relevant papers", "Retrieved papers", "Paper-by-paper findings", "Agreements", "Contradictions", "Knowledge gaps", "Paper_Talk research interpretation".
+- 위 예시처럼 자연스러운 설명문 형태로 답하세요. 기본은 짧은 문단 중심입니다. 사용자가 표나 목록을 명시적으로 요청하지 않는 한, 논문 목록형 답변을 만들지 마세요.
+- 다음과 같은 섹션명은 절대 사용하지 마세요: "Direct answer", "Relevant papers", "Retrieved papers", "Paper-by-paper findings", "Agreements", "Contradictions", "Knowledge gaps", "Paper_Talk research interpretation", "Suggested next study or validation".
 - 논문 제목을 목록처럼 나열하지 마세요. Paper_Talk DB 논문은 설명을 뒷받침하는 근거로 자연스럽게 녹여 쓰세요.
 - 예: "Paper_Talk DB에 저장된 spatial 논문들을 보면 공간 구조 자체를 분석하는 연구는 많지만, 시간적 변화나 cell fate까지 연결하는 사례는 상대적으로 적습니다."처럼 쓰세요.
 - 질문 의도에 따라 형식을 자동으로 고르되, 사용자가 명시적으로 표/목록/비교표를 요청하지 않으면 논문 리스트를 만들지 마세요.
@@ -3489,6 +3490,18 @@ ${autoIntent.retrieval_query}`
     recentMessages,
     autoIntent
   }, env);
+
+  // v27:
+  // Some older prompts or model behavior may still produce rigid report-style answers
+  // such as "1. Direct answer / 2. Relevant papers / 3. Paper-by-paper findings".
+  // If that happens, rewrite the answer into the preferred calm explanatory research style
+  // before saving it or showing it to the user.
+  assistantText = await rewriteReportStyleAnswerIfNeeded({
+    originalAnswer: assistantText,
+    userMessage: message,
+    context,
+    env
+  });
 
   assistantText = assistantText
     .replace(/\*\*/g, "")
@@ -5291,6 +5304,187 @@ function makeFallbackResearchIntent(userMessage) {
 }
 
 
+
+function containsReportStyleHeadings(answer) {
+  const text = String(answer || "");
+
+  const forbiddenPatterns = [
+    /^\s*\d+\.\s*Direct answer/im,
+    /^\s*\d+\.\s*Relevant\s+(Paper_Talk\s+DB\s+)?papers/im,
+    /^\s*\d+\.\s*Retrieved papers/im,
+    /^\s*\d+\.\s*Paper-by-paper findings/im,
+    /^\s*\d+\.\s*Agreements/im,
+    /^\s*\d+\.\s*Differences or contradictions/im,
+    /^\s*\d+\.\s*Contradictions/im,
+    /^\s*\d+\.\s*Knowledge gaps/im,
+    /^\s*\d+\.\s*Paper_Talk research interpretation/im,
+    /^\s*\d+\.\s*Suggested next study/im,
+    /Relevant Paper_Talk DB papers/i,
+    /Paper-by-paper findings/i,
+    /Agreements across retrieved papers/i,
+    /Differences or contradictions/i,
+    /Suggested next study or validation/i
+  ];
+
+  return forbiddenPatterns.some(pattern => pattern.test(text));
+}
+
+async function rewriteReportStyleAnswerIfNeeded({ originalAnswer, userMessage, context, env }) {
+  const answer = String(originalAnswer || "");
+
+  if (!answer.trim()) return answer;
+  if (!containsReportStyleHeadings(answer)) return answer;
+
+  if (!env.OPENAI_API_KEY) {
+    return convertReportStyleAnswerLocally(answer);
+  }
+
+  const contextTitles = Array.isArray(context)
+    ? [...new Set(context.map(item => cleanBibtexText(item?.title || "").trim()).filter(Boolean))]
+    : [];
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `
+You are rewriting a Paper_Talk GPT answer.
+
+Goal:
+Rewrite the answer into calm explanatory research prose.
+
+The user wants this style:
+"Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다.
+
+최근 spatial transcriptomics 연구들을 보면 조직 내 세포 분포나 niche 구조를 정교하게 설명하는 연구는 상당히 많이 축적되어 있습니다. 반면, 세포가 특정 공간에서 어떤 방향으로 분화하거나 상태 전이를 겪는지까지 설명하는 연구는 상대적으로 적습니다.
+
+그래서 Spatial + RNA velocity, 또는 Spatial + longitudinal sample 분석 같은 접근이 좋은 연구 주제가 될 수 있습니다."
+
+Strict rewriting rules:
+- Do NOT add new scientific claims.
+- Do NOT add new papers.
+- Preserve the useful meaning from the original answer.
+- Remove these report headings completely:
+  Direct answer, Relevant papers, Retrieved papers, Paper-by-paper findings, Agreements, Contradictions, Knowledge gaps, Paper_Talk research interpretation, Suggested next study or validation.
+- Do not list papers as bullets.
+- If a paper title is useful, weave it naturally into a sentence as supporting evidence.
+- Prefer connected Korean paragraphs.
+- Use bullets only for concrete research questions or candidate project ideas.
+- Do not sound casual like "음..." or "저는요".
+- Do not sound like a report.
+- Answer in the same language as the user's question.
+- Return only the rewritten answer.
+            `.trim()
+          },
+          {
+            role: "system",
+            content: contextTitles.length
+              ? `Allowed Paper_Talk DB titles only:\n${contextTitles.map((title, i) => `${i + 1}. ${title}`).join("\n")}`
+              : "No Paper_Talk DB titles were provided."
+          },
+          {
+            role: "user",
+            content: [
+              `User question:`,
+              String(userMessage || "").slice(0, 1200),
+              ``,
+              `Original report-style answer to rewrite:`,
+              answer.slice(0, 7000)
+            ].join("\n")
+          }
+        ],
+        temperature: 0,
+        max_tokens: 1800
+      })
+    });
+
+    const raw = await res.text();
+    let data = {};
+
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return convertReportStyleAnswerLocally(answer);
+    }
+
+    if (!res.ok) {
+      return convertReportStyleAnswerLocally(answer);
+    }
+
+    const rewritten = String(data?.choices?.[0]?.message?.content || "").trim();
+
+    if (!rewritten) return convertReportStyleAnswerLocally(answer);
+
+    // If the rewrite somehow still contains the forbidden template, fall back to local cleanup.
+    if (containsReportStyleHeadings(rewritten)) {
+      return convertReportStyleAnswerLocally(rewritten);
+    }
+
+    return rewritten;
+  } catch {
+    return convertReportStyleAnswerLocally(answer);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function convertReportStyleAnswerLocally(answer) {
+  const text = String(answer || "");
+
+  const lines = text.split(/\r?\n/);
+  const cleaned = [];
+  let skipPaperListMode = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (/^\d+\.\s*(Direct answer|Relevant\s+(Paper_Talk\s+DB\s+)?papers|Retrieved papers|Paper-by-paper findings|Agreements|Differences or contradictions|Contradictions|Knowledge gaps|Paper_Talk research interpretation|Suggested next study)/i.test(line)) {
+      skipPaperListMode = /Relevant\s+(Paper_Talk\s+DB\s+)?papers|Paper-by-paper findings/i.test(line);
+      continue;
+    }
+
+    if (/^\d+\.\s+/i.test(line)) {
+      skipPaperListMode = false;
+    }
+
+    // Remove long paper-title bullet dumps after old "Relevant papers" sections.
+    if (skipPaperListMode && /^[-•]\s+/.test(line) && line.length > 80) {
+      continue;
+    }
+
+    cleaned.push(rawLine);
+  }
+
+  let result = cleaned.join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\s*-\s+/gm, "")
+    .trim();
+
+  if (!result) {
+    return text;
+  }
+
+  // Add a gentle opening if the answer became too abrupt.
+  if (!/^[가-힣A-Za-z0-9]/.test(result)) {
+    result = result.replace(/^[^\w가-힣]+/, "");
+  }
+
+  return result;
+}
+
+
 async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
   context = mergeKnowledgeResults(Array.isArray(context) ? context : []).slice(0, 12);
   const hasContext = context.length > 0;
@@ -5401,7 +5595,7 @@ You are a calm senior cancer genomics and bioinformatics research mentor. Your a
 Core behavior:
 - First understand the user's intent, then choose the answer flow automatically.
 - Do not force a template such as "Direct answer / Relevant papers / Findings / Gaps".
-- Do not dump retrieved papers as a list.
+- Do not dump retrieved papers as a list. Never create a section titled Relevant papers.
 - Explain the idea first, then use Paper_Talk DB papers only as supporting evidence inside the explanation.
 - Use natural paragraphs with a smooth logical flow.
 - Be detailed enough to help the user think about research design, but do not over-format.
@@ -5448,7 +5642,7 @@ Formatting:
 Return plain text only.
 Do not use markdown symbols such as #, *, or **.
 Use short paragraphs.
-Use bullets only for concrete research questions, candidate project ideas, or validation steps. Do not use bullets to list papers.
+Use bullets only for concrete research questions, candidate project ideas, or validation steps. Do not use bullets to list papers. If a retrieved paper is relevant, mention it naturally inside a paragraph.
 Headings are optional. If used, make them natural Korean headings, not report labels.
       `.trim()
     },
