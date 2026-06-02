@@ -1,10 +1,11 @@
 /*
-Paper_Talk v11 update - DOI/title on-demand learning + DB-only Literature Reasoning Engine:
+Paper_Talk v12 update - DB-only Literature Reasoning Engine + LinkedIn/BibTeX reindex learning:
 - Adds automatic question-type recognition before answering.
 - Concept / definition / overview questions are answered as educational explanations, not forced into hypothesis generation.
 - Research-direction questions still trigger DB-grounded paper retrieval, knowledge-gap analysis, hypothesis generation, and validation strategy.
 - Validation / experiment questions trigger validation-planning mode.
 - Literature / research-related questions use the Paper_Talk paper DB as evidence and compare papers when research judgment is needed.
+- Reindex now includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge and refreshes them via DOI/title Crossref + Europe PMC learning.
 - General questions are answered normally without forced paper comparison.
 - Monthly GPT quota remains stored separately from chat messages, so logout/login or deleting threads does not reset usage.
 Additional timeout-safe changes in this revised file:
@@ -17,9 +18,6 @@ Additional timeout-safe changes in this revised file:
 - Adds /api/test-openai to test the real OpenAI request, not only secret existence.
 - Adds JSON-safe OpenAI response parsing so HTML/error pages do not crash the frontend as "Unexpected token <".
 - Uses gpt-4o-mini as the safe default model when OPENAI_MODEL is not set.
-- v11: If a retrieved Paper_Talk DB row is only a BibTeX/LinkedIn title, the Worker performs fast DOI/title learning on demand before sending context to GPT.
-- v11: DOI/title lookup falls back to admin abstract/description/note when publisher/DOI access fails.
-- v11: Research answers remain DB-only; no outside GPT literature is mixed into Paper_Talk DB evidence.
 */
 
 export default {
@@ -1063,12 +1061,7 @@ async function adminImportLinkedInCsv(request, env) {
       const fingerprint = normalized.sourceUrl || normalized.content.slice(0, 300);
       const postId = "linkedin_" + await sha256Hex(fingerprint);
 
-      const title = cleanBibtexText(normalized.title || makeTitleFromText(normalized.content));
-
-      if (isMetadataOnlyTitle(title)) {
-        skipped++;
-        continue;
-      }
+      const title = normalized.title || makeTitleFromText(normalized.content);
 
       const content = [
         `Source: LinkedIn post by SEO YOUNG Lee`,
@@ -1324,6 +1317,7 @@ async function adminReindexResearchPapers(request, env) {
   `).all();
 
   let indexed = 0;
+  let legacyIndexed = 0;
   let failed = 0;
   const errors = [];
 
@@ -1336,19 +1330,161 @@ async function adminReindexResearchPapers(request, env) {
       errors.push({
         id: post.id,
         title: post.title,
+        source: "posts",
         error: error?.message || "Unknown error"
       });
     }
   }
 
+  // v12 fix:
+  // LinkedIn/BibTeX imports were stored directly in research_knowledge with post_id like linkedin_*,
+  // so the old Reindex button did not refresh them. This caused title-only rows such as
+  // "Source: LinkedIn post... title = {...}" to remain without abstract/DOI metadata.
+  // Reindex now also learns these legacy rows by title/DOI using Crossref + Europe PMC,
+  // with the original imported text as fallback.
+  const legacyRows = await env.DB.prepare(`
+    SELECT id, post_id, title, source_url, pdf_link, content
+    FROM research_knowledge
+    WHERE status = 'indexed'
+      AND (
+        post_id LIKE 'linkedin_%'
+        OR content LIKE '%Source: LinkedIn post%'
+        OR content LIKE '%title = {%'
+        OR content LIKE '%title={%'
+      )
+    ORDER BY datetime(updated_at) DESC
+    LIMIT 1000
+  `).all();
+
+  for (const row of legacyRows.results || []) {
+    try {
+      const didUpdate = await reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env);
+      if (didUpdate) legacyIndexed++;
+    } catch (error) {
+      failed++;
+      errors.push({
+        id: row.id,
+        postId: row.post_id,
+        title: row.title,
+        source: "legacy_research_knowledge",
+        error: error?.message || "Unknown error"
+      });
+    }
+  }
+
+  const totalPosts = posts.results?.length || 0;
+  const totalLegacyRows = legacyRows.results?.length || 0;
+
   return json({
     ok: true,
-    total: posts.results?.length || 0,
+    total: totalPosts + totalLegacyRows,
+    postsTotal: totalPosts,
+    legacyRowsTotal: totalLegacyRows,
     indexed,
+    legacyIndexed,
     failed,
     errors: errors.slice(0, 20),
-    message: `Reindexed ${indexed} research papers. Failed: ${failed}`
+    message: `Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX knowledge rows. Failed: ${failed}`
   });
+}
+
+async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
+  const rowId = String(row?.id || "").trim();
+  const postId = String(row?.post_id || rowId || crypto.randomUUID()).trim();
+  const originalTitle = cleanBibtexText(row?.title || "");
+  const originalContent = cleanBibtexText(row?.content || "");
+
+  const extractedTitle =
+    extractTitleFromKnowledgeContent(row?.content || "") ||
+    extractTitleFromKnowledgeContent(row?.title || "") ||
+    originalTitle;
+
+  const safeTitle = cleanBibtexText(extractedTitle || originalTitle || "").trim();
+
+  if (!safeTitle || isMetadataOnlyTitle(safeTitle)) {
+    return false;
+  }
+
+  const sourceUrl = String(row?.source_url || extractFirstUrl(originalContent) || "").trim();
+  const pdfLink = String(row?.pdf_link || extractDoiOrPdfLink(originalContent + "\n" + sourceUrl) || "").trim();
+
+  const adminText = [
+    `Legacy LinkedIn/BibTeX imported Paper_Talk knowledge row`,
+    `Title: ${safeTitle}`,
+    sourceUrl ? `Source URL: ${sourceUrl}` : "",
+    pdfLink ? `PDF/DOI Link: ${pdfLink}` : "",
+    originalContent ? `Original imported content: ${originalContent}` : ""
+  ].filter(Boolean).join("\n");
+
+  const fetchedArticle = await fetchArticleKnowledgeText({
+    title: safeTitle,
+    sourceUrl,
+    pdfLink,
+    adminText
+  });
+
+  const doi = extractDoiFromTextOrUrl([safeTitle, sourceUrl, pdfLink, originalContent, fetchedArticle].join("\n"));
+
+  const learnedContent = [
+    `Paper_Talk DB Research Paper`,
+    `Imported source: LinkedIn/BibTeX`,
+    `Title: ${safeTitle}`,
+    doi ? `DOI: ${doi}` : "",
+    fetchedArticle ? `DOI / title / article-link learned text: ${fetchedArticle}` : "",
+    originalContent ? `Original imported content fallback: ${originalContent}` : "",
+    sourceUrl ? `Article link: ${sourceUrl}` : "",
+    pdfLink ? `PDF link: ${pdfLink}` : ""
+  ].filter(Boolean).join("\n\n");
+
+  if (rowId) {
+    await env.DB.prepare(`
+      UPDATE research_knowledge
+      SET title = ?,
+          source_url = ?,
+          pdf_link = ?,
+          content = ?,
+          status = 'indexed',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(
+      safeTitle,
+      sourceUrl,
+      pdfLink,
+      learnedContent,
+      rowId
+    ).run();
+  } else {
+    await env.DB.prepare(`
+      INSERT INTO research_knowledge (
+        id,
+        post_id,
+        title,
+        source_url,
+        pdf_link,
+        content,
+        status,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP)
+    `).bind(
+      crypto.randomUUID(),
+      postId,
+      safeTitle,
+      sourceUrl,
+      pdfLink,
+      learnedContent
+    ).run();
+  }
+
+  await upsertResearchKnowledgeVectors({
+    postId,
+    title: safeTitle,
+    sourceUrl,
+    pdfLink,
+    content: learnedContent
+  }, env);
+
+  return true;
 }
 
 async function adminCreateStudyPost(request, env) {
@@ -2674,9 +2810,7 @@ async function searchResearchKnowledge(query, env) {
   }
 
   const merged = mergeKnowledgeResults(allResults).slice(0, 12);
-  if (merged.length > 0) {
-    return enrichThinRetrievedKnowledgeResults(merged, env);
-  }
+  if (merged.length > 0) return merged;
 
   return [];
 }
@@ -2778,7 +2912,7 @@ async function exactPhraseKnowledgeSearch(phrase, env) {
   const like = `%${cleaned}%`;
 
   const result = await env.DB.prepare(`
-    SELECT post_id, title, source_url, pdf_link, content
+    SELECT title, source_url, pdf_link, content
     FROM research_knowledge
     WHERE status = 'indexed'
       AND (
@@ -2912,7 +3046,7 @@ async function vectorSemanticSearch(query, env) {
     seen.add(postId);
 
     const paper = await env.DB.prepare(`
-      SELECT post_id, title, source_url, pdf_link, content
+      SELECT title, source_url, pdf_link, content
       FROM research_knowledge
       WHERE post_id = ?
         AND status = 'indexed'
@@ -3142,223 +3276,6 @@ function hasScientificContent(value) {
   return /title:|abstract|admin abstract|description|admin description|result|discussion|method|conclusion|fetched article text|crossref|europe pmc|pubmed|pmc full text|rna velocity|spatial|single-cell|single cell|genomics|cancer|tumor|논문|초록|결과|방법|요약/.test(text);
 }
 
-
-function isThinRetrievedKnowledgeItem(item) {
-  const title = cleanBibtexText(item?.title || "");
-  const content = cleanBibtexText(item?.content || "");
-
-  if (!title) return false;
-
-  const lower = content.toLowerCase();
-  const hasRealEvidence = /abstract:|admin abstract:|admin description:|doi \/ article-link learned text:|crossref metadata|europe pmc|pubmed|pmc full text|results|discussion|conclusion|method/i.test(content);
-
-  if (hasRealEvidence && content.length > 500) return false;
-
-  // Typical imported BibTeX/LinkedIn rows look like:
-  // Source: LinkedIn post ... Title: title = {RNA Velocity}
-  if (lower.includes("source: linkedin post") && lower.includes("title")) return true;
-
-  // Rows that only repeat the title are too thin for a DB-grounded literature answer.
-  const normalizedTitle = normalizeSearchText(title);
-  const normalizedContent = normalizeSearchText(content);
-  if (normalizedTitle && normalizedContent) {
-    const withoutBoilerplate = normalizedContent
-      .replace(/source linkedin post by seo young lee/g, "")
-      .replace(/title/g, "")
-      .replace(normalizedTitle, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (withoutBoilerplate.length < 80) return true;
-  }
-
-  return content.length < 300;
-}
-
-async function enrichThinRetrievedKnowledgeResults(items, env) {
-  const output = [];
-  let enrichedCount = 0;
-  const maxOnDemandEnrich = 4;
-
-  for (const item of items || []) {
-    if (enrichedCount < maxOnDemandEnrich && isThinRetrievedKnowledgeItem(item)) {
-      try {
-        const enriched = await enrichOneThinKnowledgeItem(item, env);
-        output.push(enriched || item);
-        enrichedCount++;
-        continue;
-      } catch {
-        output.push(item);
-        continue;
-      }
-    }
-
-    output.push(item);
-  }
-
-  return mergeKnowledgeResults(output).slice(0, 12);
-}
-
-async function enrichOneThinKnowledgeItem(item, env) {
-  const title = cleanBibtexText(item?.title || extractTitleFromKnowledgeContent(item?.content || ""));
-  if (!title || isMetadataOnlyTitle(title)) return item;
-
-  const sourceUrl = String(item?.source_url || "").trim();
-  const pdfLink = String(item?.pdf_link || "").trim();
-  const oldContent = cleanBibtexText(item?.content || "");
-
-  const learned = await fetchFastDoiOrTitleKnowledgeText({
-    title,
-    sourceUrl,
-    pdfLink,
-    adminText: oldContent
-  });
-
-  if (!learned || learned.length < 120) return item;
-
-  const newContent = [
-    oldContent,
-    "",
-    "On-demand DOI/title learned text:",
-    learned
-  ].filter(Boolean).join("\n");
-
-  try {
-    await env.DB.prepare(`
-      UPDATE research_knowledge
-      SET content = ?,
-          status = 'indexed',
-          updated_at = CURRENT_TIMESTAMP
-      WHERE title = ?
-    `).bind(newContent, item.title || title).run();
-
-    // Refresh Vectorize only for this paper if a post_id is available. If not,
-    // the D1 context still uses the enriched text immediately for this answer.
-    if (item.post_id) {
-      await upsertResearchKnowledgeVectors({
-        postId: item.post_id,
-        title,
-        sourceUrl,
-        pdfLink,
-        content: newContent
-      }, env);
-    }
-  } catch {
-    // Updating the DB is helpful but not required for the current answer.
-  }
-
-  return {
-    ...item,
-    title,
-    content: newContent,
-    matched_chunk: makeBestEvidenceExcerpt(newContent),
-    from_on_demand_doi_learning: true
-  };
-}
-
-async function fetchFastDoiOrTitleKnowledgeText({ title, sourceUrl, pdfLink, adminText = "" }) {
-  const normalizedTitle = cleanFetchedArticleText(title || "");
-  const allText = [title || "", sourceUrl || "", pdfLink || "", adminText || ""].join("\n");
-  const doi = extractDoiFromTextOrUrl(allText);
-  const collected = [];
-
-  try {
-    const crossref = await fetchCrossrefKnowledgeFast({ doi, title: normalizedTitle, timeoutMs: 8000 });
-    if (crossref) collected.push(crossref);
-  } catch (error) {
-    if (doi) collected.push(`Crossref DOI lookup failed for ${doi}: ${error?.message || "unknown error"}`);
-  }
-
-  try {
-    const europe = await fetchEuropePmcKnowledgeFast({ doi, title: normalizedTitle, timeoutMs: 8000 });
-    if (europe) collected.push(europe);
-  } catch (error) {
-    if (doi) collected.push(`Europe PMC DOI lookup failed for ${doi}: ${error?.message || "unknown error"}`);
-  }
-
-  // Only try direct URL during chat if there is an actual URL. Do not spend time on empty links.
-  for (const url of [sourceUrl, pdfLink].map(v => String(v || "").trim()).filter(Boolean).slice(0, 1)) {
-    try {
-      const direct = await fetchReadableArticleText(url, normalizedTitle);
-      if (direct) collected.push(direct);
-    } catch {
-      // Ignore direct access failures during chat.
-    }
-  }
-
-  if (adminText) {
-    collected.push(`Admin / imported fallback text:\n${adminText}`);
-  }
-
-  return cleanFetchedArticleText(collected.join("\n\n")).slice(0, 18000);
-}
-
-async function fetchCrossrefKnowledgeFast({ doi, title, timeoutMs = 8000 }) {
-  let url = "";
-
-  if (doi) {
-    url = `https://api.crossref.org/works/${encodeURIComponent(doi)}`;
-  } else if (title) {
-    url = `https://api.crossref.org/works?rows=1&query.title=${encodeURIComponent(title)}`;
-  } else {
-    return "";
-  }
-
-  const data = await fetchJsonWithTimeout(url, timeoutMs);
-  const item = doi ? data?.message : data?.message?.items?.[0];
-  if (!item) return "";
-
-  const titleText = Array.isArray(item.title) ? item.title.join(" ") : "";
-  const abstract = item.abstract ? cleanCrossrefAbstract(item.abstract) : "";
-  const container = Array.isArray(item["container-title"]) ? item["container-title"].join(" ") : "";
-  const published = item.published?.["date-parts"]?.[0]?.join("-") || "";
-  const authors = Array.isArray(item.author)
-    ? item.author.slice(0, 12).map(a => [a.given, a.family].filter(Boolean).join(" ")).filter(Boolean).join(", ")
-    : "";
-  const doiText = item.DOI || doi || "";
-  const urlText = item.URL || "";
-
-  return [
-    "Crossref metadata from DOI/title:",
-    titleText ? `Title: ${titleText}` : "",
-    authors ? `Authors: ${authors}` : "",
-    container ? `Journal: ${container}` : "",
-    published ? `Published: ${published}` : "",
-    doiText ? `DOI: ${doiText}` : "",
-    urlText ? `URL: ${urlText}` : "",
-    abstract ? `Abstract: ${abstract}` : ""
-  ].filter(Boolean).join("\n");
-}
-
-async function fetchEuropePmcKnowledgeFast({ doi, title, timeoutMs = 8000 }) {
-  const queries = [];
-  if (doi) queries.push(`DOI:"${doi}"`);
-  if (title) queries.push(`TITLE:"${title.replace(/"/g, " ")}"`);
-
-  for (const query of queries) {
-    const searchUrl =
-      `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&resultType=core&pageSize=1`;
-
-    const data = await fetchJsonWithTimeout(searchUrl, timeoutMs);
-    const result = data?.resultList?.result?.[0];
-    if (!result) continue;
-
-    return [
-      "Europe PMC / PubMed-indexed article data:",
-      result.title ? `Title: ${result.title}` : "",
-      result.authorString ? `Authors: ${result.authorString}` : "",
-      result.journalTitle ? `Journal: ${result.journalTitle}` : "",
-      result.pubYear ? `Year: ${result.pubYear}` : "",
-      result.doi ? `DOI: ${result.doi}` : "",
-      result.pmid ? `PMID: ${result.pmid}` : "",
-      result.pmcid ? `PMCID: ${result.pmcid}` : "",
-      result.abstractText ? `Abstract: ${cleanFetchedArticleText(stripHtmlEntities(result.abstractText))}` : ""
-    ].filter(Boolean).join("\n");
-  }
-
-  return "";
-}
-
 async function createEmbedding(text, env) {
   const input = String(text || "").slice(0, 8000);
 
@@ -3510,7 +3427,7 @@ async function keywordFallbackSearch(query, env) {
 
   try {
     const result = await env.DB.prepare(`
-      SELECT post_id, title, source_url, pdf_link, content
+      SELECT title, source_url, pdf_link, content
       FROM research_knowledge
       WHERE (${clauses.join(" OR ")})
       ORDER BY datetime(updated_at) DESC
@@ -3714,7 +3631,7 @@ function postToKnowledgeItem(post) {
 async function latestResearchKnowledge(env, limit = 8) {
   try {
     const latest = await env.DB.prepare(`
-      SELECT post_id, title, source_url, pdf_link, content
+      SELECT title, source_url, pdf_link, content
       FROM research_knowledge
       WHERE status = 'indexed'
       ORDER BY datetime(updated_at) DESC
