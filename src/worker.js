@@ -1,5 +1,5 @@
 /*
-Paper_Talk v16 update - clean legacy LinkedIn/BibTeX reindex + no recursive content nesting:
+Paper_Talk v17 update - batch-safe reindex + subrequest-safe DOI/title learning:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -8,6 +8,9 @@ Paper_Talk v16 update - clean legacy LinkedIn/BibTeX reindex + no recursive cont
 - General questions are answered normally without forced paper comparison.
 - Monthly GPT quota remains stored separately from chat messages, so logout/login or deleting threads does not reset usage.
 - JSON-safe OpenAI parsing and timeout-safe answer generation are preserved.
+- v17: Reindex is processed in small batches to avoid Cloudflare 'Too many subrequests'.
+- v17: DOI/title lookup stops as soon as one external abstract/metadata source is found.
+- v17: Reindex rows are marked after processing so repeated clicks continue to the next batch.
 */
 
 export default {
@@ -1297,24 +1300,44 @@ async function adminReindexResearchPapers(request, env) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
-  const posts = await env.DB.prepare(`
-    SELECT *
-    FROM posts
-    WHERE section = 'research'
-      AND type = 'paper'
-      AND status = 'published'
-    ORDER BY datetime(created_at) DESC
-  `).all();
+  const url = new URL(request.url);
+  const batchLimit = Math.min(Math.max(Number(url.searchParams.get("limit") || 5), 1), 10);
+  const reindexMarker = "Reindex checked version: v17";
 
   let indexed = 0;
   let legacyIndexed = 0;
   let failed = 0;
   const errors = [];
 
+  // v17:
+  // Reindex in small batches. A single Cloudflare Worker invocation has a limited
+  // number of subrequests. DOI/title learning may call Crossref, Europe PMC,
+  // Semantic Scholar, or OpenAlex, so processing hundreds of papers in one click
+  // causes "Too many subrequests".
+  //
+  // Repeated clicks continue because already-processed rows contain the v17 marker.
+
+  const posts = await env.DB.prepare(`
+    SELECT p.*
+    FROM posts p
+    LEFT JOIN research_knowledge rk ON rk.post_id = p.id
+    WHERE p.section = 'research'
+      AND p.type = 'paper'
+      AND p.status = 'published'
+      AND (
+        rk.post_id IS NULL
+        OR rk.content IS NULL
+        OR rk.content NOT LIKE ?
+      )
+    ORDER BY datetime(p.created_at) ASC
+    LIMIT ?
+  `).bind(`%${reindexMarker}%`, batchLimit).all();
+
   for (const post of posts.results || []) {
     try {
       await indexResearchPaperPost(post, env);
       indexed++;
+      await sleep(120);
     } catch (error) {
       failed++;
       errors.push({
@@ -1326,30 +1349,27 @@ async function adminReindexResearchPapers(request, env) {
     }
   }
 
-  // v12 fix:
-  // LinkedIn/BibTeX imports were stored directly in research_knowledge with post_id like linkedin_*,
-  // so the old Reindex button did not refresh them. This caused title-only rows such as
-  // "Source: LinkedIn post... title = {...}" to remain without abstract/DOI metadata.
-  // Reindex now also learns these legacy rows by title/DOI using Crossref + Europe PMC,
-  // with the original imported text as fallback.
   const legacyRows = await env.DB.prepare(`
     SELECT id, post_id, title, source_url, pdf_link, content
     FROM research_knowledge
     WHERE status = 'indexed'
+      AND content NOT LIKE ?
       AND (
         post_id LIKE 'linkedin_%'
         OR content LIKE '%Source: LinkedIn post%'
         OR content LIKE '%title = {%'
         OR content LIKE '%title={%'
+        OR content LIKE '%Imported source: LinkedIn/BibTeX%'
       )
-    ORDER BY datetime(updated_at) DESC
-    LIMIT 1000
-  `).all();
+    ORDER BY datetime(updated_at) ASC
+    LIMIT ?
+  `).bind(`%${reindexMarker}%`, batchLimit).all();
 
   for (const row of legacyRows.results || []) {
     try {
       const didUpdate = await reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env);
       if (didUpdate) legacyIndexed++;
+      await sleep(120);
     } catch (error) {
       failed++;
       errors.push({
@@ -1362,21 +1382,54 @@ async function adminReindexResearchPapers(request, env) {
     }
   }
 
-  const totalPosts = posts.results?.length || 0;
-  const totalLegacyRows = legacyRows.results?.length || 0;
+  const remainingPosts = await env.DB.prepare(`
+    SELECT COUNT(*) AS total
+    FROM posts p
+    LEFT JOIN research_knowledge rk ON rk.post_id = p.id
+    WHERE p.section = 'research'
+      AND p.type = 'paper'
+      AND p.status = 'published'
+      AND (
+        rk.post_id IS NULL
+        OR rk.content IS NULL
+        OR rk.content NOT LIKE ?
+      )
+  `).bind(`%${reindexMarker}%`).first();
+
+  const remainingLegacy = await env.DB.prepare(`
+    SELECT COUNT(*) AS total
+    FROM research_knowledge
+    WHERE status = 'indexed'
+      AND content NOT LIKE ?
+      AND (
+        post_id LIKE 'linkedin_%'
+        OR content LIKE '%Source: LinkedIn post%'
+        OR content LIKE '%title = {%'
+        OR content LIKE '%title={%'
+        OR content LIKE '%Imported source: LinkedIn/BibTeX%'
+      )
+  `).bind(`%${reindexMarker}%`).first();
+
+  const remaining =
+    Number(remainingPosts?.total || 0) +
+    Number(remainingLegacy?.total || 0);
 
   return json({
     ok: true,
-    total: totalPosts + totalLegacyRows,
-    postsTotal: totalPosts,
-    legacyRowsTotal: totalLegacyRows,
+    batchLimit,
     indexed,
     legacyIndexed,
     failed,
+    remaining,
+    remainingPosts: Number(remainingPosts?.total || 0),
+    remainingLegacy: Number(remainingLegacy?.total || 0),
     errors: errors.slice(0, 20),
-    message: `Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX knowledge rows. Failed: ${failed}`
+    message: remaining > 0
+      ? `Batch reindex complete. Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX rows. Remaining: ${remaining}. Click Reindex again to continue. Failed: ${failed}`
+      : `Reindex complete. Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX rows. Failed: ${failed}`
   });
 }
+
 
 async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
   const rowId = String(row?.id || "").trim();
@@ -1439,6 +1492,7 @@ async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
 
   const learnedContent = [
     `Paper_Talk DB Research Paper`,
+    `Reindex checked version: v17`,
     `Imported source: LinkedIn/BibTeX`,
     `Title: ${safeTitle}`,
     doi ? `DOI: ${doi}` : "",
@@ -1694,6 +1748,7 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
 
   const content = [
     `Paper_Talk DB Research Paper`,
+    `Reindex checked version: v17`,
     `Title: ${safeTitle}`,
     doi ? `DOI: ${doi}` : "",
     researchData?.year ? `Year: ${researchData.year}` : "",
@@ -1763,138 +1818,77 @@ async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink, adminText 
 
   const urls = [sourceUrl, pdfLink]
     .map(v => String(v || "").trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, 1);
 
   const collected = [];
-  const lookupErrors = [];
 
   async function tryAdd(label, fn) {
+    if (collected.length > 0) return true;
+
     try {
       const value = await fn();
       if (value && containsExternalArticleData(value)) {
         collected.push(value);
+        return true;
       }
     } catch (error) {
-      // Keep errors out of research_knowledge content to avoid noisy recursive reindexing.
-      lookupErrors.push(`${label}: ${error?.message || "unknown error"}`);
+      // Do not store lookup errors in research_knowledge.
+      // Otherwise the DB becomes noisy and repeated reindexing embeds failure text.
     }
+
+    await sleep(80);
+    return false;
   }
 
-  // 1) DOI가 있으면 DOI 기반 API를 먼저 조회합니다.
+  // v17 subrequest-safe rule:
+  // Query external scholarly APIs sequentially and stop immediately after
+  // the first useful external metadata/abstract source is found.
+  // This prevents Cloudflare "Too many subrequests" during batch reindex.
+
   if (doi) {
-    await tryAdd(`Crossref DOI lookup for ${doi}`, () =>
+    if (await tryAdd(`Crossref DOI lookup for ${doi}`, () =>
       fetchCrossrefKnowledge({ doi, title: normalizedTitle })
-    );
-    await tryAdd(`Europe PMC DOI lookup for ${doi}`, () =>
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+
+    if (await tryAdd(`Europe PMC DOI lookup for ${doi}`, () =>
       fetchEuropePmcKnowledge({ doi, title: normalizedTitle })
-    );
-    await tryAdd(`Semantic Scholar DOI lookup for ${doi}`, () =>
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+
+    if (await tryAdd(`Semantic Scholar DOI lookup for ${doi}`, () =>
       fetchSemanticScholarKnowledge({ doi, title: normalizedTitle })
-    );
-    await tryAdd(`OpenAlex DOI lookup for ${doi}`, () =>
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+
+    if (await tryAdd(`OpenAlex DOI lookup for ${doi}`, () =>
       fetchOpenAlexKnowledge({ doi, title: normalizedTitle })
-    );
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
   }
 
-  // 2) DOI가 없거나 DOI 결과가 약하면 title 기반 API를 폭넓게 조회합니다.
   if (normalizedTitle) {
-    await tryAdd(`Crossref title lookup for ${normalizedTitle}`, () =>
+    if (await tryAdd(`Crossref title lookup for ${normalizedTitle}`, () =>
       fetchCrossrefKnowledge({ doi: "", title: normalizedTitle })
-    );
-    await tryAdd(`Europe PMC title lookup for ${normalizedTitle}`, () =>
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+
+    if (await tryAdd(`Europe PMC title lookup for ${normalizedTitle}`, () =>
       fetchEuropePmcKnowledge({ doi: "", title: normalizedTitle })
-    );
-    await tryAdd(`Semantic Scholar title lookup for ${normalizedTitle}`, () =>
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+
+    if (await tryAdd(`Semantic Scholar title lookup for ${normalizedTitle}`, () =>
       fetchSemanticScholarKnowledge({ doi: "", title: normalizedTitle })
-    );
-    await tryAdd(`OpenAlex title lookup for ${normalizedTitle}`, () =>
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+
+    if (await tryAdd(`OpenAlex title lookup for ${normalizedTitle}`, () =>
       fetchOpenAlexKnowledge({ doi: "", title: normalizedTitle })
-    );
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
   }
 
-  // 3) Article Link / PDF Link 직접 접근을 시도합니다.
   for (const url of urls) {
-    await tryAdd(`Direct article-link fetch for ${url}`, () =>
+    if (await tryAdd(`Direct article-link fetch for ${url}`, () =>
       fetchReadableArticleText(url, normalizedTitle)
-    );
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
   }
 
-  // 4) 일반 Research Paper posts에서는 admin abstract/description/note fallback을 저장합니다.
-  //    Legacy LinkedIn/BibTeX rows에서는 includeAdminFallback=false로 호출하여 중첩 저장을 방지합니다.
   if (includeAdminFallback && adminText) {
-    collected.push(`Admin-provided research metadata, abstract, description, and note fallback:\n${adminText}`);
-  }
-
-  const finalText = cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n"));
-  return finalText.slice(0, 52000);
-}) {
-  const normalizedTitle = cleanFetchedArticleText(title || "");
-
-  const allText = [
-    title || "",
-    sourceUrl || "",
-    pdfLink || "",
-    adminText || ""
-  ].join("\n");
-
-  const doi = extractDoiFromTextOrUrl(allText);
-
-  const urls = [sourceUrl, pdfLink]
-    .map(v => String(v || "").trim())
-    .filter(Boolean);
-
-  const collected = [];
-
-  async function tryAdd(label, fn) {
-    try {
-      const value = await fn();
-      if (value) collected.push(value);
-    } catch (error) {
-      collected.push(`${label} failed: ${error?.message || "unknown error"}`);
-    }
-  }
-
-  // 1) DOI가 있으면 DOI 기반 API를 먼저 조회합니다.
-  if (doi) {
-    await tryAdd(`Crossref DOI lookup for ${doi}`, () =>
-      fetchCrossrefKnowledge({ doi, title: normalizedTitle })
-    );
-    await tryAdd(`Europe PMC DOI lookup for ${doi}`, () =>
-      fetchEuropePmcKnowledge({ doi, title: normalizedTitle })
-    );
-    await tryAdd(`Semantic Scholar DOI lookup for ${doi}`, () =>
-      fetchSemanticScholarKnowledge({ doi, title: normalizedTitle })
-    );
-    await tryAdd(`OpenAlex DOI lookup for ${doi}`, () =>
-      fetchOpenAlexKnowledge({ doi, title: normalizedTitle })
-    );
-  }
-
-  // 2) DOI가 없거나 DOI 결과가 약하면 title 기반 API를 폭넓게 조회합니다.
-  if (normalizedTitle) {
-    await tryAdd(`Crossref title lookup for ${normalizedTitle}`, () =>
-      fetchCrossrefKnowledge({ doi: "", title: normalizedTitle })
-    );
-    await tryAdd(`Europe PMC title lookup for ${normalizedTitle}`, () =>
-      fetchEuropePmcKnowledge({ doi: "", title: normalizedTitle })
-    );
-    await tryAdd(`Semantic Scholar title lookup for ${normalizedTitle}`, () =>
-      fetchSemanticScholarKnowledge({ doi: "", title: normalizedTitle })
-    );
-    await tryAdd(`OpenAlex title lookup for ${normalizedTitle}`, () =>
-      fetchOpenAlexKnowledge({ doi: "", title: normalizedTitle })
-    );
-  }
-
-  // 3) Article Link / PDF Link 직접 접근을 시도합니다.
-  for (const url of urls) {
-    await tryAdd(`Direct article-link fetch for ${url}`, () =>
-      fetchReadableArticleText(url, normalizedTitle)
-    );
-  }
-
-  // 4) DOI/링크에서 충분히 학습하지 못해도 사용자가 넣은 abstract/description/note는 반드시 같이 저장합니다.
-  if (adminText) {
     collected.push(`Admin-provided research metadata, abstract, description, and note fallback:\n${adminText}`);
   }
 
@@ -2067,7 +2061,7 @@ function buildTitleSearchVariants(title) {
     tokens.filter(v => !["single", "cell", "cells", "using", "based"].includes(v)).slice(0, 8).join(" ")
   ];
 
-  return [...new Set(variants.map(v => cleanFetchedArticleText(v)).filter(v => v.length >= 6))];
+  return [...new Set(variants.map(v => cleanFetchedArticleText(v)).filter(v => v.length >= 6))].slice(0, 2);
 }
 
 async function fetchCrossrefKnowledge({ doi, title }) {
@@ -2386,6 +2380,11 @@ function xmlToPlainText(value) {
         .replace(/<[^>]+>/g, " ")
     )
   );
+}
+
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function fetchJsonWithTimeout(url, timeoutMs = 12000) {
