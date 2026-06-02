@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin | Paper_Talk</title>
+  <!-- v19: one-click auto reindex enabled -->
   <link rel="stylesheet" href="/style.css">
 </head>
 
@@ -441,36 +442,75 @@ function updateAdminKeyStatus() {
 }
 
 
+let paperTalkReindexRunning = false;
+
+function setReindexStatusText(message) {
+  const status = document.getElementById("reindexStatus");
+  if (status) status.textContent = message;
+}
+
 async function reindexResearchPapers() {
+  if (paperTalkReindexRunning) {
+    alert("Reindex is already running. Please wait.");
+    return;
+  }
+
   const key = requireAdminKey();
   if (!key) return;
 
-  const status = document.getElementById("reindexStatus");
-  status.textContent = "Reindexing research papers... Please wait.";
+  paperTalkReindexRunning = true;
+
+  let totalResearch = 0;
+  let totalLegacy = 0;
+  let totalFailed = 0;
+  let remaining = null;
+  let round = 0;
+
+  setReindexStatusText("Reindexing started... Please keep this page open.");
 
   try {
-    const res = await fetch("/api/admin/research/reindex", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Admin-Key": key
+    while (true) {
+      round += 1;
+
+      const res = await fetch("/api/admin/research/reindex?limit=50", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Key": key
+        }
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || data.message || "Reindex failed.");
       }
-    });
 
-    const data = await res.json();
+      totalResearch += Number(data.indexed || 0);
+      totalLegacy += Number(data.legacyIndexed || 0);
+      totalFailed += Number(data.failed || 0);
+      remaining = Number(data.remaining || 0);
 
-    if (!data.ok) {
-      status.textContent = data.error || "Reindex failed.";
-      alert(data.error || "Reindex failed.");
-      return;
+      setReindexStatusText(
+        `Reindexing... round ${round} | Research papers: ${totalResearch} | LinkedIn/BibTeX rows: ${totalLegacy} | Failed: ${totalFailed} | Remaining: ${remaining}`
+      );
+
+      if (remaining <= 0) break;
+
+      await new Promise(resolve => setTimeout(resolve, 700));
     }
 
-    const message = data.message || `Reindexed ${data.indexed || 0} research papers. Failed: ${data.failed || 0}`;
-    status.textContent = message;
-    alert(message);
+    const doneMessage =
+      `Reindex complete. Research papers: ${totalResearch}, LinkedIn/BibTeX rows: ${totalLegacy}, Failed: ${totalFailed}.`;
+
+    setReindexStatusText(doneMessage);
+    alert(doneMessage);
   } catch (error) {
-    status.textContent = error?.message || "Reindex request failed.";
-    alert(status.textContent);
+    const errorMessage = `Reindex stopped: ${error?.message || error}`;
+    setReindexStatusText(errorMessage);
+    alert(errorMessage);
+  } finally {
+    paperTalkReindexRunning = false;
   }
 }
 
