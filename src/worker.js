@@ -1,5 +1,5 @@
 /*
-Paper_Talk v5 update - Literature Reasoning Engine + JSON-safe timeout-safe revised version:
+Paper_Talk v9 update - DB-only Literature Reasoning Engine + cleaned retrieval context:
 - Adds automatic question-type recognition before answering.
 - Concept / definition / overview questions are answered as educational explanations, not forced into hypothesis generation.
 - Research-direction questions still trigger DB-grounded paper retrieval, knowledge-gap analysis, hypothesis generation, and validation strategy.
@@ -1507,26 +1507,49 @@ async function indexResearchPaperPost(post, env) {
 }
 
 async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, researchData }, env) {
+  const safeTitle = String(title || "").trim();
+  const safeSourceUrl = String(sourceUrl || "").trim();
+  const safePdfLink = String(pdfLink || "").trim();
+
+  const adminText = [
+    safeTitle,
+    researchData?.year || "",
+    researchData?.authors || "",
+    researchData?.journal || "",
+    researchData?.category || "",
+    researchData?.tags || "",
+    researchData?.abstract || "",
+    researchData?.description || "",
+    researchData?.note || "",
+    safeSourceUrl,
+    safePdfLink
+  ].filter(Boolean).join("\n");
+
   const fetchedArticle = await fetchArticleKnowledgeText({
-    title,
-    sourceUrl,
-    pdfLink
+    title: safeTitle,
+    sourceUrl: safeSourceUrl,
+    pdfLink: safePdfLink,
+    adminText
   });
 
+  const doi = extractDoiFromTextOrUrl(adminText);
+
   const content = [
-    `Title: ${title}`,
-    researchData.year ? `Year: ${researchData.year}` : "",
-    researchData.authors ? `Authors: ${researchData.authors}` : "",
-    researchData.journal ? `Journal: ${researchData.journal}` : "",
-    researchData.category ? `Category: ${researchData.category}` : "",
-    researchData.tags ? `Tags: ${researchData.tags}` : "",
-    researchData.abstract ? `Admin abstract: ${researchData.abstract}` : "",
-    researchData.description ? `Admin description: ${researchData.description}` : "",
-    fetchedArticle ? `Fetched article text from link: ${fetchedArticle}` : "",
-    researchData.figures ? `Figures: ${researchData.figures}` : "",
-    researchData.note ? `Note: ${researchData.note}` : "",
-    sourceUrl ? `Article link: ${sourceUrl}` : "",
-    pdfLink ? `PDF link: ${pdfLink}` : ""
+    `Paper_Talk DB Research Paper`,
+    `Title: ${safeTitle}`,
+    doi ? `DOI: ${doi}` : "",
+    researchData?.year ? `Year: ${researchData.year}` : "",
+    researchData?.authors ? `Authors: ${researchData.authors}` : "",
+    researchData?.journal ? `Journal: ${researchData.journal}` : "",
+    researchData?.category ? `Category: ${researchData.category}` : "",
+    researchData?.tags ? `Tags: ${researchData.tags}` : "",
+    researchData?.abstract ? `Admin abstract: ${researchData.abstract}` : "",
+    researchData?.description ? `Admin description: ${researchData.description}` : "",
+    fetchedArticle ? `DOI / article-link learned text: ${fetchedArticle}` : "",
+    researchData?.figures ? `Figures: ${researchData.figures}` : "",
+    researchData?.note ? `Note: ${researchData.note}` : "",
+    safeSourceUrl ? `Article link: ${safeSourceUrl}` : "",
+    safePdfLink ? `PDF link: ${safePdfLink}` : ""
   ].filter(Boolean).join("\n\n");
 
   await env.DB.prepare(`
@@ -1551,62 +1574,89 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
   `).bind(
     crypto.randomUUID(),
     postId,
-    title,
-    sourceUrl,
-    pdfLink,
+    safeTitle,
+    safeSourceUrl,
+    safePdfLink,
     content
   ).run();
 
   await upsertResearchKnowledgeVectors({
     postId,
-    title,
-    sourceUrl,
-    pdfLink,
+    title: safeTitle,
+    sourceUrl: safeSourceUrl,
+    pdfLink: safePdfLink,
     content
   }, env);
 
   return true;
 }
 
-
-async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink }) {
+async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink, adminText = "" }) {
   const normalizedTitle = cleanFetchedArticleText(title || "");
+
+  const allText = [
+    title || "",
+    sourceUrl || "",
+    pdfLink || "",
+    adminText || ""
+  ].join("\n");
+
+  const doi = extractDoiFromTextOrUrl(allText);
+
   const urls = [sourceUrl, pdfLink]
     .map(v => String(v || "").trim())
     .filter(Boolean);
 
   const collected = [];
-  const doi = extractDoiFromTextOrUrl([sourceUrl, pdfLink, title].join("\n"));
 
-  // 1) DOI/title 기반 공개 학술 메타데이터를 먼저 수집합니다.
-  // ScienceDirect/Wiley 같은 출판사 페이지는 Worker fetch가 차단될 수 있으므로
-  // Crossref + Europe PMC/PubMed 계열 API를 우선 사용합니다.
-  try {
-    const crossref = await fetchCrossrefKnowledge({ doi, title: normalizedTitle });
-    if (crossref) collected.push(crossref);
-  } catch {
-    // Continue with other sources.
+  if (doi) {
+    try {
+      const crossref = await fetchCrossrefKnowledge({ doi, title: normalizedTitle });
+      if (crossref) collected.push(crossref);
+    } catch (error) {
+      collected.push(`Crossref DOI lookup failed for ${doi}: ${error?.message || "unknown error"}`);
+    }
+
+    try {
+      const europePmc = await fetchEuropePmcKnowledge({ doi, title: normalizedTitle });
+      if (europePmc) collected.push(europePmc);
+    } catch (error) {
+      collected.push(`Europe PMC DOI lookup failed for ${doi}: ${error?.message || "unknown error"}`);
+    }
   }
 
-  try {
-    const europePmc = await fetchEuropePmcKnowledge({ doi, title: normalizedTitle });
-    if (europePmc) collected.push(europePmc);
-  } catch {
-    // Continue with direct link fallback.
+  if (!doi && normalizedTitle) {
+    try {
+      const crossref = await fetchCrossrefKnowledge({ doi: "", title: normalizedTitle });
+      if (crossref) collected.push(crossref);
+    } catch {
+      // Continue with Europe PMC and direct link fallback.
+    }
+
+    try {
+      const europePmc = await fetchEuropePmcKnowledge({ doi: "", title: normalizedTitle });
+      if (europePmc) collected.push(europePmc);
+    } catch {
+      // Continue with direct link fallback.
+    }
   }
 
-  // 2) 그래도 부족하면 원문 링크 HTML 메타데이터/초록을 직접 시도합니다.
   for (const url of urls) {
     try {
       const item = await fetchReadableArticleText(url, normalizedTitle);
       if (item) collected.push(item);
-    } catch {
-      // Some publisher pages block automated access. Do not fail saving/indexing.
+    } catch (error) {
+      collected.push(`Direct article-link fetch failed for ${url}: ${error?.message || "unknown error"}`);
     }
   }
 
+  // DOI/링크에서 충분히 학습하지 못해도 사용자가 넣은 abstract/description/note는 반드시 같이 저장합니다.
+  if (adminText) {
+    collected.push(`Admin-provided research metadata, abstract, description, and note fallback:\n${adminText}`);
+  }
+
   const finalText = cleanFetchedArticleText(collected.join("\n\n"));
-  return finalText.slice(0, 36000);
+  return finalText.slice(0, 42000);
 }
 
 async function fetchCrossrefKnowledge({ doi, title }) {
@@ -1872,11 +1922,14 @@ function extractDoiFromTextOrUrl(value) {
   const doiUrl = text.match(/https?:\/\/(?:dx\.)?doi\.org\/(10\.\d{4,9}\/[^\s)"'<>]+)/i);
   if (doiUrl) return cleanDoi(doiUrl[1]);
 
+  const doiLabel = text.match(/(?:doi|DOI)\s*[:=]\s*(10\.\d{4,9}\/[^\s)"'<>]+)/i);
+  if (doiLabel) return cleanDoi(doiLabel[1]);
+
   const doiParam = text.match(/[?&](?:doi|DOI)=([^&\s]+)/);
   if (doiParam) return cleanDoi(decodeURIComponent(doiParam[1]));
 
-  const doi = text.match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i);
-  if (doi) return cleanDoi(doi[0]);
+  const rawDoi = text.match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i);
+  if (rawDoi) return cleanDoi(rawDoi[0]);
 
   return "";
 }
@@ -1884,7 +1937,9 @@ function extractDoiFromTextOrUrl(value) {
 function cleanDoi(value) {
   return String(value || "")
     .replace(/^doi:/i, "")
-    .replace(/[.,;)\]}]+$/g, "")
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
+    .replace(/[\s"'<>]+$/g, "")
+    .replace(/[.,;:)\]}]+$/g, "")
     .trim();
 }
 
@@ -3017,29 +3072,64 @@ function mergeKnowledgeResults(items) {
   const seen = new Set();
   const merged = [];
 
-  for (const item of items || []) {
+  for (const rawItem of items || []) {
+    const item = normalizeKnowledgeItem(rawItem);
     if (!item) continue;
-    const key = normalizeSearchText(item.title || "") || normalizeSearchText(item.source_url || item.pdf_link || "");
+
+    const key =
+      normalizeSearchText(item.title || "") ||
+      normalizeSearchText(item.source_url || item.pdf_link || item.post_id || "");
+
     if (!key || seen.has(key)) continue;
+
     seen.add(key);
     merged.push(item);
   }
 
   return merged.sort((a, b) => {
-    const aContent = a?.content || a?.matched_chunk || "";
-    const bContent = b?.content || b?.matched_chunk || "";
+    const aContent = `${a?.title || ""}\n${a?.content || ""}\n${a?.matched_chunk || ""}`;
+    const bContent = `${b?.title || ""}\n${b?.content || ""}\n${b?.matched_chunk || ""}`;
+
+    const aExact = a?.from_exact_phrase_search ? 20 : 0;
+    const bExact = b?.from_exact_phrase_search ? 20 : 0;
+    const aDirect = a?.from_direct_db_search ? 12 : 0;
+    const bDirect = b?.from_direct_db_search ? 12 : 0;
+    const aPosts = a?.from_posts_fallback ? 6 : 0;
+    const bPosts = b?.from_posts_fallback ? 6 : 0;
     const aVector = a?.from_vector_search ? 3 : 0;
     const bVector = b?.from_vector_search ? 3 : 0;
-    const aScore = aVector + (hasScientificContent(aContent) ? 10 : 0) + Math.min(String(aContent).length / 1000, 5);
-    const bScore = bVector + (hasScientificContent(bContent) ? 10 : 0) + Math.min(String(bContent).length / 1000, 5);
+
+    const aScore =
+      aExact +
+      aDirect +
+      aPosts +
+      aVector +
+      (hasScientificContent(aContent) ? 10 : 0) +
+      Math.min(String(aContent).length / 1000, 5);
+
+    const bScore =
+      bExact +
+      bDirect +
+      bPosts +
+      bVector +
+      (hasScientificContent(bContent) ? 10 : 0) +
+      Math.min(String(bContent).length / 1000, 5);
+
     return bScore - aScore;
   });
 }
 
 function hasScientificContent(value) {
   const text = String(value || "").toLowerCase();
-  if (text.length < 120) return false;
-  return /abstract|admin abstract|description|result|discussion|method|conclusion|fetched article text|crossref|europe pmc|pubmed|pmc full text|논문|초록|결과|방법|요약/.test(text);
+
+  if (text.length < 80) return false;
+
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (/^(author|authors|journal|year|volume|number|pages|publisher|doi|url|pmid|pmcid|issn|isbn|keywords|month|note|booktitle|editor)\s*[=:]/.test(compact)) {
+    return false;
+  }
+
+  return /title:|abstract|admin abstract|description|admin description|result|discussion|method|conclusion|fetched article text|crossref|europe pmc|pubmed|pmc full text|rna velocity|spatial|single-cell|single cell|genomics|cancer|tumor|논문|초록|결과|방법|요약/.test(text);
 }
 
 async function createEmbedding(text, env) {
@@ -3123,6 +3213,15 @@ async function keywordFallbackSearch(query, env) {
   if (words.length >= 5) phrases.push(words.slice(0, 5).join(" "));
 
   const knownPhrases = [
+    "rna velocity",
+    "velocity",
+    "tfvelo",
+    "sirv",
+    "trajectory inference",
+    "pseudotime",
+    "cellrank",
+    "scvelo",
+    "dynamo",
     "single-cell spatial atlas",
     "high-grade serous ovarian cancer",
     "spatial tumor ecosystems",
@@ -3228,6 +3327,112 @@ function cleanBibtexText(value) {
     .trim();
 }
 
+
+function isMetadataOnlyTitle(value) {
+  const title = cleanBibtexText(value || "").trim().toLowerCase();
+
+  if (!title) return true;
+
+  // These are not paper titles. They usually appear when a BibTeX entry was
+  // split into metadata lines and inserted as separate knowledge rows.
+  if (/^(author|authors|journal|year|volume|number|pages|publisher|doi|url|pmid|pmcid|issn|isbn|abstract|keywords|month|note|booktitle|editor)\s*=/.test(title)) {
+    return true;
+  }
+
+  if (/^(author|authors|journal|year|volume|number|pages|publisher|doi|url|pmid|pmcid|issn|isbn|abstract|keywords|month|note|booktitle|editor)\s*:/.test(title)) {
+    return true;
+  }
+
+  if (title.length < 3) return true;
+
+  return false;
+}
+
+function extractTitleFromKnowledgeContent(content) {
+  const text = String(content || "");
+
+  const patterns = [
+    /(?:^|\n)\s*Title:\s*([^\n]{3,240})/i,
+    /(?:^|\n)\s*title\s*=\s*\{?([^\n}]{3,240})\}?/i,
+    /(?:^|\n)\s*citation_title:\s*([^\n]{3,240})/i,
+    /(?:^|\n)\s*dc\.title:\s*([^\n]{3,240})/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      const title = cleanBibtexText(match[1]);
+      if (!isMetadataOnlyTitle(title)) return title;
+    }
+  }
+
+  return "";
+}
+
+function makeBestEvidenceExcerpt(content) {
+  const text = cleanBibtexText(content || "");
+  if (!text) return "";
+
+  const markers = [
+    "Admin abstract:",
+    "Abstract:",
+    "Admin description:",
+    "Description:",
+    "Fetched article text from link:",
+    "Europe PMC",
+    "Crossref metadata",
+    "PMC full text",
+    "Results",
+    "Discussion",
+    "Conclusion",
+    "Method"
+  ];
+
+  const lower = text.toLowerCase();
+
+  for (const marker of markers) {
+    const index = lower.indexOf(marker.toLowerCase());
+    if (index >= 0) {
+      const start = Math.max(0, index - 250);
+      const end = Math.min(text.length, index + 1800);
+      return text.slice(start, end);
+    }
+  }
+
+  return text.slice(0, 1800);
+}
+
+function normalizeKnowledgeItem(item) {
+  if (!item) return null;
+
+  const content = cleanBibtexText(item.content || item.matched_chunk || "");
+  let title = cleanBibtexText(item.title || "");
+
+  if (isMetadataOnlyTitle(title)) {
+    const extractedTitle = extractTitleFromKnowledgeContent(content);
+    if (extractedTitle) title = extractedTitle;
+  }
+
+  if (isMetadataOnlyTitle(title)) return null;
+
+  const matchedChunk = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(content));
+
+  const evidenceText = `${title}\n${content}\n${matchedChunk}`;
+  if (!hasScientificContent(evidenceText)) return null;
+
+  return {
+    ...item,
+    title,
+    content,
+    matched_chunk: matchedChunk || content.slice(0, 1600)
+  };
+}
+
+function isUsefulPaperKnowledgeItem(item) {
+  return !!normalizeKnowledgeItem(item);
+}
+
+
 function normalizeSearchText(value) {
   return cleanBibtexText(value)
     .toLowerCase()
@@ -3289,7 +3494,7 @@ async function latestResearchKnowledge(env, limit = 8) {
       LIMIT ?
     `).bind(limit).all();
 
-    return latest.results || [];
+    return mergeKnowledgeResults(latest.results || []);
   } catch {
     return [];
   }
@@ -3764,7 +3969,8 @@ function makeFallbackResearchIntent(userMessage) {
 
 
 async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
-  const hasContext = Array.isArray(context) && context.length > 0;
+  context = mergeKnowledgeResults(Array.isArray(context) ? context : []).slice(0, 12);
+  const hasContext = context.length > 0;
 
   const intent = autoIntent || makeFallbackResearchIntent(userMessage);
   const questionType = normalizeQuestionType(intent.question_type || "GENERAL");
@@ -3786,7 +3992,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
   const contextText = hasContext
     ? context.slice(0, 10).map((item, index) => {
         const title = cleanBibtexText(item.title || "");
-        const excerpt = cleanBibtexText(item.matched_chunk || item.content || "").slice(0, 1400);
+        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 1600);
 
         return [
           `DB_SOURCE_${index + 1}`,
@@ -3842,6 +4048,10 @@ For research-related answers:
 
 Allowed Paper_Talk DB titles:
 ${dbTitles.map((title, index) => `${index + 1}. ${title}`).join("\n")}
+
+Important:
+The retrieval layer already removed metadata-only rows such as author=, journal=, year=, doi=, url=.
+Use the EXACT_DB_TITLE values above as the only paper names.
     `.trim()
     : `
 STRICT PAPER_TALK DB-ONLY RULES FOR RESEARCH ANSWERS
