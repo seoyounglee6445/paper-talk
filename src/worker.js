@@ -21,6 +21,9 @@ Paper_Talk v22 update - batch-safe reindex + subrequest-safe DOI/title learning:
 - v22: /api/admin/research/import-linkedin-csv now accepts both LinkedIn CSV and BibTeX text.
 - v22: BibTeX is parsed entry-by-entry so title/author/journal/year/doi/url/abstract stay in one paper record.
 - v22: Prevents @article keys, author lines, journal lines, and year lines from being stored as fake paper titles.
+- v23: Adds JSON-safe aliases for legacy chat endpoints (/api/chat, /api/research-chat, /api/paper-talk, /api/papertalk) so frontend route mismatches do not return HTML.
+- v23: GPT chat accepts message/question/prompt/query and threadId/chatId/thread_id for compatibility with older frontend code.
+- v23: API fallback and API catch responses include path/method and always return application/json.
 */
 
 export default {
@@ -67,6 +70,22 @@ export default {
       if (pathname.startsWith("/api/gpt/threads/") && request.method === "DELETE") return deleteGptThread(request, env);
       if (pathname === "/api/gpt/messages" && request.method === "GET") return listGptMessages(request, env);
       if (pathname === "/api/gpt/chat" && request.method === "POST") return gptChat(request, env);
+
+      // v23 compatibility aliases:
+      // Older frontend builds sometimes call these endpoints instead of /api/gpt/chat.
+      // Keep them JSON-safe and route them to the same Paper_Talk GPT handler.
+      if (
+        (
+          pathname === "/api/chat" ||
+          pathname === "/api/research-chat" ||
+          pathname === "/api/paper-talk" ||
+          pathname === "/api/papertalk" ||
+          pathname === "/api/research/gpt/chat"
+        ) &&
+        request.method === "POST"
+      ) {
+        return gptChat(request, env);
+      }
 
       if (pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
       if (pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
@@ -133,7 +152,9 @@ export default {
       if (pathname.startsWith("/api/")) {
         return json({
           ok: false,
-          error: `API route not found: ${pathname}`
+          error: `API route not found: ${pathname}`,
+          path: pathname,
+          method: request.method
         }, 404);
       }
 
@@ -144,7 +165,9 @@ export default {
       if (pathname.startsWith("/api/")) {
         return json({
           ok: false,
-          error: error?.message || "Worker server error"
+          error: error?.message || "Worker server error",
+          path: pathname,
+          method: request.method
         }, 500);
       }
 
@@ -3387,11 +3410,32 @@ async function gptChat(request, env) {
   }
 
   const data = await request.json().catch(() => ({}));
-  const message = String(data.message || "").trim();
-  let threadId = String(data.threadId || "").trim();
+
+  // v23 compatibility:
+  // New frontend uses "message", but older Paper_Talk pages may send "question",
+  // "prompt", or "query". Accept all of them so the API returns a useful JSON
+  // response instead of failing silently on mismatched request bodies.
+  const message = String(
+    data.message ||
+    data.question ||
+    data.prompt ||
+    data.query ||
+    ""
+  ).trim();
+
+  let threadId = String(
+    data.threadId ||
+    data.chatId ||
+    data.thread_id ||
+    ""
+  ).trim();
 
   if (!message) {
-    return json({ ok: false, error: "Message is required." }, 400);
+    return json({
+      ok: false,
+      error: "Message is required.",
+      hint: "Send JSON body with one of: message, question, prompt, or query."
+    }, 400);
   }
 
   const quotaBefore = await getMonthlyGptQuota(user.id, env, user);
