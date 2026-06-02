@@ -19,6 +19,7 @@ Additional timeout-safe changes in this revised file:
 - Adds /api/test-openai to test the real OpenAI request, not only secret existence.
 - Adds JSON-safe OpenAI response parsing so HTML/error pages do not crash the frontend as "Unexpected token <".
 - Uses gpt-4o-mini as the safe default model when OPENAI_MODEL is not set.
+- v14 adds Semantic Scholar and OpenAlex lookup for LinkedIn/BibTeX title-only rows when Crossref/Europe PMC cannot find abstracts.
 */
 
 export default {
@@ -1754,56 +1755,79 @@ async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink, adminText 
 
   const collected = [];
 
+  async function tryAdd(label, fn) {
+    try {
+      const value = await fn();
+      if (value) collected.push(value);
+    } catch (error) {
+      collected.push(`${label} failed: ${error?.message || "unknown error"}`);
+    }
+  }
+
+  // 1) DOI가 있으면 DOI 기반 API를 먼저 조회합니다.
   if (doi) {
-    try {
-      const crossref = await fetchCrossrefKnowledge({ doi, title: normalizedTitle });
-      if (crossref) collected.push(crossref);
-    } catch (error) {
-      collected.push(`Crossref DOI lookup failed for ${doi}: ${error?.message || "unknown error"}`);
-    }
-
-    try {
-      const europePmc = await fetchEuropePmcKnowledge({ doi, title: normalizedTitle });
-      if (europePmc) collected.push(europePmc);
-    } catch (error) {
-      collected.push(`Europe PMC DOI lookup failed for ${doi}: ${error?.message || "unknown error"}`);
-    }
+    await tryAdd(`Crossref DOI lookup for ${doi}`, () =>
+      fetchCrossrefKnowledge({ doi, title: normalizedTitle })
+    );
+    await tryAdd(`Europe PMC DOI lookup for ${doi}`, () =>
+      fetchEuropePmcKnowledge({ doi, title: normalizedTitle })
+    );
+    await tryAdd(`Semantic Scholar DOI lookup for ${doi}`, () =>
+      fetchSemanticScholarKnowledge({ doi, title: normalizedTitle })
+    );
+    await tryAdd(`OpenAlex DOI lookup for ${doi}`, () =>
+      fetchOpenAlexKnowledge({ doi, title: normalizedTitle })
+    );
   }
 
-  if (!doi && normalizedTitle) {
-    try {
-      const crossref = await fetchCrossrefKnowledge({ doi: "", title: normalizedTitle });
-      if (crossref) collected.push(crossref);
-    } catch {
-      // Continue with Europe PMC and direct link fallback.
-    }
-
-    try {
-      const europePmc = await fetchEuropePmcKnowledge({ doi: "", title: normalizedTitle });
-      if (europePmc) collected.push(europePmc);
-    } catch {
-      // Continue with direct link fallback.
-    }
+  // 2) DOI가 없거나 DOI 결과가 약하면 title 기반 API를 폭넓게 조회합니다.
+  if (normalizedTitle) {
+    await tryAdd(`Crossref title lookup for ${normalizedTitle}`, () =>
+      fetchCrossrefKnowledge({ doi: "", title: normalizedTitle })
+    );
+    await tryAdd(`Europe PMC title lookup for ${normalizedTitle}`, () =>
+      fetchEuropePmcKnowledge({ doi: "", title: normalizedTitle })
+    );
+    await tryAdd(`Semantic Scholar title lookup for ${normalizedTitle}`, () =>
+      fetchSemanticScholarKnowledge({ doi: "", title: normalizedTitle })
+    );
+    await tryAdd(`OpenAlex title lookup for ${normalizedTitle}`, () =>
+      fetchOpenAlexKnowledge({ doi: "", title: normalizedTitle })
+    );
   }
 
+  // 3) Article Link / PDF Link 직접 접근을 시도합니다.
   for (const url of urls) {
-    try {
-      const item = await fetchReadableArticleText(url, normalizedTitle);
-      if (item) collected.push(item);
-    } catch (error) {
-      collected.push(`Direct article-link fetch failed for ${url}: ${error?.message || "unknown error"}`);
-    }
+    await tryAdd(`Direct article-link fetch for ${url}`, () =>
+      fetchReadableArticleText(url, normalizedTitle)
+    );
   }
 
-  // DOI/링크에서 충분히 학습하지 못해도 사용자가 넣은 abstract/description/note는 반드시 같이 저장합니다.
+  // 4) DOI/링크에서 충분히 학습하지 못해도 사용자가 넣은 abstract/description/note는 반드시 같이 저장합니다.
   if (adminText) {
     collected.push(`Admin-provided research metadata, abstract, description, and note fallback:\n${adminText}`);
   }
 
-  const finalText = cleanFetchedArticleText(collected.join("\n\n"));
-  return finalText.slice(0, 42000);
+  const finalText = cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n"));
+  return finalText.slice(0, 52000);
 }
 
+function dedupeTextBlocks(items) {
+  const seen = new Set();
+  const output = [];
+
+  for (const item of items || []) {
+    const cleaned = cleanFetchedArticleText(item || "");
+    if (!cleaned) continue;
+
+    const key = cleaned.toLowerCase().slice(0, 500);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(cleaned);
+  }
+
+  return output;
+}
 
 function normalizeTitleForMatching(value) {
   return normalizeSearchText(
@@ -1861,7 +1885,7 @@ function bestCandidateByTitle(items, wantedTitle, getTitle) {
     const score = titleSimilarityScore(wantedTitle, itemTitle);
 
     const hasAbstract =
-      Boolean(item?.abstract || item?.abstractText);
+      Boolean(item?.abstract || item?.abstractText || item?.abstract_inverted_index);
 
     const adjustedScore = score + (hasAbstract ? 0.08 : 0);
 
@@ -2010,6 +2034,119 @@ async function fetchEuropePmcKnowledge({ doi, title }) {
   }
 
   return "";
+}
+
+
+async function fetchSemanticScholarKnowledge({ doi, title }) {
+  const wantedTitle = cleanBibtexText(title || "");
+  let paper = null;
+
+  if (doi) {
+    const url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(doi)}?fields=title,abstract,year,authors,venue,url,externalIds`;
+    const data = await fetchJsonWithTimeout(url, 20000);
+    if (data && data.title) paper = data;
+  }
+
+  if (!paper && wantedTitle) {
+    for (const variant of buildTitleSearchVariants(wantedTitle)) {
+      const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(variant)}&limit=10&fields=title,abstract,year,authors,venue,url,externalIds`;
+      const data = await fetchJsonWithTimeout(url, 20000);
+      const items = data?.data || [];
+      paper = bestCandidateByTitle(items, wantedTitle, item => String(item?.title || ""));
+      if (paper && (paper.abstract || titleSimilarityScore(wantedTitle, paper.title || "") >= 0.55)) break;
+    }
+  }
+
+  if (!paper) return "";
+
+  const authors = Array.isArray(paper.authors)
+    ? paper.authors.slice(0, 20).map(a => a.name).filter(Boolean).join(", ")
+    : "";
+  const externalIds = paper.externalIds || {};
+  const doiText = externalIds.DOI || doi || "";
+  const pmid = externalIds.PubMed || "";
+  const arxiv = externalIds.ArXiv || "";
+  const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, paper.title || "").toFixed(2) : "1.00";
+
+  const pieces = [
+    "Semantic Scholar article data from DOI/title search:",
+    paper.title ? `Title: ${paper.title}` : "",
+    wantedTitle ? `Title match score: ${matchScore}` : "",
+    authors ? `Authors: ${authors}` : "",
+    paper.venue ? `Venue: ${paper.venue}` : "",
+    paper.year ? `Year: ${paper.year}` : "",
+    doiText ? `DOI: ${doiText}` : "",
+    pmid ? `PMID: ${pmid}` : "",
+    arxiv ? `arXiv: ${arxiv}` : "",
+    paper.url ? `URL: ${paper.url}` : "",
+    paper.abstract ? `Abstract: ${cleanFetchedArticleText(paper.abstract)}` : ""
+  ].filter(Boolean);
+
+  return pieces.join("\n");
+}
+
+async function fetchOpenAlexKnowledge({ doi, title }) {
+  const wantedTitle = cleanBibtexText(title || "");
+  let work = null;
+
+  if (doi) {
+    const clean = cleanDoi(doi);
+    const url = `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(clean)}`;
+    const data = await fetchJsonWithTimeout(url, 20000);
+    if (data && data.display_name) work = data;
+  }
+
+  if (!work && wantedTitle) {
+    for (const variant of buildTitleSearchVariants(wantedTitle)) {
+      const url = `https://api.openalex.org/works?search=${encodeURIComponent(variant)}&per-page=10`;
+      const data = await fetchJsonWithTimeout(url, 20000);
+      const items = data?.results || [];
+      work = bestCandidateByTitle(items, wantedTitle, item => String(item?.display_name || item?.title || ""));
+      if (work && (work.abstract_inverted_index || titleSimilarityScore(wantedTitle, work.display_name || "") >= 0.55)) break;
+    }
+  }
+
+  if (!work) return "";
+
+  const abstract = decodeOpenAlexAbstract(work.abstract_inverted_index);
+  const authors = Array.isArray(work.authorships)
+    ? work.authorships.slice(0, 20).map(a => a.author?.display_name).filter(Boolean).join(", ")
+    : "";
+  const venue = work.primary_location?.source?.display_name || work.host_venue?.display_name || "";
+  const doiText = work.doi ? cleanDoi(work.doi) : (doi || "");
+  const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, work.display_name || "").toFixed(2) : "1.00";
+
+  const pieces = [
+    "OpenAlex article data from DOI/title search:",
+    work.display_name ? `Title: ${work.display_name}` : "",
+    wantedTitle ? `Title match score: ${matchScore}` : "",
+    authors ? `Authors: ${authors}` : "",
+    venue ? `Journal/Venue: ${venue}` : "",
+    work.publication_year ? `Year: ${work.publication_year}` : "",
+    doiText ? `DOI: ${doiText}` : "",
+    work.id ? `OpenAlex ID: ${work.id}` : "",
+    work.landing_page_url ? `URL: ${work.landing_page_url}` : "",
+    abstract ? `Abstract: ${abstract}` : ""
+  ].filter(Boolean);
+
+  return pieces.join("\n");
+}
+
+function decodeOpenAlexAbstract(invertedIndex) {
+  if (!invertedIndex || typeof invertedIndex !== "object") return "";
+
+  const positions = [];
+  for (const [word, indexes] of Object.entries(invertedIndex)) {
+    if (!Array.isArray(indexes)) continue;
+    for (const index of indexes) {
+      positions.push([Number(index), word]);
+    }
+  }
+
+  if (!positions.length) return "";
+
+  positions.sort((a, b) => a[0] - b[0]);
+  return cleanFetchedArticleText(positions.map(item => item[1]).join(" "));
 }
 
 async function fetchPmcFullText(pmcid) {
