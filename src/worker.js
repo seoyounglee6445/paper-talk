@@ -1,5 +1,5 @@
 /*
-Paper_Talk v21 update - batch-safe reindex + subrequest-safe DOI/title learning:
+Paper_Talk v22 update - batch-safe reindex + subrequest-safe DOI/title learning:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -18,6 +18,9 @@ Paper_Talk v21 update - batch-safe reindex + subrequest-safe DOI/title learning:
 - v20: Admin-entered Abstract/Description/Note are treated as first-class GPT knowledge.
 - v20: If DOI/title lookup fails, manual Admin abstract is still indexed as trusted Paper_Talk DB evidence.
 - v21: External article learning order is DOI/title -> Crossref -> PubMed -> Europe PMC -> Semantic Scholar -> OpenAlex -> Admin abstract fallback.
+- v22: /api/admin/research/import-linkedin-csv now accepts both LinkedIn CSV and BibTeX text.
+- v22: BibTeX is parsed entry-by-entry so title/author/journal/year/doi/url/abstract stay in one paper record.
+- v22: Prevents @article keys, author lines, journal lines, and year lines from being stored as fake paper titles.
 */
 
 export default {
@@ -1033,12 +1036,22 @@ async function adminImportLinkedInCsv(request, env) {
   }
 
   const data = await request.json().catch(() => ({}));
-  const csvText = String(data.csvText || "").trim();
+  const rawText = String(data.csvText || data.bibText || data.text || "").trim();
 
-  if (!csvText) {
-    return json({ ok: false, error: "CSV text is required." }, 400);
+  if (!rawText) {
+    return json({ ok: false, error: "CSV or BibTeX text is required." }, 400);
   }
 
+  // v22: same endpoint supports both LinkedIn CSV and BibTeX.
+  // BibTeX must be parsed by entry, not by line.
+  if (looksLikeBibtex(rawText)) {
+    return adminImportBibtexText(rawText, env);
+  }
+
+  return adminImportLinkedInCsvText(rawText, env);
+}
+
+async function adminImportLinkedInCsvText(csvText, env) {
   const rows = parseCsv(csvText);
 
   if (!rows.length) {
@@ -1058,10 +1071,15 @@ async function adminImportLinkedInCsv(request, env) {
         continue;
       }
 
-      const fingerprint = normalized.sourceUrl || normalized.content.slice(0, 300);
-      const postId = "linkedin_" + await sha256Hex(fingerprint);
+      const title = cleanBibtexText(normalized.title || makeTitleFromText(normalized.content)).trim();
 
-      const title = normalized.title || makeTitleFromText(normalized.content);
+      if (!title || isMetadataOnlyTitle(title)) {
+        skipped++;
+        continue;
+      }
+
+      const fingerprint = normalized.sourceUrl || `${title}:${normalized.content.slice(0, 300)}`;
+      const postId = "linkedin_" + await sha256Hex(fingerprint);
 
       const content = [
         `Source: LinkedIn post by SEO YOUNG Lee`,
@@ -1111,7 +1129,7 @@ async function adminImportLinkedInCsv(request, env) {
       imported++;
     } catch (error) {
       skipped++;
-      errors.push(error?.message || "Unknown import error");
+      errors.push(error?.message || "Unknown CSV import error");
     }
   }
 
@@ -1119,10 +1137,332 @@ async function adminImportLinkedInCsv(request, env) {
     ok: true,
     imported,
     skipped,
+    sourceType: "linkedin_csv",
     errors: errors.slice(0, 10),
-    message: `Imported ${imported} LinkedIn posts. Skipped: ${skipped}`
+    message: `Imported ${imported} LinkedIn CSV rows. Skipped: ${skipped}`
   });
 }
+
+async function adminImportBibtexText(bibText, env) {
+  const entries = parseBibtexEntries(bibText);
+
+  if (!entries.length) {
+    return json({ ok: false, error: "No BibTeX entries found." }, 400);
+  }
+
+  let imported = 0;
+  let skipped = 0;
+  const errors = [];
+
+  for (const entry of entries) {
+    try {
+      const title = cleanBibtexText(entry.fields.title || "").trim();
+
+      if (!title || isMetadataOnlyTitle(title)) {
+        skipped++;
+        continue;
+      }
+
+      const authors = cleanBibtexText(entry.fields.author || "");
+      const journal = cleanBibtexText(entry.fields.journal || entry.fields.booktitle || entry.fields.publisher || "");
+      const year = cleanBibtexText(entry.fields.year || "");
+      const abstract = cleanBibtexText(entry.fields.abstract || "");
+      const keywords = cleanBibtexText(entry.fields.keywords || entry.fields.keyword || "");
+      const doi = cleanDoi(entry.fields.doi || extractDoiFromTextOrUrl(entry.raw || ""));
+
+      const sourceUrl =
+        String(entry.fields.url || "").trim() ||
+        (doi ? `https://doi.org/${doi}` : "") ||
+        extractFirstUrl(entry.raw || "");
+
+      const pdfLink =
+        String(entry.fields.pdf || entry.fields.file || "").trim() ||
+        extractDoiOrPdfLink(entry.raw || "");
+
+      const fingerprint = doi || sourceUrl || `${title}:${authors}:${journal}:${year}`;
+      const postId = "bibtex_" + await sha256Hex(fingerprint);
+
+      const adminText = [
+        title,
+        authors,
+        journal,
+        year,
+        abstract,
+        keywords,
+        doi,
+        sourceUrl,
+        pdfLink
+      ].filter(Boolean).join("\n");
+
+      const fetchedArticle = await fetchArticleKnowledgeText({
+        title,
+        sourceUrl,
+        pdfLink,
+        adminText,
+        includeAdminFallback: false
+      });
+
+      const hasExternalEvidence = containsExternalArticleData(fetchedArticle);
+      const hasAdminAbstract = abstract.length >= 80;
+
+      const content = [
+        `Paper_Talk DB Research Paper`,
+        `Reindex checked version: v22`,
+        `Imported source: LinkedIn/BibTeX`,
+        `BibTeX parsed import: true`,
+        `Title: ${title}`,
+        doi ? `DOI: ${doi}` : "",
+        hasExternalEvidence
+          ? `External article learning status: found`
+          : hasAdminAbstract
+            ? `External article learning status: admin_abstract_found`
+            : `External article learning status: not_found`,
+        authors ? `Authors: ${authors}` : "",
+        journal ? `Journal: ${journal}` : "",
+        year ? `Year: ${year}` : "",
+        keywords ? `Keywords: ${keywords}` : "",
+        hasAdminAbstract ? `Paper_Talk admin-curated knowledge:\nAdmin-curated abstract:\n${abstract}` : "",
+        hasExternalEvidence ? `DOI / title / article-link learned text:\n${fetchedArticle}` : "",
+        !hasExternalEvidence && hasAdminAbstract
+          ? `DOI / title lookup note: No external abstract was found, so Paper_Talk uses the BibTeX/admin abstract as the primary evidence.`
+          : "",
+        !hasExternalEvidence && !hasAdminAbstract
+          ? `Clean title-only fallback: No external abstract was found from DOI/title APIs. This row can still be used as a bibliographic hit, but should not be treated as abstract/full-text evidence.`
+          : "",
+        sourceUrl ? `Article link: ${sourceUrl}` : "",
+        pdfLink ? `PDF link: ${pdfLink}` : "",
+        `Clean imported source text:\n${buildCleanBibtexSourceText(entry)}`
+      ].filter(Boolean).join("\n\n");
+
+      await env.DB.prepare(`
+        INSERT INTO research_knowledge (
+          id,
+          post_id,
+          title,
+          source_url,
+          pdf_link,
+          content,
+          status,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP)
+        ON CONFLICT(post_id) DO UPDATE SET
+          title = excluded.title,
+          source_url = excluded.source_url,
+          pdf_link = excluded.pdf_link,
+          content = excluded.content,
+          status = 'indexed',
+          updated_at = CURRENT_TIMESTAMP
+      `).bind(
+        crypto.randomUUID(),
+        postId,
+        title,
+        sourceUrl || "",
+        pdfLink || "",
+        content
+      ).run();
+
+      await upsertResearchKnowledgeVectors({
+        postId,
+        title,
+        sourceUrl: sourceUrl || "",
+        pdfLink: pdfLink || "",
+        content
+      }, env);
+
+      imported++;
+      await sleep(50);
+    } catch (error) {
+      skipped++;
+      errors.push(error?.message || "Unknown BibTeX import error");
+    }
+  }
+
+  return json({
+    ok: true,
+    imported,
+    skipped,
+    sourceType: "bibtex",
+    errors: errors.slice(0, 10),
+    message: `Imported ${imported} BibTeX papers. Skipped: ${skipped}`
+  });
+}
+
+function looksLikeBibtex(text) {
+  return /@(?:article|book|inproceedings|proceedings|misc|preprint|dataset|phdthesis|mastersthesis)\s*\{/i.test(String(text || ""));
+}
+
+function parseBibtexEntries(bibText) {
+  const text = String(bibText || "").replace(/^\uFEFF/, "");
+  const entries = [];
+  let i = 0;
+
+  while (i < text.length) {
+    const relativeAt = text.slice(i).search(/@[A-Za-z]+\s*\{/);
+    if (relativeAt < 0) break;
+
+    const start = i + relativeAt;
+    const open = text.indexOf("{", start);
+    if (open < 0) break;
+
+    let depth = 0;
+    let inQuote = false;
+    let escaped = false;
+    let end = -1;
+
+    for (let j = open; j < text.length; j++) {
+      const ch = text[j];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+
+      if (ch === '"' && depth > 0) {
+        inQuote = !inQuote;
+      }
+
+      if (!inQuote) {
+        if (ch === "{") depth++;
+        if (ch === "}") depth--;
+
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+
+    if (end < 0) break;
+
+    const raw = text.slice(start, end + 1);
+    const typeMatch = raw.match(/^@([A-Za-z]+)\s*\{/);
+    const body = raw.slice(raw.indexOf("{") + 1, -1);
+    const comma = body.indexOf(",");
+    const key = comma >= 0 ? body.slice(0, comma).trim() : "";
+    const fieldsText = comma >= 0 ? body.slice(comma + 1) : body;
+
+    entries.push({
+      raw,
+      type: typeMatch ? typeMatch[1].toLowerCase() : "",
+      key,
+      fields: parseBibtexFields(fieldsText)
+    });
+
+    i = end + 1;
+  }
+
+  return entries;
+}
+
+function parseBibtexFields(fieldsText) {
+  const fields = {};
+  const text = String(fieldsText || "");
+  let i = 0;
+
+  while (i < text.length) {
+    while (i < text.length && /[\s,]/.test(text[i])) i++;
+
+    const nameMatch = text.slice(i).match(/^([A-Za-z][A-Za-z0-9_\-]*)\s*=/);
+    if (!nameMatch) {
+      i++;
+      continue;
+    }
+
+    const name = nameMatch[1].toLowerCase();
+    i += nameMatch[0].length;
+
+    while (i < text.length && /\s/.test(text[i])) i++;
+
+    let value = "";
+
+    if (text[i] === "{") {
+      const parsed = readBalancedBibtexValue(text, i, "{", "}");
+      value = parsed.value;
+      i = parsed.end + 1;
+    } else if (text[i] === '"') {
+      const parsed = readBalancedBibtexValue(text, i, '"', '"');
+      value = parsed.value;
+      i = parsed.end + 1;
+    } else {
+      const start = i;
+      while (i < text.length && text[i] !== "," && text[i] !== "\n" && text[i] !== "\r") i++;
+      value = text.slice(start, i).trim();
+    }
+
+    fields[name] = cleanBibtexText(value);
+  }
+
+  return fields;
+}
+
+function readBalancedBibtexValue(text, start, openChar, closeChar) {
+  let i = start + 1;
+  let depth = openChar === "{" ? 1 : 0;
+  let escaped = false;
+  let value = "";
+
+  for (; i < text.length; i++) {
+    const ch = text[i];
+
+    if (escaped) {
+      value += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (openChar === "{") {
+      if (ch === "{") {
+        depth++;
+        value += ch;
+        continue;
+      }
+
+      if (ch === "}") {
+        depth--;
+        if (depth === 0) break;
+        value += ch;
+        continue;
+      }
+
+      value += ch;
+      continue;
+    }
+
+    if (ch === closeChar) break;
+    value += ch;
+  }
+
+  return {
+    value,
+    end: i
+  };
+}
+
+function buildCleanBibtexSourceText(entry) {
+  const f = entry?.fields || {};
+  return [
+    f.title ? `Title: ${cleanBibtexText(f.title)}` : "",
+    f.author ? `Authors: ${cleanBibtexText(f.author)}` : "",
+    f.journal || f.booktitle ? `Journal: ${cleanBibtexText(f.journal || f.booktitle)}` : "",
+    f.year ? `Year: ${cleanBibtexText(f.year)}` : "",
+    f.doi ? `DOI: ${cleanDoi(f.doi)}` : "",
+    f.url ? `URL: ${String(f.url).trim()}` : "",
+    f.abstract ? `Abstract: ${cleanBibtexText(f.abstract)}` : "",
+    f.keywords || f.keyword ? `Keywords: ${cleanBibtexText(f.keywords || f.keyword)}` : ""
+  ].filter(Boolean).join("\n").slice(0, 8000);
+}
+
 
 function parseCsv(csvText) {
   const text = String(csvText || "").replace(/^\uFEFF/, "");
@@ -1309,7 +1649,7 @@ async function adminReindexResearchPapers(request, env) {
 
   const url = new URL(request.url);
   const batchLimit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 50);
-  const reindexMarker = "Reindex checked version: v21";
+  const reindexMarker = "Reindex checked version: v22";
 
   let indexed = 0;
   let legacyIndexed = 0;
@@ -1499,7 +1839,7 @@ async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
 
   const learnedContent = [
     `Paper_Talk DB Research Paper`,
-    `Reindex checked version: v21`,
+    `Reindex checked version: v22`,
     `Imported source: LinkedIn/BibTeX`,
     `Title: ${safeTitle}`,
     doi ? `DOI: ${doi}` : "",
@@ -1803,7 +2143,7 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
 
   const content = [
     `Paper_Talk DB Research Paper`,
-    `Reindex checked version: v21`,
+    `Reindex checked version: v22`,
     `Title: ${safeTitle}`,
     `Knowledge source: ${knowledgeSource}`,
     `External article learning status: ${learningStatus}`,
