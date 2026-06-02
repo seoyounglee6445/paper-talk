@@ -1,11 +1,12 @@
 /*
-Paper_Talk v12 update - DB-only Literature Reasoning Engine + LinkedIn/BibTeX reindex learning:
+Paper_Talk v13 update - stronger Crossref/Europe PMC title matching for LinkedIn/BibTeX reindex:
 - Adds automatic question-type recognition before answering.
 - Concept / definition / overview questions are answered as educational explanations, not forced into hypothesis generation.
 - Research-direction questions still trigger DB-grounded paper retrieval, knowledge-gap analysis, hypothesis generation, and validation strategy.
 - Validation / experiment questions trigger validation-planning mode.
 - Literature / research-related questions use the Paper_Talk paper DB as evidence and compare papers when research judgment is needed.
-- Reindex now includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge and refreshes them via DOI/title Crossref + Europe PMC learning.
+- Reindex includes legacy LinkedIn/BibTeX rows and refreshes them via DOI/title Crossref + Europe PMC learning.
+- v13 strengthens title-only learning with Crossref rows=10, Europe PMC pageSize=10, title variants, and fuzzy title matching.
 - General questions are answered normally without forced paper comparison.
 - Monthly GPT quota remains stored separately from chat messages, so logout/login or deleting threads does not reset usage.
 Additional timeout-safe changes in this revised file:
@@ -1803,35 +1804,149 @@ async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink, adminText 
   return finalText.slice(0, 42000);
 }
 
+
+function normalizeTitleForMatching(value) {
+  return normalizeSearchText(
+    String(value || "")
+      .replace(/^title\s*=\s*/i, "")
+      .replace(/[{}]/g, " ")
+      .replace(/\b(article|paper|preprint|protocol|review)\b/gi, " ")
+  );
+}
+
+function titleTokenSet(value) {
+  const stop = new Set([
+    "the", "and", "for", "with", "from", "into", "using", "based", "study",
+    "analysis", "single", "cell", "cells", "rna", "seq", "sequencing"
+  ]);
+
+  return normalizeTitleForMatching(value)
+    .split(/\s+/)
+    .map(v => v.trim())
+    .filter(v => v.length >= 3 && !stop.has(v));
+}
+
+function titleSimilarityScore(a, b) {
+  const aNorm = normalizeTitleForMatching(a);
+  const bNorm = normalizeTitleForMatching(b);
+
+  if (!aNorm || !bNorm) return 0;
+  if (aNorm === bNorm) return 1;
+  if (aNorm.includes(bNorm) || bNorm.includes(aNorm)) return 0.92;
+
+  const aTokens = new Set(titleTokenSet(aNorm));
+  const bTokens = new Set(titleTokenSet(bNorm));
+
+  if (!aTokens.size || !bTokens.size) return 0;
+
+  let overlap = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) overlap++;
+  }
+
+  const precision = overlap / aTokens.size;
+  const recall = overlap / bTokens.size;
+  const f1 = precision + recall ? (2 * precision * recall) / (precision + recall) : 0;
+
+  return f1;
+}
+
+function bestCandidateByTitle(items, wantedTitle, getTitle) {
+  const candidates = Array.isArray(items) ? items : [];
+  let best = null;
+  let bestScore = 0;
+
+  for (const item of candidates) {
+    const itemTitle = getTitle(item);
+    const score = titleSimilarityScore(wantedTitle, itemTitle);
+
+    const hasAbstract =
+      Boolean(item?.abstract || item?.abstractText);
+
+    const adjustedScore = score + (hasAbstract ? 0.08 : 0);
+
+    if (adjustedScore > bestScore) {
+      best = item;
+      bestScore = adjustedScore;
+    }
+  }
+
+  // Use a moderate threshold because many imported BibTeX/LinkedIn titles are slightly normalized.
+  if (best && bestScore >= 0.38) return best;
+
+  // If no fuzzy match passes, prefer a result with an abstract, otherwise the first result.
+  return candidates.find(item => item?.abstract || item?.abstractText) || candidates[0] || null;
+}
+
+function getCrossrefItemTitle(item) {
+  return Array.isArray(item?.title) ? item.title.join(" ") : String(item?.title || "");
+}
+
+function buildTitleSearchVariants(title) {
+  const clean = cleanBibtexText(title || "");
+  const normalized = normalizeTitleForMatching(clean);
+
+  const tokens = normalized
+    .split(/\s+/)
+    .filter(v => v.length >= 4);
+
+  const variants = [
+    clean,
+    normalized,
+    tokens.slice(0, 8).join(" "),
+    tokens.filter(v => !["single", "cell", "cells", "using", "based"].includes(v)).slice(0, 8).join(" ")
+  ];
+
+  return [...new Set(variants.map(v => cleanFetchedArticleText(v)).filter(v => v.length >= 6))];
+}
+
 async function fetchCrossrefKnowledge({ doi, title }) {
-  let url = "";
+  const wantedTitle = cleanBibtexText(title || "");
+  let item = null;
 
   if (doi) {
-    url = `https://api.crossref.org/works/${encodeURIComponent(doi)}`;
-  } else if (title) {
-    url = `https://api.crossref.org/works?rows=1&query.title=${encodeURIComponent(title)}`;
+    const url = `https://api.crossref.org/works/${encodeURIComponent(doi)}`;
+    const data = await fetchJsonWithTimeout(url, 20000);
+    item = data?.message || null;
+  } else if (wantedTitle) {
+    const variants = buildTitleSearchVariants(wantedTitle);
+
+    for (const variant of variants) {
+      const url =
+        `https://api.crossref.org/works?rows=10&query.title=${encodeURIComponent(variant)}&select=DOI,title,author,container-title,published-print,published-online,published,URL,abstract,type`;
+
+      const data = await fetchJsonWithTimeout(url, 20000);
+      const items = data?.message?.items || [];
+
+      item = bestCandidateByTitle(items, wantedTitle, getCrossrefItemTitle);
+
+      if (item) break;
+    }
   } else {
     return "";
   }
 
-  const data = await fetchJsonWithTimeout(url, 20000);
-  const item = doi ? data?.message : data?.message?.items?.[0];
-
   if (!item) return "";
 
-  const titleText = Array.isArray(item.title) ? item.title.join(" ") : "";
+  const titleText = getCrossrefItemTitle(item);
   const abstract = item.abstract ? cleanCrossrefAbstract(item.abstract) : "";
   const container = Array.isArray(item["container-title"]) ? item["container-title"].join(" ") : "";
-  const published = item.published?.["date-parts"]?.[0]?.join("-") || "";
+  const published =
+    item.published?.["date-parts"]?.[0]?.join("-") ||
+    item["published-print"]?.["date-parts"]?.[0]?.join("-") ||
+    item["published-online"]?.["date-parts"]?.[0]?.join("-") ||
+    "";
   const authors = Array.isArray(item.author)
     ? item.author.slice(0, 20).map(a => [a.given, a.family].filter(Boolean).join(" ")).filter(Boolean).join(", ")
     : "";
   const doiText = item.DOI || doi || "";
   const urlText = item.URL || "";
+  const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, titleText).toFixed(2) : "1.00";
 
   const pieces = [
-    "Crossref metadata from article DOI/title:",
+    "Crossref metadata from DOI/title search:",
     titleText ? `Title: ${titleText}` : "",
+    wantedTitle ? `Title match score: ${matchScore}` : "",
     authors ? `Authors: ${authors}` : "",
     container ? `Journal: ${container}` : "",
     published ? `Published: ${published}` : "",
@@ -1844,24 +1959,36 @@ async function fetchCrossrefKnowledge({ doi, title }) {
 }
 
 async function fetchEuropePmcKnowledge({ doi, title }) {
+  const wantedTitle = cleanBibtexText(title || "");
   const queries = [];
 
   if (doi) queries.push(`DOI:"${doi}"`);
-  if (title) queries.push(`TITLE:"${title.replace(/"/g, " ")}"`);
 
-  for (const query of queries) {
+  for (const variant of buildTitleSearchVariants(wantedTitle)) {
+    queries.push(`TITLE:"${variant.replace(/"/g, " ")}"`);
+    queries.push(variant.replace(/"/g, " "));
+  }
+
+  for (const query of queries.filter(Boolean)) {
     const searchUrl =
-      `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&resultType=core&pageSize=1`;
+      `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&resultType=core&pageSize=10`;
 
     const data = await fetchJsonWithTimeout(searchUrl, 20000);
-    const result = data?.resultList?.result?.[0];
+    const results = data?.resultList?.result || [];
+
+    const result = doi
+      ? (results.find(r => String(r?.doi || "").toLowerCase() === String(doi || "").toLowerCase()) || results[0])
+      : bestCandidateByTitle(results, wantedTitle, item => String(item?.title || ""));
 
     if (!result) continue;
+
+    const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, result.title || "").toFixed(2) : "1.00";
 
     const pieces = [];
 
     pieces.push("Europe PMC / PubMed-indexed article data:");
     if (result.title) pieces.push(`Title: ${result.title}`);
+    if (wantedTitle) pieces.push(`Title match score: ${matchScore}`);
     if (result.authorString) pieces.push(`Authors: ${result.authorString}`);
     if (result.journalTitle) pieces.push(`Journal: ${result.journalTitle}`);
     if (result.pubYear) pieces.push(`Year: ${result.pubYear}`);
