@@ -1,5 +1,5 @@
 /*
-Paper_Talk v18 update - batch-safe reindex + subrequest-safe DOI/title learning:
+Paper_Talk v19 update - batch-safe reindex + subrequest-safe DOI/title learning:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -13,6 +13,8 @@ Paper_Talk v18 update - batch-safe reindex + subrequest-safe DOI/title learning:
 - v17: Reindex rows are marked after processing so repeated clicks continue to the next batch.
 - v18: Default reindex batch size increased from 5 to 25, with max 50 via ?limit=50.
 - v18: Sleep between rows reduced to 50 ms to make reindex much faster while still avoiding burst calls.
+- v19: Default reindex batch size increased to 50 so the frontend can auto-continue efficiently.
+- v19: Response includes remaining count for admin.html one-click auto-loop reindex.
 */
 
 export default {
@@ -1303,8 +1305,8 @@ async function adminReindexResearchPapers(request, env) {
   }
 
   const url = new URL(request.url);
-  const batchLimit = Math.min(Math.max(Number(url.searchParams.get("limit") || 25), 1), 50);
-  const reindexMarker = "Reindex checked version: v18";
+  const batchLimit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 50);
+  const reindexMarker = "Reindex checked version: v19";
 
   let indexed = 0;
   let legacyIndexed = 0;
@@ -1427,7 +1429,7 @@ async function adminReindexResearchPapers(request, env) {
     remainingLegacy: Number(remainingLegacy?.total || 0),
     errors: errors.slice(0, 20),
     message: remaining > 0
-      ? `Batch reindex complete. Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX rows. Remaining: ${remaining}. Click Reindex again to continue, or use limit=50 for faster batches. Failed: ${failed}`
+      ? `Batch reindex complete. Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX rows. Remaining: ${remaining}. Frontend can auto-continue until Remaining becomes 0. Failed: ${failed}`
       : `Reindex complete. Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX rows. Failed: ${failed}`
   });
 }
@@ -1494,7 +1496,7 @@ async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
 
   const learnedContent = [
     `Paper_Talk DB Research Paper`,
-    `Reindex checked version: v18`,
+    `Reindex checked version: v19`,
     `Imported source: LinkedIn/BibTeX`,
     `Title: ${safeTitle}`,
     doi ? `DOI: ${doi}` : "",
@@ -1750,7 +1752,7 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
 
   const content = [
     `Paper_Talk DB Research Paper`,
-    `Reindex checked version: v18`,
+    `Reindex checked version: v19`,
     `Title: ${safeTitle}`,
     doi ? `DOI: ${doi}` : "",
     researchData?.year ? `Year: ${researchData.year}` : "",
