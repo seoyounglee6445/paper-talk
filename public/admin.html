@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin | Paper_Talk</title>
-  <!-- v19: one-click auto reindex enabled -->
+  <!-- v22 admin: one-click auto reindex + CSV/BibTeX import enabled -->
   <link rel="stylesheet" href="/style.css">
 </head>
 
@@ -123,16 +123,16 @@
   </section>
 
   <section class="card write-form">
-  <h2>Import LinkedIn CSV to GPT Knowledge</h2>
-  <p>Select your LinkedIn Posts.csv or Shares.csv file. It will be imported into the Paper_Talk GPT knowledge base.</p>
+  <h2>Import LinkedIn CSV / BibTeX to GPT Knowledge</h2>
+  <p>Select your LinkedIn Posts.csv, Shares.csv, or BibTeX .bib file. It will be imported into the Paper_Talk GPT knowledge base.</p>
 
   <form onsubmit="importLinkedInCsvFile(event)">
     <div class="full-row">
-      <label>LinkedIn CSV File</label>
-      <input type="file" id="linkedinCsvFile" accept=".csv,text/csv">
+      <label>LinkedIn CSV / BibTeX File</label>
+      <input type="file" id="linkedinCsvFile" accept=".csv,.bib,.txt,text/csv,text/plain,application/x-bibtex">
     </div>
 
-    <button type="submit">Import LinkedIn CSV File</button>
+    <button type="submit">Import CSV / BibTeX File</button>
   </form>
 </section>
   
@@ -571,15 +571,26 @@ async function importLinkedInCsvFile(e) {
   const file = fileInput.files[0];
 
   if (!file) {
-    alert("Please select a CSV file.");
+    alert("Please select a CSV or BibTeX file.");
     return;
   }
 
-  const csvText = await file.text();
+  const fileText = await file.text();
 
-  if (!csvText.trim()) {
-    alert("CSV file is empty.");
+  if (!fileText.trim()) {
+    alert("Selected file is empty.");
     return;
+  }
+
+  const isBibtex =
+    /\.bib$/i.test(file.name || "") ||
+    /@(?:article|book|inproceedings|proceedings|misc|preprint|dataset|phdthesis|mastersthesis)\s*\{/i.test(fileText);
+
+  const status = document.getElementById("reindexStatus");
+  if (status) {
+    status.textContent = isBibtex
+      ? "Importing BibTeX file... Please wait."
+      : "Importing LinkedIn CSV file... Please wait.";
   }
 
   const res = await fetch("/api/admin/research/import-linkedin-csv", {
@@ -588,17 +599,39 @@ async function importLinkedInCsvFile(e) {
       "Content-Type": "application/json",
       "X-Admin-Key": key
     },
-    body: JSON.stringify({ csvText })
+    body: JSON.stringify({
+      csvText: fileText,
+      bibText: isBibtex ? fileText : "",
+      fileName: file.name || "",
+      sourceType: isBibtex ? "bibtex" : "linkedin_csv"
+    })
   });
 
-  const result = await res.json();
-
-  if (!result.ok) {
-    alert(result.error || "LinkedIn CSV import failed.");
+  let result = {};
+  try {
+    result = await res.json();
+  } catch {
+    alert("Import failed: server returned a non-JSON response.");
     return;
   }
 
-  alert(`Imported: ${result.imported || 0}, Skipped: ${result.skipped || 0}`);
+  if (!res.ok || !result.ok) {
+    const message = result.error || result.message || "CSV / BibTeX import failed.";
+    if (status) status.textContent = message;
+    alert(message);
+    return;
+  }
+
+  const sourceType = result.sourceType || (isBibtex ? "bibtex" : "linkedin_csv");
+  const doneMessage =
+    `Import complete.\nType: ${sourceType}\nImported: ${result.imported || 0}\nSkipped: ${result.skipped || 0}`;
+
+  if (status) {
+    status.textContent =
+      `Import complete. Type: ${sourceType}, Imported: ${result.imported || 0}, Skipped: ${result.skipped || 0}. Now click Reindex Research Papers.`;
+  }
+
+  alert(doneMessage);
   e.target.reset();
   loadAdminPosts();
 }
