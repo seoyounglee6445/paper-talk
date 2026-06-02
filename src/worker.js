@@ -1,5 +1,5 @@
 /*
-Paper_Talk v22 update - batch-safe reindex + subrequest-safe DOI/title learning:
+Paper_Talk v27 update - forced removal of report-style GPT answers + calm research explanation style:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -21,9 +21,16 @@ Paper_Talk v22 update - batch-safe reindex + subrequest-safe DOI/title learning:
 - v22: /api/admin/research/import-linkedin-csv now accepts both LinkedIn CSV and BibTeX text.
 - v22: BibTeX is parsed entry-by-entry so title/author/journal/year/doi/url/abstract stay in one paper record.
 - v22: Prevents @article keys, author lines, journal lines, and year lines from being stored as fake paper titles.
-- v23: Adds JSON-safe aliases for legacy chat endpoints (/api/chat, /api/research-chat, /api/paper-talk, /api/papertalk) so frontend route mismatches do not return HTML.
-- v23: GPT chat accepts message/question/prompt/query and threadId/chatId/thread_id for compatibility with older frontend code.
-- v23: API fallback and API catch responses include path/method and always return application/json.
+- v24: GPT retrieval now extracts keywords/synonyms from any user question and searches Paper_Talk DB automatically.
+- v24: RNA velocity queries automatically search related terms such as scVelo, velocyto, spliced/unspliced RNA, trajectory inference, pseudotime, and cell-state transition.
+- v24: If Vectorize misses a paper, D1 keyword/title/content fallback is always used before saying no matching DB source was retrieved.
+- v25: GPT answers now automatically choose the response format based on user intent instead of forcing fixed numbered report sections.
+- v25: GPT tone is softer, warmer, more conversational, and explains concepts in more detail.
+- v25: Research answers should feel like a helpful senior cancer genomics colleague, not a rigid paper-search report.
+- v26: GPT answers should use a calm explanatory research-mentor style: not a report, not casual chat.
+- v26: GPT must not create sections like Direct answer, Relevant papers, Paper-by-paper findings, Agreements, Contradictions, or Knowledge gaps unless the user explicitly asks.
+- v26: Retrieved papers must be woven naturally into the explanation as evidence, not dumped as a paper list.
+- v27: If GPT still returns report headings such as Direct answer / Relevant papers / Paper-by-paper findings, Worker automatically rewrites the answer into calm explanatory prose before saving it.
 */
 
 export default {
@@ -70,22 +77,6 @@ export default {
       if (pathname.startsWith("/api/gpt/threads/") && request.method === "DELETE") return deleteGptThread(request, env);
       if (pathname === "/api/gpt/messages" && request.method === "GET") return listGptMessages(request, env);
       if (pathname === "/api/gpt/chat" && request.method === "POST") return gptChat(request, env);
-
-      // v23 compatibility aliases:
-      // Older frontend builds sometimes call these endpoints instead of /api/gpt/chat.
-      // Keep them JSON-safe and route them to the same Paper_Talk GPT handler.
-      if (
-        (
-          pathname === "/api/chat" ||
-          pathname === "/api/research-chat" ||
-          pathname === "/api/paper-talk" ||
-          pathname === "/api/papertalk" ||
-          pathname === "/api/research/gpt/chat"
-        ) &&
-        request.method === "POST"
-      ) {
-        return gptChat(request, env);
-      }
 
       if (pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
       if (pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
@@ -152,9 +143,7 @@ export default {
       if (pathname.startsWith("/api/")) {
         return json({
           ok: false,
-          error: `API route not found: ${pathname}`,
-          path: pathname,
-          method: request.method
+          error: `API route not found: ${pathname}`
         }, 404);
       }
 
@@ -165,9 +154,7 @@ export default {
       if (pathname.startsWith("/api/")) {
         return json({
           ok: false,
-          error: error?.message || "Worker server error",
-          path: pathname,
-          method: request.method
+          error: error?.message || "Worker server error"
         }, 500);
       }
 
@@ -3366,28 +3353,26 @@ async function listGptMessages(request, env) {
 
 function getFriendlyKoreanAnswerStyleRules(mode = "general") {
   return `
-Answer style rules for Paper_Talk Vision GPT:
-- 기본 답변 언어는 한국어입니다. 사용자가 영어로 물으면 영어로 답해도 됩니다.
-- 어렵고 딱딱한 논문 문체를 피하고, 연구자가 빠르게 이해할 수 있게 쉽고 친절하게 설명하세요.
-- 첫 부분에 반드시 "한줄 요약" 또는 "핵심 요약"을 2~3문장으로 제공합니다.
-- 긴 문단보다 짧은 문단과 bullet을 사용하세요.
-- 전문용어는 처음 나올 때 쉬운 말로 풀어 설명하세요.
-- 연구 질문이면 반드시 다음 구조를 우선 사용하세요:
-  1) 핵심 요약
-  2) 관련 Paper_Talk DB 논문
-  3) 논문별 핵심 차이
-  4) 공통점
-  5) 충돌점 또는 해석상 주의점
-  6) 현재 연구 gap
-  7) 향후 발전 방향
-  8) Paper_Talk 연구적 판단
-- 논문 비교는 가능하면 표 형태로 정리하세요.
-- 표는 너무 길게 만들지 말고, 논문명 / 핵심 아이디어 / 장점 / 한계 중심으로 작성하세요.
-- Paper_Talk DB에 있는 논문 제목만 "관련 Paper_Talk DB 논문"으로 언급하세요.
-- DB context에 없는 논문 제목, 저자, 연도, 저널을 새로 만들거나 일반 지식에서 가져오지 마세요.
-- DB context가 부족한 논문은 "제목 중심으로만 확인됨" 또는 "abstract 부족"이라고 솔직히 표시하세요.
-- 연구적 판단은 단정하지 말고 "현재 DB 근거로 보면"이라고 표현하세요.
-- 사용자가 쉽게 읽을 수 있도록 결론을 마지막에 다시 정리하세요.
+Paper_Talk Vision GPT answer style rules:
+- 기본 답변 언어는 사용자가 쓴 언어를 따르세요. 한국어 질문에는 자연스러운 한국어로 답하세요.
+- 답변 스타일은 "연구실 선배가 차분하게 설명해주는 느낌"으로 작성하세요.
+- 너무 딱딱한 보고서체도 피하고, "음...", "저는요"처럼 너무 수다스러운 대화체도 피하세요.
+- 사용자가 원하는 스타일은 다음과 같습니다:
+  Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다.
+  최근 spatial transcriptomics 연구들을 보면 조직 내 세포 분포나 niche 구조를 정교하게 설명하는 연구는 상당히 많이 축적되어 있습니다. 반면, 세포가 특정 공간에서 어떤 방향으로 분화하거나 상태 전이를 겪는지까지 설명하는 연구는 상대적으로 적습니다.
+  그래서 Spatial + RNA velocity, 또는 Spatial + longitudinal sample 분석 같은 접근이 좋은 연구 주제가 될 수 있습니다.
+- 위 예시처럼 자연스러운 설명문 형태로 답하세요. 기본은 짧은 문단 중심입니다. 사용자가 표나 목록을 명시적으로 요청하지 않는 한, 논문 목록형 답변을 만들지 마세요.
+- 다음과 같은 섹션명은 절대 사용하지 마세요: "Direct answer", "Relevant papers", "Retrieved papers", "Paper-by-paper findings", "Agreements", "Contradictions", "Knowledge gaps", "Paper_Talk research interpretation", "Suggested next study or validation".
+- 논문 제목을 목록처럼 나열하지 마세요. Paper_Talk DB 논문은 설명을 뒷받침하는 근거로 자연스럽게 녹여 쓰세요.
+- 예: "Paper_Talk DB에 저장된 spatial 논문들을 보면 공간 구조 자체를 분석하는 연구는 많지만, 시간적 변화나 cell fate까지 연결하는 사례는 상대적으로 적습니다."처럼 쓰세요.
+- 질문 의도에 따라 형식을 자동으로 고르되, 사용자가 명시적으로 표/목록/비교표를 요청하지 않으면 논문 리스트를 만들지 마세요.
+- 전문용어가 나오면 바로 쉬운 말로 풀어주세요. 예: "RNA velocity는 세포가 현재 어떤 상태에 있는지보다 앞으로 어느 방향으로 변할지를 추정하려는 접근입니다."
+- 자세히 설명하되, 너무 항목화하지 말고 문단 사이의 흐름이 자연스럽게 이어지게 하세요.
+- 연구 아이디어를 물으면 배경 → 왜 중요한지 → Paper_Talk DB에서 보이는 흐름 → 가능한 연구 질문 → 주의할 점 순서로 자연스럽게 설명하세요.
+- Paper_Talk DB context에 없는 논문 제목, 저자, 연도, 저널, 샘플 수, 데이터셋, 결과를 새로 만들지 마세요.
+- DB excerpt가 부족하면 "현재 검색된 Paper_Talk DB excerpt만 보면 이 정도 방향성까지는 조심스럽게 말할 수 있습니다"처럼 솔직하고 부드럽게 표현하세요.
+- 관련 DB context가 없을 때도 단정적으로 "논문이 없습니다"라고 말하지 마세요. 대신 "현재 검색에서는 이 질문과 강하게 매칭되는 Paper_Talk DB 논문을 찾지 못했습니다"라고 말하고, 가능한 검색어/리인덱스/데이터 확인 방법을 안내하세요.
+- 사용자가 연구 아이디어를 물으면 마지막에는 새로운 연구 질문이나 실제 프로젝트로 발전시킬 수 있는 방향을 차분하게 제안하세요.
 `;
 }
 
@@ -3410,32 +3395,11 @@ async function gptChat(request, env) {
   }
 
   const data = await request.json().catch(() => ({}));
-
-  // v23 compatibility:
-  // New frontend uses "message", but older Paper_Talk pages may send "question",
-  // "prompt", or "query". Accept all of them so the API returns a useful JSON
-  // response instead of failing silently on mismatched request bodies.
-  const message = String(
-    data.message ||
-    data.question ||
-    data.prompt ||
-    data.query ||
-    ""
-  ).trim();
-
-  let threadId = String(
-    data.threadId ||
-    data.chatId ||
-    data.thread_id ||
-    ""
-  ).trim();
+  const message = String(data.message || "").trim();
+  let threadId = String(data.threadId || "").trim();
 
   if (!message) {
-    return json({
-      ok: false,
-      error: "Message is required.",
-      hint: "Send JSON body with one of: message, question, prompt, or query."
-    }, 400);
+    return json({ ok: false, error: "Message is required." }, 400);
   }
 
   const quotaBefore = await getMonthlyGptQuota(user.id, env, user);
@@ -3526,6 +3490,18 @@ ${autoIntent.retrieval_query}`
     recentMessages,
     autoIntent
   }, env);
+
+  // v27:
+  // Some older prompts or model behavior may still produce rigid report-style answers
+  // such as "1. Direct answer / 2. Relevant papers / 3. Paper-by-paper findings".
+  // If that happens, rewrite the answer into the preferred calm explanatory research style
+  // before saving it or showing it to the user.
+  assistantText = await rewriteReportStyleAnswerIfNeeded({
+    originalAnswer: assistantText,
+    userMessage: message,
+    context,
+    env
+  });
 
   assistantText = assistantText
     .replace(/\*\*/g, "")
@@ -3763,15 +3739,16 @@ async function searchResearchKnowledge(query, env) {
 
   const allResults = [];
 
-  // v7 retrieval fix:
-  // Previously, Vectorize could return some weak/irrelevant semantic matches and the function returned early,
-  // so deterministic D1 hits such as "RNA velocity" in research_knowledge were never added.
-  // This version ALWAYS runs deterministic phrase/entity search as a safety net and merges it with Vectorize.
+  // v24 retrieval fix:
+  // The user should not need to type the exact stored DB wording.
+  // We automatically extract scientific keywords from the question, expand common biomedical synonyms,
+  // then search research_knowledge by title/content before and after Vectorize.
   const keyPhrases = extractScientificKeyPhrases(userQuery);
+  const autoKeywords = extractAutoResearchKeywords(userQuery);
 
   // A) Exact phrase/entity D1 search first. This catches terms like:
-  // RNA velocity, spatial transcriptomics, single-cell RNA-seq, TFvelo, SIRV, Visium, Xenium, CosMx.
-  for (const phrase of keyPhrases) {
+  // RNA velocity, scVelo, velocyto, spatial transcriptomics, single-cell RNA-seq, TFvelo, SIRV, Visium.
+  for (const phrase of [...keyPhrases, ...autoKeywords]) {
     try {
       allResults.push(...await exactPhraseKnowledgeSearch(phrase, env));
     } catch {
@@ -3779,11 +3756,19 @@ async function searchResearchKnowledge(query, env) {
     }
   }
 
+  // A-2) Strong automatic keyword OR-search across title/content.
+  // This is the main safety net when Vectorize misses papers or the DB uses related wording.
+  try {
+    allResults.push(...await smartKeywordKnowledgeSearch(userQuery, env));
+  } catch {
+    // Continue.
+  }
+
   // B) Expand/translate the user's natural question into English scientific retrieval text.
   const retrievalQueries = await buildRetrievalQueries(userQuery, env);
 
-  // C) Deterministic DB fallback with both extracted key phrases and expanded queries.
-  for (const retrievalQuery of [...keyPhrases, ...retrievalQueries]) {
+  // C) Deterministic DB fallback with extracted key phrases, auto keywords, and expanded queries.
+  for (const retrievalQuery of [...keyPhrases, ...autoKeywords, ...retrievalQueries]) {
     try {
       allResults.push(...await directResearchKnowledgeSearch(retrievalQuery, env));
     } catch {
@@ -3816,6 +3801,206 @@ async function searchResearchKnowledge(query, env) {
   if (merged.length > 0) return merged;
 
   return [];
+}
+
+
+function extractAutoResearchKeywords(query) {
+  const original = String(query || "");
+  const lower = original.toLowerCase();
+  const normalized = normalizeSearchText(original);
+  const keywords = new Set();
+
+  function addMany(values) {
+    for (const value of values || []) {
+      const cleaned = cleanRetrievalPhrase(value);
+      if (cleaned && cleaned.length >= 3) keywords.add(cleaned);
+    }
+  }
+
+  // 1) Keep meaningful English phrases already present in the question.
+  addMany(extractScientificKeyPhrases(original));
+
+  // 2) Domain synonym expansion. Add more topics here as Paper_Talk grows.
+  const synonymRules = [
+    {
+      triggers: ["rna velocity", "velocity", "scvelo", "velocyto", "tfvelo", "sirv", "spliced", "unspliced", "전사 동역학", "세포 상태", "세포 운명", "궤적"],
+      terms: [
+        "RNA velocity",
+        "scVelo",
+        "velocyto",
+        "TFvelo",
+        "SIRV",
+        "spliced RNA",
+        "unspliced RNA",
+        "splicing kinetics",
+        "transcriptional dynamics",
+        "cell fate",
+        "cell state transition",
+        "trajectory inference",
+        "pseudotime",
+        "dynamical model",
+        "latent time"
+      ]
+    },
+    {
+      triggers: ["single cell", "single-cell", "scrna", "scrna-seq", "single cell rna", "단일세포", "싱글셀"],
+      terms: [
+        "single-cell",
+        "single cell",
+        "scRNA-seq",
+        "single-cell RNA sequencing",
+        "cell type",
+        "cell state",
+        "cell cluster"
+      ]
+    },
+    {
+      triggers: ["spatial", "visium", "xenium", "cosmx", "merfish", "stereo-seq", "spatial transcript", "공간전사", "공간 전사"],
+      terms: [
+        "spatial transcriptomics",
+        "spatial transcriptome",
+        "Visium",
+        "Xenium",
+        "CosMx",
+        "MERFISH",
+        "Stereo-seq",
+        "spatial omics",
+        "tissue architecture"
+      ]
+    },
+    {
+      triggers: ["cancer", "tumor", "tumour", "암", "종양"],
+      terms: [
+        "cancer",
+        "tumor",
+        "tumour",
+        "oncology",
+        "tumor microenvironment",
+        "malignant",
+        "metastasis",
+        "clonal evolution"
+      ]
+    },
+    {
+      triggers: ["immune", "immun", "t cell", "b cell", "macrophage", "면역"],
+      terms: [
+        "immune",
+        "immunology",
+        "T cell",
+        "B cell",
+        "macrophage",
+        "myeloid",
+        "immune checkpoint",
+        "TME"
+      ]
+    },
+    {
+      triggers: ["mutation", "variant", "snv", "cnv", "copy number", "변이"],
+      terms: [
+        "mutation",
+        "variant",
+        "SNV",
+        "CNV",
+        "copy number variation",
+        "genomic alteration",
+        "somatic mutation"
+      ]
+    }
+  ];
+
+  for (const rule of synonymRules) {
+    const hit = rule.triggers.some(trigger => {
+      const t = String(trigger || "").toLowerCase();
+      return lower.includes(t) || normalized.includes(normalizeSearchText(t));
+    });
+
+    if (hit) addMany(rule.terms);
+  }
+
+  // 3) Extract biomedical-looking tokens and short phrases from the question.
+  const englishPhrases = original
+    .replace(/[\n\r]+/g, " ")
+    .match(/[A-Za-z][A-Za-z0-9+\-]*([\s\-/]+[A-Za-z][A-Za-z0-9+\-]*){0,3}/g) || [];
+
+  for (const phrase of englishPhrases) {
+    const cleaned = cleanRetrievalPhrase(phrase);
+    if (cleaned && cleaned.length >= 3) keywords.add(cleaned);
+  }
+
+  for (const token of getImportantSearchTokens(original)) {
+    if (token && token.length >= 3) keywords.add(token);
+  }
+
+  // 4) Prefer specific phrases over generic words.
+  return Array.from(keywords)
+    .map(v => cleanRetrievalPhrase(v))
+    .filter(v => v.length >= 3)
+    .sort((a, b) => {
+      const aWords = a.split(/\s+/).length;
+      const bWords = b.split(/\s+/).length;
+      if (bWords !== aWords) return bWords - aWords;
+      return b.length - a.length;
+    })
+    .slice(0, 24);
+}
+
+async function smartKeywordKnowledgeSearch(query, env, limit = 14) {
+  const keywords = extractAutoResearchKeywords(query)
+    .map(v => cleanRetrievalPhrase(v))
+    .filter(v => v.length >= 3)
+    .slice(0, 18);
+
+  if (!keywords.length) return [];
+
+  const clauses = [];
+  const params = [];
+
+  for (const keyword of keywords) {
+    clauses.push(`(
+      LOWER(title) LIKE ?
+      OR LOWER(content) LIKE ?
+      OR LOWER(REPLACE(REPLACE(REPLACE(title, '{', ''), '}', ''), 'title =', '')) LIKE ?
+      OR LOWER(REPLACE(REPLACE(REPLACE(content, '{', ''), '}', ''), 'title =', '')) LIKE ?
+    )`);
+    const like = `%${keyword}%`;
+    params.push(like, like, like, like);
+  }
+
+  const result = await env.DB.prepare(`
+    SELECT title, source_url, pdf_link, content, updated_at
+    FROM research_knowledge
+    WHERE status = 'indexed'
+      AND (${clauses.join(" OR ")})
+    ORDER BY
+      CASE
+        WHEN LOWER(title) LIKE ? THEN 0
+        WHEN LOWER(content) LIKE ? THEN 1
+        ELSE 2
+      END,
+      datetime(updated_at) DESC
+    LIMIT ?
+  `).bind(
+    ...params,
+    `%${keywords[0]}%`,
+    `%${keywords[0]}%`,
+    limit
+  ).all();
+
+  return (result.results || []).map(item => {
+    const matchedKeyword = keywords.find(keyword =>
+      String(item.title || "").toLowerCase().includes(keyword) ||
+      String(item.content || "").toLowerCase().includes(keyword)
+    ) || keywords[0];
+
+    return {
+      ...item,
+      title: cleanBibtexText(item.title),
+      content: cleanBibtexText(item.content),
+      matched_chunk: makeMatchedChunk(item.content || "", matchedKeyword),
+      similarity_score: null,
+      from_auto_keyword_search: true
+    };
+  });
 }
 
 function extractScientificKeyPhrases(query) {
@@ -4239,6 +4424,8 @@ function mergeKnowledgeResults(items) {
 
     const aExact = a?.from_exact_phrase_search ? 20 : 0;
     const bExact = b?.from_exact_phrase_search ? 20 : 0;
+    const aAuto = a?.from_auto_keyword_search ? 16 : 0;
+    const bAuto = b?.from_auto_keyword_search ? 16 : 0;
     const aDirect = a?.from_direct_db_search ? 12 : 0;
     const bDirect = b?.from_direct_db_search ? 12 : 0;
     const aPosts = a?.from_posts_fallback ? 6 : 0;
@@ -4248,6 +4435,7 @@ function mergeKnowledgeResults(items) {
 
     const aScore =
       aExact +
+      aAuto +
       aDirect +
       aPosts +
       aVector +
@@ -4256,6 +4444,7 @@ function mergeKnowledgeResults(items) {
 
     const bScore =
       bExact +
+      bAuto +
       bDirect +
       bPosts +
       bVector +
@@ -5115,6 +5304,187 @@ function makeFallbackResearchIntent(userMessage) {
 }
 
 
+
+function containsReportStyleHeadings(answer) {
+  const text = String(answer || "");
+
+  const forbiddenPatterns = [
+    /^\s*\d+\.\s*Direct answer/im,
+    /^\s*\d+\.\s*Relevant\s+(Paper_Talk\s+DB\s+)?papers/im,
+    /^\s*\d+\.\s*Retrieved papers/im,
+    /^\s*\d+\.\s*Paper-by-paper findings/im,
+    /^\s*\d+\.\s*Agreements/im,
+    /^\s*\d+\.\s*Differences or contradictions/im,
+    /^\s*\d+\.\s*Contradictions/im,
+    /^\s*\d+\.\s*Knowledge gaps/im,
+    /^\s*\d+\.\s*Paper_Talk research interpretation/im,
+    /^\s*\d+\.\s*Suggested next study/im,
+    /Relevant Paper_Talk DB papers/i,
+    /Paper-by-paper findings/i,
+    /Agreements across retrieved papers/i,
+    /Differences or contradictions/i,
+    /Suggested next study or validation/i
+  ];
+
+  return forbiddenPatterns.some(pattern => pattern.test(text));
+}
+
+async function rewriteReportStyleAnswerIfNeeded({ originalAnswer, userMessage, context, env }) {
+  const answer = String(originalAnswer || "");
+
+  if (!answer.trim()) return answer;
+  if (!containsReportStyleHeadings(answer)) return answer;
+
+  if (!env.OPENAI_API_KEY) {
+    return convertReportStyleAnswerLocally(answer);
+  }
+
+  const contextTitles = Array.isArray(context)
+    ? [...new Set(context.map(item => cleanBibtexText(item?.title || "").trim()).filter(Boolean))]
+    : [];
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `
+You are rewriting a Paper_Talk GPT answer.
+
+Goal:
+Rewrite the answer into calm explanatory research prose.
+
+The user wants this style:
+"Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다.
+
+최근 spatial transcriptomics 연구들을 보면 조직 내 세포 분포나 niche 구조를 정교하게 설명하는 연구는 상당히 많이 축적되어 있습니다. 반면, 세포가 특정 공간에서 어떤 방향으로 분화하거나 상태 전이를 겪는지까지 설명하는 연구는 상대적으로 적습니다.
+
+그래서 Spatial + RNA velocity, 또는 Spatial + longitudinal sample 분석 같은 접근이 좋은 연구 주제가 될 수 있습니다."
+
+Strict rewriting rules:
+- Do NOT add new scientific claims.
+- Do NOT add new papers.
+- Preserve the useful meaning from the original answer.
+- Remove these report headings completely:
+  Direct answer, Relevant papers, Retrieved papers, Paper-by-paper findings, Agreements, Contradictions, Knowledge gaps, Paper_Talk research interpretation, Suggested next study or validation.
+- Do not list papers as bullets.
+- If a paper title is useful, weave it naturally into a sentence as supporting evidence.
+- Prefer connected Korean paragraphs.
+- Use bullets only for concrete research questions or candidate project ideas.
+- Do not sound casual like "음..." or "저는요".
+- Do not sound like a report.
+- Answer in the same language as the user's question.
+- Return only the rewritten answer.
+            `.trim()
+          },
+          {
+            role: "system",
+            content: contextTitles.length
+              ? `Allowed Paper_Talk DB titles only:\n${contextTitles.map((title, i) => `${i + 1}. ${title}`).join("\n")}`
+              : "No Paper_Talk DB titles were provided."
+          },
+          {
+            role: "user",
+            content: [
+              `User question:`,
+              String(userMessage || "").slice(0, 1200),
+              ``,
+              `Original report-style answer to rewrite:`,
+              answer.slice(0, 7000)
+            ].join("\n")
+          }
+        ],
+        temperature: 0,
+        max_tokens: 1800
+      })
+    });
+
+    const raw = await res.text();
+    let data = {};
+
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return convertReportStyleAnswerLocally(answer);
+    }
+
+    if (!res.ok) {
+      return convertReportStyleAnswerLocally(answer);
+    }
+
+    const rewritten = String(data?.choices?.[0]?.message?.content || "").trim();
+
+    if (!rewritten) return convertReportStyleAnswerLocally(answer);
+
+    // If the rewrite somehow still contains the forbidden template, fall back to local cleanup.
+    if (containsReportStyleHeadings(rewritten)) {
+      return convertReportStyleAnswerLocally(rewritten);
+    }
+
+    return rewritten;
+  } catch {
+    return convertReportStyleAnswerLocally(answer);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function convertReportStyleAnswerLocally(answer) {
+  const text = String(answer || "");
+
+  const lines = text.split(/\r?\n/);
+  const cleaned = [];
+  let skipPaperListMode = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (/^\d+\.\s*(Direct answer|Relevant\s+(Paper_Talk\s+DB\s+)?papers|Retrieved papers|Paper-by-paper findings|Agreements|Differences or contradictions|Contradictions|Knowledge gaps|Paper_Talk research interpretation|Suggested next study)/i.test(line)) {
+      skipPaperListMode = /Relevant\s+(Paper_Talk\s+DB\s+)?papers|Paper-by-paper findings/i.test(line);
+      continue;
+    }
+
+    if (/^\d+\.\s+/i.test(line)) {
+      skipPaperListMode = false;
+    }
+
+    // Remove long paper-title bullet dumps after old "Relevant papers" sections.
+    if (skipPaperListMode && /^[-•]\s+/.test(line) && line.length > 80) {
+      continue;
+    }
+
+    cleaned.push(rawLine);
+  }
+
+  let result = cleaned.join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\s*-\s+/gm, "")
+    .trim();
+
+  if (!result) {
+    return text;
+  }
+
+  // Add a gentle opening if the answer became too abrupt.
+  if (!/^[가-힣A-Za-z0-9]/.test(result)) {
+    result = result.replace(/^[^\w가-힣]+/, "");
+  }
+
+  return result;
+}
+
+
 async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
   context = mergeKnowledgeResults(Array.isArray(context) ? context : []).slice(0, 12);
   const hasContext = context.length > 0;
@@ -5219,18 +5589,51 @@ For research-related answers:
       content: `
 You are Paper_Talk Vision GPT.
 
-You have two modes:
+Your role:
+You are a calm senior cancer genomics and bioinformatics research mentor. Your answer should feel like a clear research explanation from an experienced colleague: not a rigid report, and not casual small talk.
 
-GENERAL MODE:
-- For ordinary non-research questions, answer naturally and directly.
-- Do not force paper comparison.
+Core behavior:
+- First understand the user's intent, then choose the answer flow automatically.
+- Do not force a template such as "Direct answer / Relevant papers / Findings / Gaps".
+- Do not dump retrieved papers as a list. Never create a section titled Relevant papers.
+- Explain the idea first, then use Paper_Talk DB papers only as supporting evidence inside the explanation.
+- Use natural paragraphs with a smooth logical flow.
+- Be detailed enough to help the user think about research design, but do not over-format.
 
-PAPER_TALK DB-ONLY RESEARCH MODE:
-- For research-related questions, literature questions, validation questions, paper comparison questions, and any question that says "Paper_Talk DB", "DB", "논문", or "연구", you must answer from the retrieved Paper_Talk DB context only.
-- Outside/general model knowledge must not be mixed into the evidence.
-- Your job is to compare, synthesize, and judge the retrieved Paper_Talk DB papers only.
-- If the user asks for research judgment, compare paper-by-paper findings, agreements, differences, gaps, and cautious interpretation.
-- If the user asks a concept question without asking for DB evidence, you may explain the concept generally. But when DB context is requested, use DB context only.
+Target answer style:
+- The preferred style is calm explanatory prose, like this:
+  "Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다.
+  최근 spatial transcriptomics 연구들을 보면 조직 내 세포 분포나 niche 구조를 정교하게 설명하는 연구는 상당히 많이 축적되어 있습니다. 반면, 세포가 특정 공간에서 어떤 방향으로 분화하거나 상태 전이를 겪는지까지 설명하는 연구는 상대적으로 적습니다.
+  그래서 Spatial + RNA velocity, 또는 Spatial + longitudinal sample 분석 같은 접근이 좋은 연구 주제가 될 수 있습니다."
+- This is the style to imitate: professional, soft, explanatory, and readable.
+- Avoid too-casual phrases such as "음...", "제가 보기에는요", "~더라고요" unless the user explicitly wants casual chat.
+- Avoid report-like section labels.
+
+Forbidden section labels unless the user explicitly asks for them:
+- Direct answer
+- Relevant papers
+- Retrieved papers
+- Paper-by-paper findings
+- Agreements
+- Contradictions
+- Knowledge gaps
+- Paper_Talk research interpretation
+- Suggested next study or validation
+
+Adaptive format rules:
+- If the user asks for research ideas, explain why a direction is promising, what the DB suggests, what research questions follow, and what validation would be useful.
+- If the user asks for paper comparison, compare clearly, but do not create a long paper list. A compact table is allowed only if the user asks for comparison or if it truly improves clarity.
+- If the user asks for a concept, explain simply first, then connect it to cancer genomics, single-cell, spatial, or bioinformatics.
+- If the user asks for validation, give a practical plan, but keep the tone explanatory rather than checklist-like.
+- If the user asks a broad question, answer with a natural explanation rather than a database report.
+
+Paper_Talk DB rules:
+- For research-related questions, literature questions, validation questions, paper comparison questions, and any question mentioning Paper_Talk DB, DB, 논문, or 연구, use the retrieved Paper_Talk DB context as the evidence source.
+- Do not mix outside papers into the evidence.
+- Do not invent paper titles, authors, years, journals, sample sizes, datasets, mechanisms, biomarkers, or conclusions.
+- If DB evidence is thin, say that gently and clearly.
+- If DB context exists, never say "관련 논문이 없습니다". Instead explain what was retrieved and how strongly it matches the question.
+- If no DB context was retrieved, say "현재 검색에서는 이 질문과 강하게 매칭되는 Paper_Talk DB 논문을 찾지 못했습니다" and suggest better keywords, reindexing, or checking research_knowledge.
 
 Language:
 Answer in the user's language.
@@ -5238,7 +5641,9 @@ Answer in the user's language.
 Formatting:
 Return plain text only.
 Do not use markdown symbols such as #, *, or **.
-Use short readable headings.
+Use short paragraphs.
+Use bullets only for concrete research questions, candidate project ideas, or validation steps. Do not use bullets to list papers. If a retrieved paper is relevant, mention it naturally inside a paragraph.
+Headings are optional. If used, make them natural Korean headings, not report labels.
       `.trim()
     },
     {
@@ -5295,7 +5700,7 @@ Use short readable headings.
         model: env.OPENAI_MODEL || "gpt-4o-mini",
         messages,
         temperature: isResearchRelated ? 0 : 0.1,
-        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 900 : 1300
+        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 1400 : 2200
       })
     });
 
@@ -5328,85 +5733,100 @@ Use short readable headings.
 function buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext, shouldUseDbEvidence = false, isResearchRelated = false }) {
   if (questionType === "CONCEPT" && !shouldUseDbEvidence) {
     return `
-Selected mode: CONCEPT / educational overview.
+Selected mode: CONCEPT / friendly educational explanation.
 
-The user is asking for the meaning, definition, or overview of a concept.
-Answer the concept clearly.
-Do not force research-gap or hypothesis sections unless the user explicitly asks for research ideas.
-If you mention Paper_Talk DB examples, only use retrieved DB titles and excerpts.
-Do not invent papers or citations.
+The user is asking for a concept, definition, or overview.
+Do not answer like a formal textbook.
+Explain it as if you are helping a junior colleague understand the idea.
+
+Recommended style:
+- Start with a simple intuitive explanation.
+- Then explain why it matters in cancer genomics, bioinformatics, single-cell, or spatial analysis if relevant.
+- Use a small example if it helps.
+- Explain limitations or common misunderstandings.
+- Do not force research gaps or hypotheses unless the user asks for research ideas.
+- If you mention Paper_Talk DB examples, only use retrieved DB titles and excerpts.
+- Do not invent papers or citations.
     `.trim();
   }
 
   if (questionType === "RESEARCH" || shouldGenerateHypotheses || isResearchRelated) {
     return `
-Selected mode: PAPER_TALK DB-ONLY RESEARCH REASONING.
+Selected mode: ADAPTIVE PAPER_TALK DB-ONLY RESEARCH MENTORING.
 
 The user is asking a research-related question or asked to use Paper_Talk DB.
-You must not mix in outside/general literature knowledge.
+You must not mix in outside/general literature as evidence.
+However, you should not sound like a rigid report. Answer like a helpful senior researcher discussing ideas with the user.
 
 If Paper_Talk DB context is available:
-Use this structure:
+Do not force a fixed template. Use calm explanatory paragraphs unless the user explicitly asks for a table or list.
 
-1. Direct answer
-- Answer the user's question based only on the retrieved DB excerpts.
+For broad idea questions such as "뭐하면 좋을까", "연구 주제 추천", "future direction":
+- Start with a calm explanatory recommendation, not a report heading.
+- Use this style: "Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다."
+- Explain why that direction looks promising in 2~4 connected paragraphs.
+- Naturally connect the retrieved Paper_Talk DB context to the idea without creating a "Relevant papers" section.
+- Do not list paper titles as bullets. Mention a title only when it is directly useful as evidence.
+- Suggest concrete research questions as bullets only after the main explanation.
+- Explain novelty, feasibility, expected data, and validation in prose rather than as a rigid checklist.
 
-2. Relevant Paper_Talk DB papers
-- List only the exact retrieved DB titles.
+For paper comparison questions:
+- Briefly explain the comparison axis first.
+- Mention only exact retrieved DB titles.
+- Use a compact table only if the user asks for comparison or it genuinely improves clarity.
+- Do not create a separate "Relevant papers" list before the comparison.
+- Explain similarities, differences, limitations, and what the user can learn from the comparison.
+
+For research gap questions:
+- Explain in natural prose what the retrieved DB evidence already covers.
+- Then identify what is missing without using a rigid "Knowledge gaps" heading.
+- Turn the missing pieces into realistic research questions or hypotheses.
+- Be cautious if the excerpts are thin.
+
+For validation questions:
+- Explain what should be tested.
+- Separate computational validation and experimental validation.
+- Include controls, expected results, and caveats.
+
+For any research answer:
+- Use only the exact retrieved DB titles as paper names.
 - Do not include external paper titles.
-- Briefly explain what each retrieved title contributes based on its excerpt.
-
-3. Paper-by-paper findings
-- Summarize each retrieved DB paper/excerpt.
-- Do not add methods, years, authors, datasets, or mechanisms unless present in the excerpt.
-
-4. Agreements across retrieved papers
-- Identify shared themes only from the retrieved excerpts.
-
-5. Differences or contradictions
-- Compare only the retrieved DB papers.
-- If the excerpts do not show contradiction, say so.
-
-6. Knowledge gaps
-- Identify gaps that follow from the retrieved excerpts.
-- If excerpts are too thin, say the gap analysis is limited.
-
-7. Paper_Talk research interpretation
-- Provide cautious interpretation based only on DB evidence.
-- Clearly mark uncertainty.
-
-8. Suggested next study or validation
-- Suggest next steps that logically follow from the retrieved DB evidence.
+- Do not add methods, years, authors, datasets, biomarkers, or mechanisms unless present in the excerpt.
+- If a detail is not in the DB excerpt, say "현재 검색된 Paper_Talk DB excerpt에는 그 부분이 명확하지 않습니다."
+- If the retrieved DB context is relevant but weak, say "강한 결론보다는 방향성 정도로 보는 게 안전합니다."
+- Give enough detail so the user understands the reasoning.
 
 If Paper_Talk DB context is absent:
-- Say that no matching Paper_Talk DB source was retrieved.
-- Do not answer from outside papers.
-- Suggest checking keywords, reindexing, or confirming research_knowledge contents.
+- Do not say bluntly "관련 논문이 없습니다."
+- Say warmly: "현재 검색에서는 이 질문과 강하게 매칭되는 Paper_Talk DB 논문을 찾지 못했습니다."
+- Explain possible reasons: keyword mismatch, reindex not done, title/abstract not in research_knowledge, synonym issue.
+- Suggest practical next steps: try synonyms, reindex, check research_knowledge, or add abstract/keywords.
+- You may provide very brief general background, clearly labeled as general background and not DB evidence.
 
 Hard restrictions:
 - Do not cite or mention papers that are not in EXACT_DB_TITLE.
 - Do not use famous external papers from memory.
-- Do not write "관련 논문이 없습니다" if retrieved DB context exists.
 - Do not hallucinate evidence.
+- Do not write in a cold database-report tone.
     `.trim();
   }
 
   if (questionType === "VALIDATION") {
     return `
-Selected mode: PAPER_TALK DB-ONLY VALIDATION PLANNING.
+Selected mode: FRIENDLY PAPER_TALK DB-ONLY VALIDATION PLANNING.
 
+Answer like you are helping the user design the next experiment or analysis.
 Use retrieved Paper_Talk DB evidence only.
-If DB context is available, base validation logic on retrieved excerpts.
-If DB context is absent, say no matching Paper_Talk DB source was retrieved and do not invent external evidence.
+If DB context is available, base the plan on retrieved excerpts.
+If DB context is absent, say no strong Paper_Talk DB match was retrieved and do not invent external evidence.
 
-Recommended output:
-Direct answer
-Relevant Paper_Talk DB evidence
-What should be validated
-Computational validation
-Experimental validation
-Controls and caveats
-Research interpretation
+Recommended flow:
+- Start with what you would validate first and why.
+- Explain the biological or computational logic in simple terms.
+- Then give computational validation ideas.
+- Then give experimental validation ideas.
+- Mention controls, caveats, and what result would support or weaken the idea.
+- Keep the tone practical, supportive, and detailed.
 
 Hard restriction:
 Do not cite or mention papers not present in the retrieved DB context.
@@ -5415,35 +5835,41 @@ Do not cite or mention papers not present in the retrieved DB context.
 
   if (questionType === "LITERATURE") {
     return `
-Selected mode: PAPER_TALK DB-ONLY LITERATURE COMPARISON.
+Selected mode: FRIENDLY PAPER_TALK DB-ONLY LITERATURE DISCUSSION.
 
 Use only retrieved Paper_Talk DB sources.
 Do not mix outside literature.
+Do not list papers as a separate section. Explain how the retrieved DB sources relate to the user's question inside a natural explanation.
 
-Recommended output:
-Overview based on retrieved DB
-Relevant Paper_Talk DB papers
-Comparison across retrieved papers
-Main themes
-Agreements and differences
-Open questions
-Final take-home message
+Recommended style:
+- Start with a natural overview of what the retrieved DB evidence collectively suggests.
+- Mention specific Paper_Talk DB titles only when they help support a point.
+- Do not create sections named "Relevant papers", "Retrieved papers", or "Paper-by-paper findings".
+- Synthesize shared themes and differences in prose.
+- Explain limitations of the current DB excerpts.
+- End with a clear take-home message.
 
 Hard restrictions:
 - Only use exact retrieved titles.
 - Do not invent papers, authors, years, methods, datasets, or findings.
-- If the retrieved excerpts are limited, say so clearly.
+- If the retrieved excerpts are limited, say so clearly and kindly.
     `.trim();
   }
 
   return `
-Selected mode: GENERAL / helpful direct answer.
+Selected mode: GENERAL / warm helpful answer.
 
-Answer naturally if the question is not research-related.
-If the question is research-related or asks for Paper_Talk DB, switch to DB-only mode:
+Answer naturally and conversationally.
+Do not over-structure.
+If the question becomes research-related or asks for Paper_Talk DB, switch to DB-only mode:
 - use retrieved Paper_Talk DB context only,
 - do not mix outside papers,
 - do not invent citations.
+
+Even in general mode:
+- Be friendly and clear.
+- Explain enough for the user to understand.
+- Avoid blunt one-line answers unless the user clearly asks for a short answer.
   `.trim();
 }
 
