@@ -3766,27 +3766,44 @@ function makeFallbackResearchIntent(userMessage) {
 async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
   const hasContext = Array.isArray(context) && context.length > 0;
 
-  const contextText = hasContext
-    ? context.slice(0, 6).map((item, index) => {
-        return [
-          `Source ${index + 1}: ${cleanBibtexText(item.title || "")}`,
-          item.source_url ? `Article: ${item.source_url}` : "",
-          item.pdf_link ? `PDF: ${item.pdf_link}` : "",
-          cleanBibtexText(item.matched_chunk || item.content || "").slice(0, 1200)
-        ].filter(Boolean).join("\n");
-      }).join("\n\n---\n\n")
-    : "No matching research paper context was found in the Paper_Talk knowledge base.";
-
   const intent = autoIntent || makeFallbackResearchIntent(userMessage);
   const questionType = normalizeQuestionType(intent.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent.answer_style || "concise_answer");
   const shouldGenerateHypotheses = Boolean(intent.should_generate_hypotheses);
+  const shouldUseDbEvidence =
+    Boolean(intent.should_use_db_evidence) ||
+    ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType);
+
+  const isResearchRelated =
+    shouldUseDbEvidence ||
+    ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType) ||
+    /paper_talk|db|논문|연구|literature|paper|papers|rna velocity|spatial|single-cell|single cell|genomics|cancer/i.test(String(userMessage || ""));
+
+  const dbTitles = hasContext
+    ? [...new Set(context.map(item => cleanBibtexText(item.title || "").trim()).filter(Boolean))]
+    : [];
+
+  const contextText = hasContext
+    ? context.slice(0, 10).map((item, index) => {
+        const title = cleanBibtexText(item.title || "");
+        const excerpt = cleanBibtexText(item.matched_chunk || item.content || "").slice(0, 1400);
+
+        return [
+          `DB_SOURCE_${index + 1}`,
+          `EXACT_DB_TITLE: ${title}`,
+          item.source_url ? `ARTICLE_URL: ${item.source_url}` : "",
+          item.pdf_link ? `PDF_URL: ${item.pdf_link}` : "",
+          `DB_EXCERPT: ${excerpt}`
+        ].filter(Boolean).join("\n");
+      }).join("\n\n---\n\n")
+    : "NO_MATCHING_PAPER_TALK_DB_CONTEXT";
 
   const intentText = [
     `Question type: ${questionType}`,
     `Answer style: ${answerStyle}`,
     `Should generate hypotheses: ${shouldGenerateHypotheses ? "yes" : "no"}`,
-    `Should use DB evidence: ${intent.should_use_db_evidence ? "yes" : "no"}`,
+    `Should use DB evidence: ${shouldUseDbEvidence ? "yes" : "no"}`,
+    `Research-related mode: ${isResearchRelated ? "yes" : "no"}`,
     `Interpreted intent: ${intent.interpreted_intent || ""}`,
     `Primary domain: ${intent.primary_domain || ""}`,
     `Key entities: ${Array.isArray(intent.key_entities) ? intent.key_entities.join(", ") : ""}`,
@@ -3796,41 +3813,67 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
     `Validation angle: ${intent.validation_angle || ""}`
   ].filter(Boolean).join("\n");
 
-  const modeInstruction = buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext });
+  const modeInstruction = buildModeInstruction({
+    questionType,
+    answerStyle,
+    shouldGenerateHypotheses,
+    hasContext,
+    shouldUseDbEvidence,
+    isResearchRelated
+  });
+
+  const strictDbRule = hasContext
+    ? `
+STRICT PAPER_TALK DB-ONLY RULES FOR RESEARCH ANSWERS
+
+The user has retrieved Paper_Talk DB context.
+
+For research-related answers:
+1. Use ONLY the retrieved Paper_Talk DB sources below as evidence.
+2. Do NOT add outside papers from your general knowledge.
+3. Do NOT mention a paper title unless it appears exactly in the EXACT_DB_TITLE list.
+4. Do NOT cite La Manno, Nature papers, famous landmark papers, PubMed papers, or any external publication unless that exact title is present in the retrieved DB context.
+5. Do NOT invent authors, years, journals, sample sizes, datasets, biomarkers, mechanisms, or conclusions.
+6. If a detail is not in the DB excerpt, say "이 정보는 현재 검색된 Paper_Talk DB excerpt에는 명확하지 않습니다."
+7. If the retrieved DB context contains at least one relevant source, never say "관련 논문이 검색되지 않았습니다."
+8. When comparing papers, compare only the retrieved DB titles and excerpts.
+9. You may make a cautious research interpretation, but it must be explicitly based on the DB excerpts.
+10. If the DB excerpts are too thin for a strong claim, say the evidence is limited.
+
+Allowed Paper_Talk DB titles:
+${dbTitles.map((title, index) => `${index + 1}. ${title}`).join("\n")}
+    `.trim()
+    : `
+STRICT PAPER_TALK DB-ONLY RULES FOR RESEARCH ANSWERS
+
+No Paper_Talk DB context was retrieved.
+
+For research-related answers:
+1. Do NOT use outside literature as if it came from Paper_Talk DB.
+2. Do NOT invent related papers.
+3. Say clearly that no matching Paper_Talk DB source was retrieved.
+4. Ask the user to try a narrower keyword, reindex, or check research_knowledge.
+5. You may give only a very brief general conceptual clarification if needed, but label it as general background, not DB evidence.
+    `.trim();
 
   const messages = [
     {
       role: "system",
       content: `
-You are Paper_Talk Vision GPT, a warm and highly knowledgeable biomedical research assistant.
+You are Paper_Talk Vision GPT.
 
-Your role has two modes.
+You have two modes:
 
-Mode A: General assistant
+GENERAL MODE:
 - For ordinary non-research questions, answer naturally and directly.
-- Do not force paper comparison, research gaps, or hypotheses.
+- Do not force paper comparison.
 
-Mode B: Paper_Talk Literature Reasoning Engine
-- For research-related questions, use the user's Paper_Talk paper database as the main evidence.
-- Do not merely summarize one paper.
-- Compare retrieved papers when multiple relevant sources exist.
-- Synthesize what the papers collectively suggest.
-- Identify agreements, differences, contradictions, missing evidence, and knowledge gaps.
-- Give a cautious scientific judgment only when the question requires research interpretation.
-
-Core routing:
-- CONCEPT questions: explain the concept clearly. Use Paper_Talk DB only as optional examples if relevant. Do not force research gaps or hypotheses.
-- RESEARCH questions: use retrieved Paper_Talk DB sources to compare papers, identify gaps, generate cautious hypotheses, and suggest validation.
-- VALIDATION questions: use DB-supported mechanisms or methods when available, then propose computational and experimental validation.
-- LITERATURE questions: summarize and compare retrieved Paper_Talk DB papers. Focus on themes, agreements, differences, and open questions.
-- GENERAL questions: answer directly and concisely.
-
-Evidence rules:
-- Paper_Talk DB sources are the primary evidence for research-related answers.
-- Do not invent papers, datasets, sample sizes, biomarkers, mechanisms, or claims.
-- If DB evidence is weak, absent, or only one paper is retrieved, explicitly say the comparison is limited.
-- Separate DB-supported evidence from your own cautious interpretation.
-- If the user asks about research and DB sources are provided, you must use those sources and must not say that no related papers were found. If no DB source is provided, say that Paper_Talk DB did not retrieve a strong matching source and then provide general guidance only.
+PAPER_TALK DB-ONLY RESEARCH MODE:
+- For research-related questions, literature questions, validation questions, paper comparison questions, and any question that says "Paper_Talk DB", "DB", "논문", or "연구", you must answer from the retrieved Paper_Talk DB context only.
+- Outside/general model knowledge must not be mixed into the evidence.
+- Your job is to compare, synthesize, and judge the retrieved Paper_Talk DB papers only.
+- If the user asks for research judgment, compare paper-by-paper findings, agreements, differences, gaps, and cautious interpretation.
+- If the user asks a concept question without asking for DB evidence, you may explain the concept generally. But when DB context is requested, use DB context only.
 
 Language:
 Answer in the user's language.
@@ -3838,9 +3881,7 @@ Answer in the user's language.
 Formatting:
 Return plain text only.
 Do not use markdown symbols such as #, *, or **.
-Use readable headings and short paragraphs.
-For research questions, prioritize paper comparison, synthesis, and practical next steps.
-For general questions, keep the answer natural and not over-structured.
+Use short readable headings.
       `.trim()
     },
     {
@@ -3849,17 +3890,21 @@ For general questions, keep the answer natural and not over-structured.
     },
     {
       role: "system",
+      content: strictDbRule
+    },
+    {
+      role: "system",
       content: modeInstruction
     },
     {
       role: "system",
-      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 8000)}`
+      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 10000)}`
     },
     {
       role: "system",
       content: hasContext
-        ? "Matching Paper_Talk DB sources were found. For research-related questions, you must cite/use these retrieved titles and excerpts as the basis of the answer. Do not say related papers were not found when this context is present."
-        : "No matching Paper_Talk DB source was found. Do not hallucinate evidence."
+        ? "A DB context is present. For research-related answers, every named paper must come from the EXACT_DB_TITLE list above. Do not use external papers."
+        : "No DB context is present. For research-related answers, do not provide an outside-literature answer. State that DB retrieval failed."
     },
     ...recentMessages
       .filter(m => m.role !== "assistant")
@@ -3892,8 +3937,8 @@ For general questions, keep the answer natural and not over-structured.
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-4o-mini",
         messages,
-        temperature: questionType === "CONCEPT" ? 0.1 : 0.2,
-        max_tokens: questionType === "CONCEPT" ? 900 : 1200
+        temperature: isResearchRelated ? 0 : 0.1,
+        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 900 : 1300
       })
     });
 
@@ -3922,165 +3967,126 @@ For general questions, keep the answer natural and not over-structured.
   }
 }
 
-function buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext }) {
-  if (questionType === "CONCEPT") {
+
+function buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext, shouldUseDbEvidence = false, isResearchRelated = false }) {
+  if (questionType === "CONCEPT" && !shouldUseDbEvidence) {
     return `
-Selected mode: CONCEPT / educational overview with optional DB examples.
+Selected mode: CONCEPT / educational overview.
 
 The user is asking for the meaning, definition, or overview of a concept.
-Answer the concept clearly first.
+Answer the concept clearly.
 Do not force research-gap or hypothesis sections unless the user explicitly asks for research ideas.
-
-Use Paper_Talk DB only as supporting examples when retrieved sources are clearly relevant.
-Do not claim that a concept is DB-supported unless the retrieved context actually contains that evidence.
-
-Recommended output structure:
-Short answer
-- Give a direct definition in 2-4 sentences.
-
-Explanation
-- Explain the idea in simple research language.
-- If the user writes in Korean, answer naturally in Korean.
-
-Why it matters
-- Explain why this concept matters in cancer genomics, single-cell, spatial biology, bioinformatics, or biomedical research when relevant.
-
-Example
-- Give one realistic biomedical example.
-
-Relation to Paper_Talk DB
-- Include this only if retrieved Paper_Talk sources are relevant.
-- Mention 1-3 paper titles briefly as examples.
-
-Limitations
-- Mention caveats without overclaiming.
+If you mention Paper_Talk DB examples, only use retrieved DB titles and excerpts.
+Do not invent papers or citations.
     `.trim();
   }
 
-  if (questionType === "RESEARCH" || shouldGenerateHypotheses) {
+  if (questionType === "RESEARCH" || shouldGenerateHypotheses || isResearchRelated) {
     return `
-Selected mode: RESEARCH / Paper_Talk DB-grounded literature reasoning.
+Selected mode: PAPER_TALK DB-ONLY RESEARCH REASONING.
 
-The user is asking for research direction, research judgment, future work, mechanisms, gaps, hypotheses, or interpretation.
-For research-related questions, answer from the user's Paper_Talk paper database whenever relevant sources are available.
+The user is asking a research-related question or asked to use Paper_Talk DB.
+You must not mix in outside/general literature knowledge.
 
-Your job is not to summarize one paper.
-Your job is to synthesize multiple retrieved papers, compare them, and then give a careful research opinion.
-
-Use this structure when the question needs research judgment:
+If Paper_Talk DB context is available:
+Use this structure:
 
 1. Direct answer
-- Start with the practical conclusion in 3-6 sentences.
+- Answer the user's question based only on the retrieved DB excerpts.
 
 2. Relevant Paper_Talk DB papers
-- List the most relevant retrieved paper titles.
-- Briefly state why each paper matters for the user's question.
+- List only the exact retrieved DB titles.
+- Do not include external paper titles.
+- Briefly explain what each retrieved title contributes based on its excerpt.
 
 3. Paper-by-paper findings
-- For each relevant paper, extract the main biological or methodological point.
-- Do not invent details that are not in the retrieved context.
+- Summarize each retrieved DB paper/excerpt.
+- Do not add methods, years, authors, datasets, or mechanisms unless present in the excerpt.
 
-4. Agreements across papers
-- Identify shared conclusions, converging mechanisms, or repeated trends.
+4. Agreements across retrieved papers
+- Identify shared themes only from the retrieved excerpts.
 
 5. Differences or contradictions
-- Identify disagreements, different models, different technologies, different sample contexts, or methodological limits.
-- If no contradiction is visible, say that the retrieved DB does not show a clear contradiction.
+- Compare only the retrieved DB papers.
+- If the excerpts do not show contradiction, say so.
 
 6. Knowledge gaps
-- Identify specific gaps that remain unresolved.
-- Make gaps project-like and testable.
+- Identify gaps that follow from the retrieved excerpts.
+- If excerpts are too thin, say the gap analysis is limited.
 
 7. Paper_Talk research interpretation
-- Give your scientific interpretation based only on the retrieved evidence plus cautious reasoning.
-- Clearly separate DB-supported evidence from speculation.
+- Provide cautious interpretation based only on DB evidence.
+- Clearly mark uncertainty.
 
 8. Suggested next study or validation
-- Suggest practical next analyses or experiments.
-- Include data type, model/assay, comparison group, and validation readout when possible.
+- Suggest next steps that logically follow from the retrieved DB evidence.
 
-Rules:
-- Use Paper_Talk DB sources as the main evidence.
-- If retrieved DB evidence is weak or absent, say so and give only general guidance.
-- Do not hallucinate paper findings, biomarkers, sample sizes, cohorts, or methods.
-- Do not use novelty scores unless the user asks.
-- If only one relevant source is retrieved, do not pretend to compare multiple papers; summarize that source and state that comparison is limited.
+If Paper_Talk DB context is absent:
+- Say that no matching Paper_Talk DB source was retrieved.
+- Do not answer from outside papers.
+- Suggest checking keywords, reindexing, or confirming research_knowledge contents.
+
+Hard restrictions:
+- Do not cite or mention papers that are not in EXACT_DB_TITLE.
+- Do not use famous external papers from memory.
+- Do not write "관련 논문이 없습니다" if retrieved DB context exists.
+- Do not hallucinate evidence.
     `.trim();
   }
 
   if (questionType === "VALIDATION") {
     return `
-Selected mode: VALIDATION / DB-grounded experiment and analysis planning.
+Selected mode: PAPER_TALK DB-ONLY VALIDATION PLANNING.
 
-The user wants to know how to test, validate, or analyze something.
-Use Paper_Talk DB sources when they provide relevant mechanisms, datasets, assays, or prior findings.
+Use retrieved Paper_Talk DB evidence only.
+If DB context is available, base validation logic on retrieved excerpts.
+If DB context is absent, say no matching Paper_Talk DB source was retrieved and do not invent external evidence.
 
-Recommended output structure:
+Recommended output:
 Direct answer
-- State the best validation logic briefly.
-
-Paper_Talk DB evidence
-- Mention relevant retrieved papers and what they support.
-
-What you are trying to validate
-- Restate the claim, mechanism, biomarker, model, or biological relationship.
-
+Relevant Paper_Talk DB evidence
+What should be validated
 Computational validation
-- Suggest datasets, features, statistical tests, models, controls, confounders, and expected readouts.
-
 Experimental validation
-- Suggest assays, sample types, perturbations, imaging, sequencing, staining, organoids, animal models, or orthogonal validation when relevant.
-
 Controls and caveats
-- Include positive controls, negative controls, batch effects, sample heterogeneity, tissue quality, and interpretation limits.
-
 Research interpretation
-- If the question requires judgment, compare relevant DB papers and explain whether they support or weaken the proposed validation path.
+
+Hard restriction:
+Do not cite or mention papers not present in the retrieved DB context.
     `.trim();
   }
 
   if (questionType === "LITERATURE") {
     return `
-Selected mode: LITERATURE / Paper_Talk DB-grounded paper comparison.
+Selected mode: PAPER_TALK DB-ONLY LITERATURE COMPARISON.
 
-The user wants related papers, literature, summaries, or comparison.
-Use the user's Paper_Talk paper database as the primary evidence.
+Use only retrieved Paper_Talk DB sources.
+Do not mix outside literature.
 
-Recommended output structure:
-Overview
-- Define the literature area briefly.
-
+Recommended output:
+Overview based on retrieved DB
 Relevant Paper_Talk DB papers
-- Mention relevant source titles and explain each in 1-3 sentences.
-
-Comparison across papers
-- Compare methods, biological systems, data types, disease context, key findings, and limitations.
-
+Comparison across retrieved papers
 Main themes
-- Group papers by mechanism, technology, disease context, or analytical approach.
-
 Agreements and differences
-- Explain where papers converge and where they differ.
-
 Open questions
-- Mention unresolved questions or gaps.
-
 Final take-home message
-- Give a concise synthesis of what the user's DB currently suggests.
 
-Rules:
-- Do not invent papers or details.
-- Do not generate hypotheses unless the user asks for research ideas.
+Hard restrictions:
+- Only use exact retrieved titles.
+- Do not invent papers, authors, years, methods, datasets, or findings.
+- If the retrieved excerpts are limited, say so clearly.
     `.trim();
   }
 
   return `
 Selected mode: GENERAL / helpful direct answer.
 
-Answer the user's question naturally and clearly.
-If the question is not research-related, do not force Paper_Talk DB comparison.
-If the question becomes research-related, use retrieved Paper_Talk DB context as supporting evidence.
-Do not generate hypotheses, gaps, or research interpretation unless the user asks or the question clearly requires research judgment.
+Answer naturally if the question is not research-related.
+If the question is research-related or asks for Paper_Talk DB, switch to DB-only mode:
+- use retrieved Paper_Talk DB context only,
+- do not mix outside papers,
+- do not invent citations.
   `.trim();
 }
 
