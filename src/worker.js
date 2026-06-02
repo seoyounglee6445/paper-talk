@@ -1,5 +1,5 @@
 /*
-Paper_Talk v19 update - batch-safe reindex + subrequest-safe DOI/title learning:
+Paper_Talk v21 update - batch-safe reindex + subrequest-safe DOI/title learning:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -15,6 +15,9 @@ Paper_Talk v19 update - batch-safe reindex + subrequest-safe DOI/title learning:
 - v18: Sleep between rows reduced to 50 ms to make reindex much faster while still avoiding burst calls.
 - v19: Default reindex batch size increased to 50 so the frontend can auto-continue efficiently.
 - v19: Response includes remaining count for admin.html one-click auto-loop reindex.
+- v20: Admin-entered Abstract/Description/Note are treated as first-class GPT knowledge.
+- v20: If DOI/title lookup fails, manual Admin abstract is still indexed as trusted Paper_Talk DB evidence.
+- v21: External article learning order is DOI/title -> Crossref -> PubMed -> Europe PMC -> Semantic Scholar -> OpenAlex -> Admin abstract fallback.
 */
 
 export default {
@@ -1306,7 +1309,7 @@ async function adminReindexResearchPapers(request, env) {
 
   const url = new URL(request.url);
   const batchLimit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 50);
-  const reindexMarker = "Reindex checked version: v19";
+  const reindexMarker = "Reindex checked version: v21";
 
   let indexed = 0;
   let legacyIndexed = 0;
@@ -1496,7 +1499,7 @@ async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
 
   const learnedContent = [
     `Paper_Talk DB Research Paper`,
-    `Reindex checked version: v19`,
+    `Reindex checked version: v21`,
     `Imported source: LinkedIn/BibTeX`,
     `Title: ${safeTitle}`,
     doi ? `DOI: ${doi}` : "",
@@ -1727,16 +1730,31 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
   const safeSourceUrl = String(sourceUrl || "").trim();
   const safePdfLink = String(pdfLink || "").trim();
 
+  const adminAbstract = String(researchData?.abstract || "").trim();
+  const adminDescription = String(researchData?.description || "").trim();
+  const adminNote = String(researchData?.note || "").trim();
+  const adminAuthors = String(researchData?.authors || "").trim();
+  const adminJournal = String(researchData?.journal || "").trim();
+  const adminYear = String(researchData?.year || "").trim();
+  const adminCategory = String(researchData?.category || "").trim();
+  const adminTags = String(researchData?.tags || "").trim();
+
+  const hasAdminAbstract = adminAbstract.length >= 80;
+  const hasAdminCuratedText =
+    hasAdminAbstract ||
+    adminDescription.length >= 80 ||
+    adminNote.length >= 80;
+
   const adminText = [
     safeTitle,
-    researchData?.year || "",
-    researchData?.authors || "",
-    researchData?.journal || "",
-    researchData?.category || "",
-    researchData?.tags || "",
-    researchData?.abstract || "",
-    researchData?.description || "",
-    researchData?.note || "",
+    adminYear,
+    adminAuthors,
+    adminJournal,
+    adminCategory,
+    adminTags,
+    adminAbstract,
+    adminDescription,
+    adminNote,
     safeSourceUrl,
     safePdfLink
   ].filter(Boolean).join("\n");
@@ -1745,26 +1763,65 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
     title: safeTitle,
     sourceUrl: safeSourceUrl,
     pdfLink: safePdfLink,
-    adminText
+    adminText,
+    includeAdminFallback: false
   });
 
-  const doi = extractDoiFromTextOrUrl(adminText);
+  const hasExternalEvidence = containsExternalArticleData(fetchedArticle);
+
+  const doi = extractDoiFromTextOrUrl([
+    safeTitle,
+    safeSourceUrl,
+    safePdfLink,
+    adminText,
+    fetchedArticle
+  ].join("\n"));
+
+  // v20:
+  // Admin-entered abstract/description/note must be treated as trusted Paper_Talk DB knowledge.
+  // DOI/title lookup is useful, but it must not be required. If DOI lookup fails, the manually
+  // saved abstract is still indexed and used by GPT.
+  const adminCuratedKnowledge = [
+    hasAdminAbstract ? `Admin-curated abstract:\n${adminAbstract}` : "",
+    !hasAdminAbstract && adminDescription ? `Admin-curated description:\n${adminDescription}` : "",
+    adminNote ? `Admin-curated note:\n${adminNote}` : ""
+  ].filter(Boolean).join("\n\n");
+
+  const knowledgeSource = hasExternalEvidence && hasAdminCuratedText
+    ? "Admin Abstract + External DOI/Title Metadata"
+    : hasExternalEvidence
+      ? "External DOI/Title Metadata"
+      : hasAdminCuratedText
+        ? "Admin Abstract"
+        : "Basic Admin Metadata";
+
+  const learningStatus = hasExternalEvidence
+    ? "external_found"
+    : hasAdminCuratedText
+      ? "admin_abstract_found"
+      : "metadata_only";
 
   const content = [
     `Paper_Talk DB Research Paper`,
-    `Reindex checked version: v19`,
+    `Reindex checked version: v21`,
     `Title: ${safeTitle}`,
+    `Knowledge source: ${knowledgeSource}`,
+    `External article learning status: ${learningStatus}`,
     doi ? `DOI: ${doi}` : "",
-    researchData?.year ? `Year: ${researchData.year}` : "",
-    researchData?.authors ? `Authors: ${researchData.authors}` : "",
-    researchData?.journal ? `Journal: ${researchData.journal}` : "",
-    researchData?.category ? `Category: ${researchData.category}` : "",
-    researchData?.tags ? `Tags: ${researchData.tags}` : "",
-    researchData?.abstract ? `Admin abstract: ${researchData.abstract}` : "",
-    researchData?.description ? `Admin description: ${researchData.description}` : "",
-    fetchedArticle ? `DOI / article-link learned text: ${fetchedArticle}` : "",
+    adminYear ? `Year: ${adminYear}` : "",
+    adminAuthors ? `Authors: ${adminAuthors}` : "",
+    adminJournal ? `Journal: ${adminJournal}` : "",
+    adminCategory ? `Category: ${adminCategory}` : "",
+    adminTags ? `Tags: ${adminTags}` : "",
+    adminCuratedKnowledge ? `Paper_Talk admin-curated knowledge:\n${adminCuratedKnowledge}` : "",
+    hasExternalEvidence ? `DOI / article-link learned text:\n${fetchedArticle}` : "",
+    !hasExternalEvidence && hasAdminCuratedText
+      ? `DOI / title lookup note: No external abstract was found, so Paper_Talk uses the admin-entered abstract/description/note as the primary evidence.`
+      : "",
+    !hasExternalEvidence && !hasAdminCuratedText
+      ? `Evidence note: No external abstract and no admin abstract were available. Use this row only as bibliographic metadata.`
+      : "",
     researchData?.figures ? `Figures: ${researchData.figures}` : "",
-    researchData?.note ? `Note: ${researchData.note}` : "",
     safeSourceUrl ? `Article link: ${safeSourceUrl}` : "",
     safePdfLink ? `PDF link: ${safePdfLink}` : ""
   ].filter(Boolean).join("\n\n");
@@ -1855,6 +1912,10 @@ async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink, adminText 
       fetchCrossrefKnowledge({ doi, title: normalizedTitle })
     )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
 
+    if (await tryAdd(`PubMed DOI lookup for ${doi}`, () =>
+      fetchPubMedKnowledge({ doi, title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+
     if (await tryAdd(`Europe PMC DOI lookup for ${doi}`, () =>
       fetchEuropePmcKnowledge({ doi, title: normalizedTitle })
     )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
@@ -1871,6 +1932,10 @@ async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink, adminText 
   if (normalizedTitle) {
     if (await tryAdd(`Crossref title lookup for ${normalizedTitle}`, () =>
       fetchCrossrefKnowledge({ doi: "", title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+
+    if (await tryAdd(`PubMed title lookup for ${normalizedTitle}`, () =>
+      fetchPubMedKnowledge({ doi: "", title: normalizedTitle })
     )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
 
     if (await tryAdd(`Europe PMC title lookup for ${normalizedTitle}`, () =>
@@ -1925,6 +1990,7 @@ function containsExternalArticleData(value) {
   // not by the admin fallback. This prevents fallback-only content from being treated
   // as learned abstract evidence.
   return /Crossref metadata from DOI\/title search:/i.test(text) ||
+    /PubMed article data from DOI\/title search:/i.test(text) ||
     /Europe PMC \/ PubMed-indexed article data:/i.test(text) ||
     /Semantic Scholar article data from DOI\/title search:/i.test(text) ||
     /OpenAlex article data from DOI\/title search:/i.test(text) ||
@@ -2125,6 +2191,111 @@ async function fetchCrossrefKnowledge({ doi, title }) {
 
   return pieces.join("\n");
 }
+
+
+async function fetchPubMedKnowledge({ doi, title }) {
+  const wantedTitle = cleanBibtexText(title || "");
+  const searchTerms = [];
+
+  if (doi) {
+    searchTerms.push(`${doi}[DOI]`);
+  }
+
+  for (const variant of buildTitleSearchVariants(wantedTitle)) {
+    searchTerms.push(`"${variant.replace(/"/g, " ")}"[Title]`);
+    searchTerms.push(variant.replace(/"/g, " "));
+  }
+
+  for (const term of searchTerms.filter(Boolean)) {
+    const searchUrl =
+      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=10&term=${encodeURIComponent(term)}`;
+
+    const searchData = await fetchJsonWithTimeout(searchUrl, 20000);
+    const ids = searchData?.esearchresult?.idlist || [];
+    if (!ids.length) continue;
+
+    const summaryUrl =
+      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&retmode=json&id=${encodeURIComponent(ids.join(","))}`;
+
+    const summaryData = await fetchJsonWithTimeout(summaryUrl, 20000);
+    const resultMap = summaryData?.result || {};
+    const summaries = ids
+      .map(id => resultMap[id])
+      .filter(Boolean);
+
+    const summary = bestCandidateByTitle(
+      summaries,
+      wantedTitle,
+      item => String(item?.title || "")
+    );
+
+    if (!summary) continue;
+
+    const pmid = String(summary.uid || summary.articleids?.find(x => x.idtype === "pubmed")?.value || "").trim();
+    if (!pmid) continue;
+
+    const abstractUrl =
+      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&id=${encodeURIComponent(pmid)}`;
+
+    const xml = await fetchTextWithTimeout(abstractUrl, 20000);
+    const abstractParts = [...xml.matchAll(/<AbstractText[^>]*>([\s\S]*?)<\/AbstractText>/gi)]
+      .map(match => stripHtmlEntities(match[1]).replace(/<[^>]+>/g, " "))
+      .map(v => cleanFetchedArticleText(v))
+      .filter(Boolean);
+
+    const articleTitle =
+      cleanFetchedArticleText(
+        stripHtmlEntities(
+          (xml.match(/<ArticleTitle>([\s\S]*?)<\/ArticleTitle>/i) || [])[1] || summary.title || ""
+        ).replace(/<[^>]+>/g, " ")
+      );
+
+    const journal =
+      cleanFetchedArticleText(
+        stripHtmlEntities(
+          (xml.match(/<Title>([\s\S]*?)<\/Title>/i) || [])[1] || summary.fulljournalname || summary.source || ""
+        ).replace(/<[^>]+>/g, " ")
+      );
+
+    const year =
+      (xml.match(/<PubDate>[\s\S]*?<Year>(\d{4})<\/Year>[\s\S]*?<\/PubDate>/i) || [])[1] ||
+      String(summary.pubdate || "").match(/\d{4}/)?.[0] ||
+      "";
+
+    const doiText =
+      cleanDoi(
+        stripHtmlEntities(
+          (xml.match(/<ArticleId IdType="doi">([\s\S]*?)<\/ArticleId>/i) || [])[1] || doi || ""
+        )
+      );
+
+    const authors = Array.isArray(summary.authors)
+      ? summary.authors.slice(0, 20).map(a => a.name).filter(Boolean).join(", ")
+      : "";
+
+    const titleForScore = articleTitle || summary.title || "";
+    const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, titleForScore).toFixed(2) : "1.00";
+    const abstract = abstractParts.join(" ");
+
+    const pieces = [
+      "PubMed article data from DOI/title search:",
+      titleForScore ? `Title: ${titleForScore}` : "",
+      wantedTitle ? `Title match score: ${matchScore}` : "",
+      authors ? `Authors: ${authors}` : "",
+      journal ? `Journal: ${journal}` : "",
+      year ? `Year: ${year}` : "",
+      pmid ? `PMID: ${pmid}` : "",
+      doiText ? `DOI: ${doiText}` : "",
+      abstract ? `Abstract: ${abstract}` : ""
+    ].filter(Boolean);
+
+    const text = pieces.join("\n");
+    if (containsExternalArticleData(text)) return text;
+  }
+
+  return "";
+}
+
 
 async function fetchEuropePmcKnowledge({ doi, title }) {
   const wantedTitle = cleanBibtexText(title || "");
