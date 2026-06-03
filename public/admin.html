@@ -43,9 +43,16 @@
 
   <section class="card">
     <h2>Users</h2>
-    <p>Registered users are loaded automatically after admin access is saved.</p>
-    <p id="userCountBox">Save your admin key to view the current user count.</p>
-    <button onclick="loadUserCount()">Refresh User Count</button>
+    <p>Registered users and currently active users are loaded automatically after admin access is saved.</p>
+
+    <div style="display:flex; gap:18px; flex-wrap:wrap;">
+      <p id="userCountBox">Save your admin key to view the current user count.</p>
+      <p id="activeUserBox">Save your admin key to view active users.</p>
+    </div>
+
+    <div id="activeUserList"></div>
+
+    <button onclick="refreshUserStats()">Refresh Users</button>
   </section>
 
 
@@ -408,7 +415,7 @@ function saveAdminKey() {
   localStorage.setItem(ADMIN_KEY_EXPIRES, String(Date.now() + ONE_HOUR));
 
   updateAdminKeyStatus();
-  loadUserCount();
+  refreshUserStats();
   alert("Admin key saved for 1 hour.");
 }
 
@@ -554,6 +561,57 @@ async function loadUserCount() {
   }
 
   box.textContent = `Total registered users: ${data.total}`;
+}
+
+async function loadActiveUsers() {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const box = document.getElementById("activeUserBox");
+  const list = document.getElementById("activeUserList");
+
+  if (box) box.textContent = "Loading active users...";
+  if (list) list.innerHTML = "";
+
+  const res = await fetch("/api/admin/users/active", {
+    method: "GET",
+    headers: {
+      "X-Admin-Key": key
+    }
+  });
+
+  const data = await res.json();
+
+  if (!res.ok || !data.ok) {
+    if (box) box.textContent = data.error || "Failed to load active users.";
+    return;
+  }
+
+  if (box) {
+    box.textContent =
+      `Currently active: ${data.totalActive} ` +
+      `(signed-in: ${data.signedInActive}, guests: ${data.guestActive})`;
+  }
+
+  if (!list) return;
+
+  if (!data.users || data.users.length === 0) {
+    list.innerHTML = `<p>No signed-in users active in the last 5 minutes.</p>`;
+    return;
+  }
+
+  list.innerHTML = data.users.map(user => `
+    <article class="post-card">
+      <p><strong>${escapeHtml(user.name || "Signed-in user")}</strong></p>
+      <p>${escapeHtml(user.email || "")}</p>
+      <p class="post-meta">Last seen: ${escapeHtml(user.last_seen || "")}</p>
+    </article>
+  `).join("");
+}
+
+async function refreshUserStats() {
+  await refreshUserStats();
+  await loadActiveUsers();
 }
 
 async function createResearchPaper(e) {
@@ -1051,6 +1109,22 @@ async function deletePost(id) {
   loadAdminPosts();
 }
 
+
+async function sendActiveHeartbeat() {
+  try {
+    await fetch("/api/public/active/heartbeat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+  } catch {
+    // Ignore heartbeat errors.
+  }
+}
+
+sendActiveHeartbeat();
+setInterval(sendActiveHeartbeat, 60000);
+
 window.addEventListener("load", () => {
   const key = getAdminKey();
 
@@ -1061,7 +1135,7 @@ window.addEventListener("load", () => {
   updateAdminKeyStatus();
 
   if (key) {
-    loadUserCount();
+    refreshUserStats();
   }
 });
 </script>
