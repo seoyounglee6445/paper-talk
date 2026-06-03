@@ -741,13 +741,22 @@ async function ensureActiveUsersTable(env) {
 async function publicActiveHeartbeat(request, env) {
   await ensureActiveUsersTable(env);
 
-  const user = await getSession(request, env);
-  const visitorIp = getVisitorIp(request);
-  const todayKey = getTodayKey();
+  let data = {};
+  try {
+    data = await request.json();
+  } catch {
+    data = {};
+  }
 
-  const visitorKey = user
-    ? `user:${user.id}`
-    : "guest:" + await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:active`);
+  const forceGuest = Boolean(data.forceGuest || data.adminPage);
+  const user = forceGuest ? null : await getSession(request, env);
+
+  const visitorIp = getVisitorIp(request);
+
+  // Important:
+  // Active visitors are counted by IP hash only, so the same IP is counted once.
+  // This prevents one person/browser from being counted separately as guest + signed-in.
+  const visitorKey = "ip:" + await sha256Hex(`${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:active-user`);
 
   await env.DB.prepare(`
     INSERT INTO active_users (
@@ -775,7 +784,8 @@ async function publicActiveHeartbeat(request, env) {
 
   return json({
     ok: true,
-    loggedIn: Boolean(user)
+    loggedIn: Boolean(user),
+    countedBy: "ip"
   });
 }
 
