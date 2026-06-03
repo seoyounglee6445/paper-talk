@@ -517,7 +517,7 @@ async function listPosts(request, env) {
 
   if (type) {
     if (section === "study" && type === "study") {
-      where += " AND type IN ('study', 'study_post')";
+      where += " AND type IN ('study', 'study_post', 'methodology_page', 'blog')";
     } else {
       where += " AND type = ?";
       params.push(type);
@@ -824,7 +824,7 @@ async function adminListPosts(request, env) {
 
   if (type) {
     if (section === "study" && type === "study") {
-      where += " AND type IN ('study', 'study_post')";
+      where += " AND type IN ('study', 'study_post', 'methodology_page', 'blog')";
     } else {
       where += " AND type = ?";
       params.push(type);
