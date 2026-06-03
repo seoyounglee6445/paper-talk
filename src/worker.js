@@ -84,6 +84,8 @@ export default {
 
       if (pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
       if (pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
+      if (pathname === "/api/admin/users/active" && request.method === "GET") return adminActiveUsers(request, env);
+      if (pathname === "/api/public/active/heartbeat" && request.method === "POST") return publicActiveHeartbeat(request, env);
       if (pathname === "/api/public/visits/today" && request.method === "GET") return publicTodayVisitCount(request, env);
       if (pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
       if (pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
@@ -721,6 +723,99 @@ async function adminUserCount(request, env) {
     total: result ? result.total : 0
   });
 }
+
+
+async function ensureActiveUsersTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS active_users (
+      visitor_key TEXT PRIMARY KEY,
+      user_id TEXT,
+      name TEXT,
+      email TEXT,
+      is_logged_in INTEGER NOT NULL DEFAULT 0,
+      last_seen TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+}
+
+async function publicActiveHeartbeat(request, env) {
+  await ensureActiveUsersTable(env);
+
+  const user = await getSession(request, env);
+  const visitorIp = getVisitorIp(request);
+  const todayKey = getTodayKey();
+
+  const visitorKey = user
+    ? `user:${user.id}`
+    : "guest:" + await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:active`);
+
+  await env.DB.prepare(`
+    INSERT INTO active_users (
+      visitor_key,
+      user_id,
+      name,
+      email,
+      is_logged_in,
+      last_seen
+    )
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(visitor_key) DO UPDATE SET
+      user_id = excluded.user_id,
+      name = excluded.name,
+      email = excluded.email,
+      is_logged_in = excluded.is_logged_in,
+      last_seen = CURRENT_TIMESTAMP
+  `).bind(
+    visitorKey,
+    user ? user.id : "",
+    user ? (user.name || "") : "Guest",
+    user ? (user.email || "") : "",
+    user ? 1 : 0
+  ).run();
+
+  return json({
+    ok: true,
+    loggedIn: Boolean(user)
+  });
+}
+
+async function adminActiveUsers(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  await ensureActiveUsersTable(env);
+
+  const rows = await env.DB.prepare(`
+    SELECT
+      visitor_key,
+      user_id,
+      name,
+      email,
+      is_logged_in,
+      last_seen
+    FROM active_users
+    WHERE datetime(last_seen) >= datetime('now', '-5 minutes')
+    ORDER BY datetime(last_seen) DESC
+  `).all();
+
+  const active = rows.results || [];
+  const signedIn = active.filter(row => Number(row.is_logged_in || 0) === 1);
+  const guests = active.filter(row => Number(row.is_logged_in || 0) !== 1);
+
+  return json({
+    ok: true,
+    totalActive: active.length,
+    signedInActive: signedIn.length,
+    guestActive: guests.length,
+    users: signedIn.map(row => ({
+      name: row.name || "",
+      email: row.email || "",
+      last_seen: row.last_seen || ""
+    }))
+  });
+}
+
 
 function getTodayKey(date = new Date()) {
   return date.toISOString().slice(0, 10);
