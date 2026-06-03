@@ -6,6 +6,26 @@
 <meta name="robots" content="index, follow, noai, noimageai">
 <title>Research Paper | Paper_Talk</title>
 <link rel="stylesheet" href="/style.css">
+<style>
+#researchList {
+  width: 100%;
+}
+
+#researchList .post-card,
+#researchList .login-required-box {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
+#researchList .login-required-box {
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
+}
+</style>
 </head>
 
 <body>
@@ -86,7 +106,7 @@ function showLoginRequired() {
   if (pagination) pagination.innerHTML = "";
 
   box.innerHTML = `
-    <article class="post-card">
+    <article class="login-required-box">
       <h3>Login Required</h3>
       <p class="post-body">Please sign in with Google to view research papers.</p>
       <a class="btn" href="/auth/google">Sign in with Google</a>
