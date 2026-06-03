@@ -292,7 +292,7 @@ body.guest-mode .gpt-sidebar {
   Private GPT workspace for Paper_Talk users.<br><br>
   It answers using Research Paper knowledge added by Paper_Talk.<br>
   The research database is updated daily with newly indexed publications.<br><br>
-  Guest usage: Try 3 questions. .<br>
+  Guest usage: Try 3 questions. <br>
   Signed-in usage: 20 questions per user per month.
 </p>
 
@@ -401,7 +401,7 @@ async function init() {
     updateQuotaText(Math.max(GUEST_LIMIT - localUsed, 0), GUEST_LIMIT, true);
 
     const box = document.getElementById("chatBox");
-    box.innerHTML = `<p class="empty-posts">Start a free preview conversation with Paper_Talk Vision GPT. You can ask 3 questions per day without signing in.</p>`;
+    box.innerHTML = `<p class="empty-posts">Start a free preview conversation with Paper_Talk Vision GPT.    You can ask 3 questions without signing in.</p>`;
     return;
   }
 
