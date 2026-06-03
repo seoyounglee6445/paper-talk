@@ -516,8 +516,12 @@ async function listPosts(request, env) {
   const params = [section];
 
   if (type) {
-    where += " AND type = ?";
-    params.push(type);
+    if (section === "study" && type === "study") {
+      where += " AND type IN ('study', 'study_post')";
+    } else {
+      where += " AND type = ?";
+      params.push(type);
+    }
   }
 
   const count = await env.DB.prepare(`
@@ -819,8 +823,12 @@ async function adminListPosts(request, env) {
   }
 
   if (type) {
-    where += " AND type = ?";
-    params.push(type);
+    if (section === "study" && type === "study") {
+      where += " AND type IN ('study', 'study_post')";
+    } else {
+      where += " AND type = ?";
+      params.push(type);
+    }
   }
 
   if (status) {
