@@ -415,7 +415,7 @@ function saveAdminKey() {
   localStorage.setItem(ADMIN_KEY_EXPIRES, String(Date.now() + ONE_HOUR));
 
   updateAdminKeyStatus();
-  refreshUserStats();
+  setTimeout(refreshUserStats, 100);
   alert("Admin key saved for 1 hour.");
 }
 
@@ -423,6 +423,15 @@ function clearAdminKey() {
   localStorage.removeItem(ADMIN_KEY_STORAGE);
   localStorage.removeItem(ADMIN_KEY_EXPIRES);
   document.getElementById("globalAdminKey").value = "";
+
+  const userCountBox = document.getElementById("userCountBox");
+  const activeUserBox = document.getElementById("activeUserBox");
+  const activeUserList = document.getElementById("activeUserList");
+
+  if (userCountBox) userCountBox.textContent = "Save your admin key to view the current user count.";
+  if (activeUserBox) activeUserBox.textContent = "Save your admin key to view active users.";
+  if (activeUserList) activeUserList.innerHTML = "";
+
   updateAdminKeyStatus();
   updateAdminContentVisibility();
 }
@@ -610,7 +619,7 @@ async function loadActiveUsers() {
 }
 
 async function refreshUserStats() {
-  await refreshUserStats();
+  await loadUserCount();
   await loadActiveUsers();
 }
 
@@ -1135,7 +1144,7 @@ window.addEventListener("load", () => {
   updateAdminKeyStatus();
 
   if (key) {
-    refreshUserStats();
+    setTimeout(refreshUserStats, 100);
   }
 });
 </script>
