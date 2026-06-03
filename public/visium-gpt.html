@@ -401,7 +401,12 @@ async function init() {
     updateQuotaText(Math.max(GUEST_LIMIT - localUsed, 0), GUEST_LIMIT, true);
 
     const box = document.getElementById("chatBox");
-    box.innerHTML = `<p class="empty-posts">Start a free preview conversation with Paper_Talk Vision GPT.    You can ask 3 questions without signing in.</p>`;
+    box.innerHTML = `
+  <p class="empty-posts">
+    Start a free preview conversation with Paper_Talk Vision GPT.<br><br>
+    You can ask 3 questions without signing in.
+  </p>
+`;
     return;
   }
 
