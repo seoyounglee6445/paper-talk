@@ -31,6 +31,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v26: GPT must not create sections like Direct answer, Relevant papers, Paper-by-paper findings, Agreements, Contradictions, or Knowledge gaps unless the user explicitly asks.
 - v26: Retrieved papers must be woven naturally into the explanation as evidence, not dumped as a paper list.
 - v27: If GPT still returns report headings such as Direct answer / Relevant papers / Paper-by-paper findings, Worker automatically rewrites the answer into calm explanatory prose before saving it.
+- v28: Guest users can ask Paper_Talk Vision GPT up to 3 questions per day per hashed IP address before signing in.
 */
 
 export default {
@@ -442,16 +443,20 @@ async function apiMe(request, env) {
   const user = await getSession(request, env);
 
   if (!user) {
+    const guestQuota = await getGuestGptQuota(request, env);
+
     return json({
-      ok: false,
+      ok: true,
       user: null,
+      guest: true,
       quota: {
-        used: null,
-        limit: 20,
-        remaining: null,
-        monthKey: getCurrentMonthKey()
+        used: guestQuota.used,
+        limit: guestQuota.limit,
+        remaining: guestQuota.remaining,
+        date: guestQuota.todayKey,
+        resetsAt: guestQuota.resetsAt
       },
-      message: "Please sign in to use Paper_Talk Vision GPT."
+      message: "You can try Paper_Talk Vision GPT 3 times per day without signing in."
     });
   }
 
@@ -460,6 +465,7 @@ async function apiMe(request, env) {
   return json({
     ok: true,
     user,
+    guest: false,
     quota: {
       used: quota.used,
       limit: quota.limit,
@@ -3393,10 +3399,7 @@ function appendFriendlyStyleToSystemPrompt(systemPrompt, mode = "general") {
 
 async function gptChat(request, env) {
   const user = await getSession(request, env);
-
-  if (!user) {
-    return json({ ok: false, error: "Please sign in first." }, 401);
-  }
+  const isGuest = !user;
 
   if (!env.OPENAI_API_KEY) {
     return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
@@ -3410,72 +3413,92 @@ async function gptChat(request, env) {
     return json({ ok: false, error: "Message is required." }, 400);
   }
 
-  const quotaBefore = await getMonthlyGptQuota(user.id, env, user);
+  const quotaBefore = isGuest
+    ? await getGuestGptQuota(request, env)
+    : await getMonthlyGptQuota(user.id, env, user);
 
   if (quotaBefore.used >= quotaBefore.limit) {
     return json({
       ok: false,
-      error: "Monthly limit reached. You have used all 20 questions for this month. Your quota will reset automatically next month.",
+      guest: isGuest,
+      signupRequired: isGuest,
+      signupUrl: isGuest ? "/auth/google" : null,
+      error: isGuest
+        ? "You have used all 3 free guest questions today. Please sign up for free with Google to continue with 20 questions per month."
+        : "Monthly limit reached. You have used all 20 questions for this month. Your quota will reset automatically next month.",
+      message: isGuest
+        ? "Free signup required. Sign up with Google to keep using Paper_Talk Vision GPT."
+        : "Monthly limit reached.",
       quota: {
         used: quotaBefore.used,
         limit: quotaBefore.limit,
-        remaining: 0
+        remaining: 0,
+        monthKey: quotaBefore.monthKey || null,
+        date: quotaBefore.todayKey || null,
+        resetsAt: quotaBefore.resetsAt
       }
     }, 429);
   }
 
-  if (!threadId) {
-    threadId = crypto.randomUUID();
+  if (!isGuest) {
+    if (!threadId) {
+      threadId = crypto.randomUUID();
+
+      await env.DB.prepare(`
+        INSERT INTO gpt_threads (
+          id,
+          user_id,
+          title,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).bind(
+        threadId,
+        user.id,
+        message.slice(0, 60)
+      ).run();
+    } else {
+      const thread = await env.DB.prepare(`
+        SELECT *
+        FROM gpt_threads
+        WHERE id = ?
+          AND user_id = ?
+      `).bind(threadId, user.id).first();
+
+      if (!thread) {
+        return json({ ok: false, error: "Thread not found." }, 404);
+      }
+    }
 
     await env.DB.prepare(`
-      INSERT INTO gpt_threads (
+      INSERT INTO gpt_messages (
         id,
+        thread_id,
         user_id,
-        title,
-        created_at,
-        updated_at
+        role,
+        content,
+        created_at
       )
-      VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, 'user', ?, CURRENT_TIMESTAMP)
     `).bind(
+      crypto.randomUUID(),
       threadId,
       user.id,
-      message.slice(0, 60)
+      message
     ).run();
   } else {
-    const thread = await env.DB.prepare(`
-      SELECT *
-      FROM gpt_threads
-      WHERE id = ?
-        AND user_id = ?
-    `).bind(threadId, user.id).first();
-
-    if (!thread) {
-      return json({ ok: false, error: "Thread not found." }, 404);
-    }
+    threadId = "guest";
   }
-
-  await env.DB.prepare(`
-    INSERT INTO gpt_messages (
-      id,
-      thread_id,
-      user_id,
-      role,
-      content,
-      created_at
-    )
-    VALUES (?, ?, ?, 'user', ?, CURRENT_TIMESTAMP)
-  `).bind(
-    crypto.randomUUID(),
-    threadId,
-    user.id,
-    message
-  ).run();
 
   // v4-auto-router:
   // Every user message is first classified as CONCEPT, RESEARCH, VALIDATION, LITERATURE, or GENERAL.
   // Concept questions receive definition/overview answers.
   // Research questions trigger DB-grounded gaps, hypotheses, and validation strategy.
-  const recentMessages = await getRecentThreadMessages(threadId, user.id, env);
+  const recentMessages = isGuest
+    ? []
+    : await getRecentThreadMessages(threadId, user.id, env);
+
   const autoIntent = await inferUserResearchIntent({
     userMessage: message,
     recentMessages
@@ -3526,13 +3549,15 @@ ${autoIntent.retrieval_query}`
   if (assistantFailed) {
     return json({
       ok: false,
+      guest: isGuest,
       threadId,
       error: assistantText,
       quota: {
         used: quotaBefore.used,
         limit: quotaBefore.limit,
         remaining: quotaBefore.remaining,
-        monthKey: quotaBefore.monthKey,
+        monthKey: quotaBefore.monthKey || null,
+        date: quotaBefore.todayKey || null,
         resetsAt: quotaBefore.resetsAt
       },
       sources: context.map(item => ({
@@ -3544,52 +3569,58 @@ ${autoIntent.retrieval_query}`
     }, 502);
   }
 
-  await env.DB.prepare(`
-    INSERT INTO gpt_messages (
-      id,
-      thread_id,
-      user_id,
-      role,
-      content,
-      created_at
-    )
-    VALUES (?, ?, ?, 'assistant', ?, CURRENT_TIMESTAMP)
-  `).bind(
-    crypto.randomUUID(),
-    threadId,
-    user.id,
-    assistantText
-  ).run();
+  if (!isGuest) {
+    await env.DB.prepare(`
+      INSERT INTO gpt_messages (
+        id,
+        thread_id,
+        user_id,
+        role,
+        content,
+        created_at
+      )
+      VALUES (?, ?, ?, 'assistant', ?, CURRENT_TIMESTAMP)
+    `).bind(
+      crypto.randomUUID(),
+      threadId,
+      user.id,
+      assistantText
+    ).run();
 
-  await env.DB.prepare(`
-    UPDATE gpt_threads
-    SET updated_at = CURRENT_TIMESTAMP,
-        title = CASE
-          WHEN title = 'New chat' THEN ?
-          ELSE title
-        END
-    WHERE id = ?
-      AND user_id = ?
-  `).bind(
-    message.slice(0, 60),
-    threadId,
-    user.id
-  ).run();
+    await env.DB.prepare(`
+      UPDATE gpt_threads
+      SET updated_at = CURRENT_TIMESTAMP,
+          title = CASE
+            WHEN title = 'New chat' THEN ?
+            ELSE title
+          END
+      WHERE id = ?
+        AND user_id = ?
+    `).bind(
+      message.slice(0, 60),
+      threadId,
+      user.id
+    ).run();
+  }
 
-  // Count exactly one successful GPT answer against the user's monthly quota.
-  // Quota is stored separately from chat messages, so deleting a thread will not restore usage.
-  // A new month_key is created automatically every month, giving the user a fresh 20 questions.
-  const quotaAfter = await incrementMonthlyGptUsage(user.id, env);
+  // Count exactly one successful GPT answer against the quota.
+  // Signed-in users get 20 questions per month.
+  // Guest users get 3 questions per day per hashed IP address.
+  const quotaAfter = isGuest
+    ? await incrementGuestGptUsage(request, env)
+    : await incrementMonthlyGptUsage(user.id, env);
 
   return json({
     ok: true,
+    guest: isGuest,
     threadId,
     answer: assistantText,
     quota: {
       used: quotaAfter.used,
       limit: quotaAfter.limit,
       remaining: quotaAfter.remaining,
-      monthKey: quotaAfter.monthKey,
+      monthKey: quotaAfter.monthKey || null,
+      date: quotaAfter.todayKey || null,
       resetsAt: quotaAfter.resetsAt
     },
     sources: context.map(item => ({
@@ -3694,6 +3725,71 @@ async function incrementMonthlyGptUsage(userId, env) {
   `).bind(userId, monthKey).run();
 
   return getMonthlyGptQuota(userId, env);
+}
+
+function getNextDayResetIso(date = new Date()) {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  return new Date(Date.UTC(year, month, day + 1, 0, 0, 0)).toISOString();
+}
+
+async function ensureGuestGptDailyUsageTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS guest_gpt_daily_usage (
+      visit_date TEXT NOT NULL,
+      ip_hash TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (visit_date, ip_hash)
+    )
+  `).run();
+}
+
+async function getGuestGptQuota(request, env) {
+  const now = new Date();
+  const todayKey = getTodayKey(now);
+  const visitorIp = getVisitorIp(request);
+  const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
+  const guestLimit = 3;
+
+  await ensureGuestGptDailyUsageTable(env);
+
+  const row = await env.DB.prepare(`
+    SELECT used
+    FROM guest_gpt_daily_usage
+    WHERE visit_date = ?
+      AND ip_hash = ?
+  `).bind(todayKey, ipHash).first();
+
+  const used = row ? Number(row.used || 0) : 0;
+
+  return {
+    used,
+    limit: guestLimit,
+    remaining: Math.max(guestLimit - used, 0),
+    todayKey,
+    resetsAt: getNextDayResetIso(now)
+  };
+}
+
+async function incrementGuestGptUsage(request, env) {
+  const quota = await getGuestGptQuota(request, env);
+
+  await env.DB.prepare(`
+    INSERT INTO guest_gpt_daily_usage (
+      visit_date,
+      ip_hash,
+      used,
+      updated_at
+    )
+    VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(visit_date, ip_hash) DO UPDATE SET
+      used = used + 1,
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(quota.todayKey, await sha256Hex(`${quota.todayKey}:${getVisitorIp(request)}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`)).run();
+
+  return getGuestGptQuota(request, env);
 }
 
 async function deleteGptThread(request, env) {
