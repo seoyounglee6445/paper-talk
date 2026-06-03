@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 
-<url>
-  <loc>https://paper-talk.seoyounglee6445.workers.dev/</loc>
-</url>
+  <url>
+    <loc>https://paper-talk.seoyounglee6445.workers.dev/</loc>
+  </url>
 
-<url>
-  <loc>https://paper-talk.seoyounglee6445.workers.dev/research.html</loc>
-</url>
+  <url>
+    <loc>https://paper-talk.seoyounglee6445.workers.dev/research-paper</loc>
+  </url>
 
-<url>
-  <loc>https://paper-talk.seoyounglee6445.workers.dev/study.html</loc>
-</url>
+  <url>
+    <loc>https://paper-talk.seoyounglee6445.workers.dev/study-materials</loc>
+  </url>
 
-<url>
-  <loc>https://paper-talk.seoyounglee6445.workers.dev/community.html</loc>
-</url>
+  <url>
+    <loc>https://paper-talk.seoyounglee6445.workers.dev/community</loc>
+  </url>
 
-<url>
-  <loc>https://paper-talk.seoyounglee6445.workers.dev/career.html</loc>
-</url>
+  <url>
+    <loc>https://paper-talk.seoyounglee6445.workers.dev/career</loc>
+  </url>
 
 </urlset>
