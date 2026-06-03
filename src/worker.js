@@ -32,6 +32,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v26: Retrieved papers must be woven naturally into the explanation as evidence, not dumped as a paper list.
 - v27: If GPT still returns report headings such as Direct answer / Relevant papers / Paper-by-paper findings, Worker automatically rewrites the answer into calm explanatory prose before saving it.
 - v28: Guest users can ask Paper_Talk Vision GPT up to 3 questions per day per hashed IP address before signing in.
+- v29: Adds /api/admin/check so admin.html can verify the admin key before saving it; trims admin keys before comparison.
 */
 
 export default {
@@ -82,6 +83,7 @@ export default {
       if (pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
       if (pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
 
+      if (pathname === "/api/admin/check" && (request.method === "GET" || request.method === "POST")) return adminCheck(request, env);
       if (pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
       if (pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
       if (pathname === "/api/admin/users/active" && request.method === "GET") return adminActiveUsers(request, env);
@@ -701,11 +703,38 @@ async function deleteMyPost(request, env) {
   return json({ ok: true });
 }
 
-function isAdmin(request, env) {
+function getAdminKeyFromRequest(request) {
   const url = new URL(request.url);
-  const key = request.headers.get("X-Admin-Key") || url.searchParams.get("key");
+  return String(request.headers.get("X-Admin-Key") || url.searchParams.get("key") || "").trim();
+}
 
-  return Boolean(key && env.ADMIN_KEY && key === env.ADMIN_KEY);
+function isAdmin(request, env) {
+  const key = getAdminKeyFromRequest(request);
+  const expectedKey = String(env.ADMIN_KEY || "").trim();
+
+  return Boolean(key && expectedKey && key === expectedKey);
+}
+
+async function adminCheck(request, env) {
+  if (!String(env.ADMIN_KEY || "").trim()) {
+    return json({
+      ok: false,
+      error: "ADMIN_KEY is not configured in Worker secrets."
+    }, 500);
+  }
+
+  if (!isAdmin(request, env)) {
+    return json({
+      ok: false,
+      error: "Unauthorized"
+    }, 401);
+  }
+
+  return json({
+    ok: true,
+    authenticated: true,
+    message: "Admin key is valid."
+  });
 }
 
 async function adminUserCount(request, env) {
