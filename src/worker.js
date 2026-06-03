@@ -33,6 +33,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v27: If GPT still returns report headings such as Direct answer / Relevant papers / Paper-by-paper findings, Worker automatically rewrites the answer into calm explanatory prose before saving it.
 - v28: Guest users can ask Paper_Talk Vision GPT up to 3 questions per day per hashed IP address before signing in.
 - v29: Adds /api/admin/check so admin.html can verify the admin key before saving it; trims admin keys before comparison.
+- v30: Adds no-store JSON headers to prevent stale guest quota/admin auth responses from browser or edge cache.
 */
 
 export default {
@@ -84,6 +85,7 @@ export default {
       if (pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
 
       if (pathname === "/api/admin/check" && (request.method === "GET" || request.method === "POST")) return adminCheck(request, env);
+      if (pathname === "/api/admin/debug/visitor" && request.method === "GET") return adminDebugVisitor(request, env);
       if (pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
       if (pathname === "/api/admin/users/count" && request.method === "GET") return adminUserCount(request, env);
       if (pathname === "/api/admin/users/active" && request.method === "GET") return adminActiveUsers(request, env);
@@ -181,6 +183,8 @@ function json(data, status = 200, headers = {}) {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
       ...corsHeaders(),
       ...headers
     }
@@ -734,6 +738,24 @@ async function adminCheck(request, env) {
     ok: true,
     authenticated: true,
     message: "Admin key is valid."
+  });
+}
+
+async function adminDebugVisitor(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const todayKey = getTodayKey();
+  const visitorIp = getVisitorIp(request);
+  const guestHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
+
+  return json({
+    ok: true,
+    visitorIp,
+    todayKey,
+    guestHashPreview: guestHash.slice(0, 12),
+    note: "Use this only for admin debugging. If visitorIp does not change, Cloudflare is still seeing the same IP even if your local IP/VPN appears changed."
   });
 }
 
