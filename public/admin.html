@@ -39,6 +39,8 @@
     <p id="adminKeyStatus"></p>
   </section>
 
+  <div id="adminContent" style="display:none;">
+
   <section class="card">
     <h2>Users</h2>
     <p>Check how many users have signed in with Google.</p>
@@ -357,6 +359,7 @@
 
   <h2>Posts</h2>
   <div id="adminPostList"></div>
+  </div>
 </main>
 
 <script>
@@ -364,6 +367,17 @@ const ADMIN_KEY_STORAGE = "paperTalkAdminKey";
 const ADMIN_KEY_EXPIRES = "paperTalkAdminKeyExpires";
 const ONE_HOUR = 60 * 60 * 1000;
 let adminLoadedPosts = [];
+
+function updateAdminContentVisibility() {
+  const content = document.getElementById("adminContent");
+  if (!content) return;
+
+  const key = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
+  const expires = Number(localStorage.getItem(ADMIN_KEY_EXPIRES) || 0);
+
+  content.style.display = key && Date.now() <= expires ? "block" : "none";
+}
+
 
 function escapeHtml(value) {
   return String(value || "")
@@ -402,6 +416,7 @@ function clearAdminKey() {
   localStorage.removeItem(ADMIN_KEY_EXPIRES);
   document.getElementById("globalAdminKey").value = "";
   updateAdminKeyStatus();
+  updateAdminContentVisibility();
 }
 
 function getAdminKey() {
@@ -434,11 +449,13 @@ function updateAdminKeyStatus() {
 
   if (!key || Date.now() > expires) {
     status.textContent = "Admin key is not saved.";
+    updateAdminContentVisibility();
     return;
   }
 
   const minutesLeft = Math.max(Math.ceil((expires - Date.now()) / 60000), 0);
   status.textContent = `Admin key saved. Expires in about ${minutesLeft} minutes.`;
+  updateAdminContentVisibility();
 }
 
 
