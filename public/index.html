@@ -86,7 +86,7 @@ gtag('config', 'G-WWSD3F58L6');
 
     <div class="home-column">
       <h2>Study Materials</h2>
-      <div id="homeConference"></div>
+      <div id="homeStudyMaterials"></div>
     </div>
 
     <div class="home-column">
@@ -104,7 +104,7 @@ const HOME_LIMIT = 5;
 document.addEventListener("DOMContentLoaded", () => {
   loadTodayVisitCount();
   loadHomePapers();
-  loadHomeConference();
+  loadHomeStudyMaterials();
   loadHomeLinkedIn();
 });
 
@@ -234,28 +234,28 @@ async function loadHomePapers() {
   }
 }
 
-async function loadHomeConference() {
-  const box = document.getElementById("homeConference");
+async function loadHomeStudyMaterials() {
+  const box = document.getElementById("homeStudyMaterials");
   if (!box) return;
 
   try {
-    const posts = (await fetchPosts("community", "conference_notice", "Conference notices API"))
+    const posts = (await fetchPosts("study", "study", "Study materials API"))
       .slice(0, HOME_LIMIT);
 
     if (posts.length === 0) {
-      renderEmpty(box, "No conference notices yet.");
+      renderEmpty(box, "No study materials yet.");
       return;
     }
 
     box.innerHTML = posts.map(p => `
       <div class="home-list-item">
         <h3>${escapeHtml(p.title)}</h3>
-        <p>Conference Notice · ${formatDate(p.created_at)}</p>
+        <p>Study Material · ${formatDate(p.created_at)}</p>
       </div>
     `).join("");
   } catch (error) {
     console.error(error);
-    renderError(box, "Could not load conference notices.");
+    renderError(box, "Could not load study materials.");
   }
 }
 
