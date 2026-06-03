@@ -52,6 +52,27 @@ gtag('config', 'G-WWSD3F58L6');
   font-size: 14px;
 }
 
+.logo {
+  font-weight: 900;
+  font-size: 26px;
+  margin-right: auto;
+  color: white;
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  z-index: 10;
+}
+
+.logo:visited {
+  color: white;
+}
+
+.logo:hover {
+  color: white;
+  text-decoration: none;
+}
 .logo,
 .logo:link,
 .logo:visited {
@@ -64,7 +85,7 @@ gtag('config', 'G-WWSD3F58L6');
   display: inline-flex;
   align-items: center;
   position: relative;
-  z-index: 9999;
+  z-index: 99999;
   pointer-events: auto !important;
 }
 
@@ -73,13 +94,20 @@ gtag('config', 'G-WWSD3F58L6');
   color: white !important;
   text-decoration: none !important;
 }
+
 </style>
 </head>
 
 <body>
 <header class="header">
   <nav class="nav">
-    <a href="/" class="logo" id="homeLogoLink" aria-label="Go to Home">Paper_Talk</a>
+    <a
+      href="/"
+      class="logo"
+      id="homeLogoLink"
+      aria-label="Go to Home"
+      onclick="event.preventDefault(); event.stopPropagation(); window.top.location.href = window.location.origin + '/'; return false;"
+    >Paper_Talk</a>
     <a href="/">Home</a>
     <a href="/research.html">Research Paper</a>
     <a href="/study.html">Study Materials</a>
@@ -122,16 +150,6 @@ gtag('config', 'G-WWSD3F58L6');
 
 <script>
 const HOME_LIMIT = 5;
-const HOME_URL = "/";
-
-document.addEventListener("click", (event) => {
-  const logo = event.target.closest("#homeLogoLink");
-  if (!logo) return;
-
-  event.preventDefault();
-  window.location.assign(HOME_URL);
-});
-
 
 document.addEventListener("DOMContentLoaded", () => {
   loadTodayVisitCount();
