@@ -17,11 +17,58 @@
   margin-bottom: 28px;
 }
 
+/* Study-material style sign-in card */
+.signin-study-card {
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  border-radius: 22px;
+  padding: 22px 26px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.signin-study-card h2 {
+  margin: 0 0 6px 0;
+  color: #1428a0;
+  font-size: 22px;
+}
+
+.signin-study-card p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.signin-study-card .signin-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 190px;
+}
+
+.signin-study-card .small-note {
+  font-size: 13px;
+  color: #4b5563;
+  text-align: right;
+}
+
 .gpt-layout {
   display: grid;
   grid-template-columns: 280px 1fr;
   gap: 22px;
   margin-top: 24px;
+}
+
+body.guest-mode .gpt-layout {
+  grid-template-columns: 1fr;
+}
+
+body.guest-mode .gpt-sidebar {
+  display: none;
 }
 
 .gpt-sidebar,
@@ -94,7 +141,17 @@
   border: 1px solid #ddd;
 }
 
-/* 수정됨: 좁은 화면에서도 quota가 안 숨겨지게 함 */
+.message.assistant .signup-inline-btn {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: #1428a0;
+  color: #ffffff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
 .chat-input-row {
   display: flex;
   gap: 8px;
@@ -137,6 +194,20 @@
     flex-wrap: wrap;
   }
 
+  .signin-study-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .signin-study-card .signin-actions {
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .signin-study-card .small-note {
+    text-align: left;
+  }
+
   #messageInput {
     flex: 1 1 100%;
     width: 100%;
@@ -150,7 +221,8 @@
 @media (max-width: 520px) {
   .gpt-sidebar,
   .gpt-chat,
-  .login-required-box {
+  .login-required-box,
+  .signin-study-card {
     padding: 18px;
   }
 
@@ -190,10 +262,21 @@
 <main class="container">
 
   <div id="topLoginArea" class="gpt-top-login" style="display:none;">
-    <span>Sign in to use Paper_Talk Vision GPT.</span>
-    <a href="/auth/google">
-      <button>Sign in with Google</button>
-    </a>
+    <div class="signin-study-card">
+      <div>
+        <h2>Try Paper_Talk Vision GPT for free</h2>
+        <p>
+          You can ask 3 questions per day without signing in.<br>
+          Sign in with Google for 20 questions per month and saved chat history.
+        </p>
+      </div>
+      <div class="signin-actions">
+        <a href="/auth/google">
+          <button>Sign in with Google</button>
+        </a>
+        <span class="small-note">Free Google sign-in. No payment required.</span>
+      </div>
+    </div>
   </div>
 
   <div id="topLogoutArea" class="gpt-top-login" style="display:none;">
@@ -206,15 +289,15 @@
   <h1>Paper_Talk Vision GPT</h1>
 
  <p>
-  Private GPT workspace for signed-in Paper_Talk users.<br><br>
-  It answers using Research Paper knowledge added by Paper_Talk <br>
+  Private GPT workspace for Paper_Talk users.<br><br>
+  It answers using Research Paper knowledge added by Paper_Talk.<br>
   The research database is updated daily with newly indexed publications.<br><br>
-  Usage limit: 20 questions per user per month.
+  Guest usage: 3 questions per IP per day. Signed-in usage: 20 questions per user per month.
 </p>
 
   <section id="loginBox" class="login-required-box" style="display:none;">
-    <h2>Login Required</h2>
-    <p>Please sign in with Google to use Paper_Talk Vision GPT.</p>
+    <h2>Free sign-in available</h2>
+    <p>Please sign in with Google to continue after your free guest questions.</p>
     <a href="/auth/google">
       <button>Sign in with Google</button>
     </a>
@@ -237,7 +320,7 @@
 Ask about papers, validation, gaps, or research ideas..."
 ></textarea>
         
-        <span id="quotaText">Questions left: 20/20</span>
+        <span id="quotaText">Free questions left today: 3/3</span>
 
         <button id="sendBtn">Send</button>
         <button id="stopBtn" style="display:none;">Cancel</button>
@@ -252,30 +335,36 @@ let currentUser = null;
 let currentThreadId = null;
 let chatController = null;
 let isSending = false;
+let isGuestMode = true;
 
-document.addEventListener("DOMContentLoaded", init);
+const GUEST_LIMIT = 3;
 
-async function init() {
-  const meRes = await fetch("/api/me");
-  const me = await meRes.json();
+// Local fallback only for display before the server returns real guest quota.
+// The actual guest limit must be enforced in the Worker by IP hash.
+function getLocalGuestUsedToday() {
+  const today = new Date().toISOString().slice(0, 10);
+  const raw = localStorage.getItem("pt_guest_gpt_usage") || "{}";
+  let data = {};
 
-  if (!me.ok || !me.user) {
-    document.getElementById("topLoginArea").style.display = "flex";
-    document.getElementById("loginBox").style.display = "block";
-    return;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    data = {};
   }
 
-  currentUser = me.user;
+  if (data.date !== today) return 0;
+  return Number(data.used || 0);
+}
 
-  document.getElementById("topLogoutArea").style.display = "flex";
-  document.getElementById("userText").textContent =
-    `Signed in as ${currentUser.name || currentUser.email}`;
-  document.getElementById("gptApp").style.display = "grid";
+function setLocalGuestUsedToday(used) {
+  const today = new Date().toISOString().slice(0, 10);
+  localStorage.setItem("pt_guest_gpt_usage", JSON.stringify({
+    date: today,
+    used: Number(used || 0)
+  }));
+}
 
-  if (me.quota) {
-    updateQuotaText(me.quota.remaining, me.quota.limit);
-  }
-
+function setupEventListeners() {
   document.getElementById("newThreadBtn").addEventListener("click", createThread);
   document.getElementById("sendBtn").addEventListener("click", sendMessage);
   document.getElementById("stopBtn").addEventListener("click", stopMessage);
@@ -286,11 +375,55 @@ async function init() {
       sendMessage();
     }
   });
+}
+
+document.addEventListener("DOMContentLoaded", init);
+
+async function init() {
+  setupEventListeners();
+
+  const meRes = await fetch("/api/me");
+  const me = await meRes.json();
+
+  if (!me.ok || !me.user) {
+    isGuestMode = true;
+    currentUser = null;
+    currentThreadId = null;
+
+    document.body.classList.add("guest-mode");
+    document.getElementById("topLoginArea").style.display = "flex";
+    document.getElementById("topLogoutArea").style.display = "none";
+    document.getElementById("loginBox").style.display = "none";
+    document.getElementById("gptApp").style.display = "grid";
+
+    const localUsed = getLocalGuestUsedToday();
+    updateQuotaText(Math.max(GUEST_LIMIT - localUsed, 0), GUEST_LIMIT, true);
+
+    const box = document.getElementById("chatBox");
+    box.innerHTML = `<p class="empty-posts">Start a free preview conversation with Paper_Talk Vision GPT. You can ask 3 questions per day without signing in.</p>`;
+    return;
+  }
+
+  isGuestMode = false;
+  currentUser = me.user;
+
+  document.body.classList.remove("guest-mode");
+  document.getElementById("topLoginArea").style.display = "none";
+  document.getElementById("topLogoutArea").style.display = "flex";
+  document.getElementById("userText").textContent =
+    `Signed in as ${currentUser.name || currentUser.email}`;
+  document.getElementById("gptApp").style.display = "grid";
+
+  if (me.quota) {
+    updateQuotaText(me.quota.remaining, me.quota.limit, false);
+  }
 
   await loadThreads();
 }
 
 async function loadThreads() {
+  if (isGuestMode) return;
+
   const res = await fetch("/api/gpt/threads");
   const data = await res.json();
 
@@ -332,7 +465,7 @@ async function loadThreads() {
 }
 
 async function createThread() {
-  if (isSending) return;
+  if (isSending || isGuestMode) return;
 
   const res = await fetch("/api/gpt/threads", {
     method: "POST",
@@ -353,7 +486,7 @@ async function createThread() {
 }
 
 async function selectThread(threadId) {
-  if (isSending) return;
+  if (isSending || isGuestMode) return;
 
   currentThreadId = threadId;
   await loadThreads();
@@ -361,7 +494,7 @@ async function selectThread(threadId) {
 }
 
 async function deleteThread(threadId) {
-  if (isSending) return;
+  if (isSending || isGuestMode) return;
 
   if (!confirm("Delete this chat?")) return;
 
@@ -384,6 +517,8 @@ async function deleteThread(threadId) {
 }
 
 async function loadMessages() {
+  if (isGuestMode) return;
+
   const box = document.getElementById("chatBox");
   box.innerHTML = "";
 
@@ -419,6 +554,15 @@ async function sendMessage() {
 
   if (!text) return;
 
+  if (isGuestMode) {
+    const localUsed = getLocalGuestUsedToday();
+    if (localUsed >= GUEST_LIMIT) {
+      addSignupMessage("You have used all 3 free guest questions for today. Please sign in with Google for free to continue using Paper_Talk Vision GPT.", "/auth/google");
+      updateQuotaText(0, GUEST_LIMIT, true);
+      return;
+    }
+  }
+
   isSending = true;
   input.value = "";
   sendBtn.style.display = "none";
@@ -442,7 +586,7 @@ async function sendMessage() {
       signal: chatController.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        threadId: currentThreadId,
+        threadId: isGuestMode ? null : currentThreadId,
         message: text
       })
     });
@@ -452,23 +596,42 @@ async function sendMessage() {
     removeLastThinking();
 
     if (!data.ok) {
-      addMessage("assistant", data.error || "Something went wrong.");
+      if (data.signupUrl) {
+        addSignupMessage(
+          data.error || "You have used all free guest questions. Please sign in with Google for free to continue.",
+          data.signupUrl
+        );
+      } else {
+        addMessage("assistant", data.error || "Something went wrong.");
+      }
 
       if (data.quota) {
-        updateQuotaText(data.quota.remaining, data.quota.limit);
+        updateQuotaText(data.quota.remaining, data.quota.limit, Boolean(data.guest));
+        if (data.guest) {
+          setLocalGuestUsedToday(Number(data.quota.used || (data.quota.limit - data.quota.remaining) || GUEST_LIMIT));
+        }
       }
 
       return;
     }
 
-    currentThreadId = data.threadId;
+    if (data.threadId) {
+      currentThreadId = data.threadId;
+    }
+
     addMessage("assistant", data.answer || "No answer was generated.");
 
     if (data.quota) {
-      updateQuotaText(data.quota.remaining, data.quota.limit);
+      updateQuotaText(data.quota.remaining, data.quota.limit, Boolean(data.guest || isGuestMode));
+      if (data.guest || isGuestMode) {
+        setLocalGuestUsedToday(Number(data.quota.used || (data.quota.limit - data.quota.remaining) || 0));
+      }
     }
 
-    await loadThreads();
+    if (!isGuestMode) {
+      await loadThreads();
+    }
+
     scrollChatToBottom();
 
   } catch (error) {
@@ -516,17 +679,43 @@ function addMessage(role, content) {
   box.appendChild(div);
 }
 
+function addSignupMessage(message, signupUrl) {
+  const box = document.getElementById("chatBox");
+  const div = document.createElement("div");
+  div.className = "message assistant";
+
+  const text = document.createElement("div");
+  text.textContent = message;
+
+  const link = document.createElement("a");
+  link.href = signupUrl || "/auth/google";
+  link.className = "signup-inline-btn";
+  link.textContent = "Sign in with Google for free";
+
+  div.appendChild(text);
+  div.appendChild(link);
+  box.appendChild(div);
+  scrollChatToBottom();
+}
+
 function scrollChatToBottom() {
   const box = document.getElementById("chatBox");
   box.scrollTop = box.scrollHeight;
 }
 
-function updateQuotaText(remaining, limit) {
+function updateQuotaText(remaining, limit, guest = false) {
   const quotaText = document.getElementById("quotaText");
 
   if (!quotaText) return;
 
-  quotaText.textContent = `Questions left: ${remaining}/${limit}`;
+  const safeRemaining = Math.max(Number(remaining || 0), 0);
+  const safeLimit = Number(limit || (guest ? GUEST_LIMIT : 20));
+
+  if (guest) {
+    quotaText.textContent = `Free questions left today: ${safeRemaining}/${safeLimit}`;
+  } else {
+    quotaText.textContent = `Questions left: ${safeRemaining}/${safeLimit}`;
+  }
 }
 
 function escapeHtml(value) {
