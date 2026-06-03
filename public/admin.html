@@ -43,7 +43,7 @@
 
   <section class="card">
     <h2>Users</h2>
-    <p>Registered users and currently active users are loaded automatically after admin access is saved.</p>
+    <p>Registered users and currently active visitors are loaded automatically after admin access is saved. Active visitors are counted once per IP.</p>
 
     <div style="display:flex; gap:18px; flex-wrap:wrap;">
       <p id="userCountBox">Save your admin key to view the current user count.</p>
@@ -598,8 +598,8 @@ async function loadActiveUsers() {
 
   if (box) {
     box.textContent =
-      `Currently active: ${data.totalActive} ` +
-      `(signed-in: ${data.signedInActive}, guests: ${data.guestActive})`;
+      `Currently active visitors: ${data.totalActive} ` +
+      `(signed-in users: ${data.signedInActive}, guests: ${data.guestActive})`;
   }
 
   if (!list) return;
@@ -1119,12 +1119,17 @@ async function deletePost(id) {
 }
 
 
+
+
 async function sendActiveHeartbeat() {
   try {
     await fetch("/api/public/active/heartbeat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}"
+      body: JSON.stringify({
+        adminPage: true,
+        forceGuest: true
+      })
     });
   } catch {
     // Ignore heartbeat errors.
