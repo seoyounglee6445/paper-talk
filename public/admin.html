@@ -403,7 +403,25 @@ function parseJsonBody(body) {
   }
 }
 
-function saveAdminKey() {
+async function checkAdminKeyWithServer(key) {
+  try {
+    const res = await fetch("/api/admin/check", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      },
+      cache: "no-store"
+    });
+
+    const data = await res.json().catch(() => ({}));
+    return Boolean(res.ok && data.ok && data.authenticated);
+  } catch {
+    return false;
+  }
+}
+
+async function saveAdminKey() {
   const key = document.getElementById("globalAdminKey").value.trim();
 
   if (!key) {
@@ -411,10 +429,26 @@ function saveAdminKey() {
     return;
   }
 
+  const status = document.getElementById("adminKeyStatus");
+  if (status) status.textContent = "Checking admin key...";
+
+  const valid = await checkAdminKeyWithServer(key);
+
+  if (!valid) {
+    localStorage.removeItem(ADMIN_KEY_STORAGE);
+    localStorage.removeItem(ADMIN_KEY_EXPIRES);
+    document.getElementById("globalAdminKey").value = "";
+    updateAdminKeyStatus();
+    updateAdminContentVisibility();
+    alert("Invalid admin key.");
+    return;
+  }
+
   localStorage.setItem(ADMIN_KEY_STORAGE, key);
   localStorage.setItem(ADMIN_KEY_EXPIRES, String(Date.now() + ONE_HOUR));
 
   updateAdminKeyStatus();
+  updateAdminContentVisibility();
   setTimeout(refreshUserStats, 100);
   alert("Admin key saved for 1 hour.");
 }
@@ -1139,7 +1173,7 @@ async function sendActiveHeartbeat() {
 sendActiveHeartbeat();
 setInterval(sendActiveHeartbeat, 60000);
 
-window.addEventListener("load", () => {
+window.addEventListener("load", async () => {
   const key = getAdminKey();
 
   if (key) {
@@ -1149,6 +1183,15 @@ window.addEventListener("load", () => {
   updateAdminKeyStatus();
 
   if (key) {
+    const valid = await checkAdminKeyWithServer(key);
+
+    if (!valid) {
+      clearAdminKey();
+      alert("Saved admin key is invalid or expired. Please enter the correct admin key again.");
+      return;
+    }
+
+    updateAdminContentVisibility();
     setTimeout(refreshUserStats, 100);
   }
 });
