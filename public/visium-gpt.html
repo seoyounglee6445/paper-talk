@@ -8,54 +8,15 @@
 <link rel="stylesheet" href="/style.css">
 
 <style>
-.gpt-top-login {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 18px;
-  margin-top: 34px;
-  margin-bottom: 28px;
-}
-
-/* Study-material style sign-in card */
-.signin-study-card {
-  width: 100%;
-  background: #ffffff;
-  border: 1px solid #b9c7ff;
-  border-radius: 22px;
-  padding: 22px 26px;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-
-.signin-study-card h2 {
-  margin: 0 0 6px 0;
-  color: #1428a0;
-  font-size: 22px;
-}
-
-.signin-study-card p {
-  margin: 0;
-  line-height: 1.5;
-}
-
-.signin-study-card .signin-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-  min-width: 190px;
-}
-
-.signin-study-card .small-note {
-  font-size: 13px;
-  color: #4b5563;
+.auth-box {
   text-align: right;
+  margin-bottom: 20px;
 }
 
+.auth-box #userText,
+.auth-box #guestInfo {
+  margin-right: 8px;
+}
 .gpt-layout {
   display: grid;
   grid-template-columns: 280px 1fr;
@@ -189,25 +150,6 @@ body.guest-mode .gpt-sidebar {
     grid-template-columns: 1fr;
   }
 
-  .gpt-top-login {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .signin-study-card {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .signin-study-card .signin-actions {
-    align-items: flex-start;
-    min-width: 0;
-  }
-
-  .signin-study-card .small-note {
-    text-align: left;
-  }
-
   #messageInput {
     flex: 1 1 100%;
     width: 100%;
@@ -221,8 +163,7 @@ body.guest-mode .gpt-sidebar {
 @media (max-width: 520px) {
   .gpt-sidebar,
   .gpt-chat,
-  .login-required-box,
-  .signin-study-card {
+  .login-required-box {
     padding: 18px;
   }
 
@@ -261,29 +202,14 @@ body.guest-mode .gpt-sidebar {
 
 <main class="container">
 
-  <div id="topLoginArea" class="gpt-top-login" style="display:none;">
-    <div class="signin-study-card">
-      <div>
-        <h2>Try Paper_Talk Vision GPT for free</h2>
-        <p>
-          You can ask 3 questions per day without signing in.<br>
-          Sign in with Google for 20 questions per month.
-        </p>
-      </div>
-      <div class="signin-actions">
-        <a href="/auth/google">
-          <button>Sign in with Google</button>
-        </a>
-        <span class="small-note">Free Google sign-in. No payment required.</span>
-      </div>
-    </div>
+  <div id="topLoginArea" class="auth-box" style="display:none;">
+    <span id="guestInfo">Sign in for free to get 20 questions per month. </span>
+    <a id="loginBtn" class="btn" href="/auth/google">Sign in with Google</a>
   </div>
 
-  <div id="topLogoutArea" class="gpt-top-login" style="display:none;">
+  <div id="topLogoutArea" class="auth-box" style="display:none;">
     <span id="userText"></span>
-    <a href="/auth/logout">
-      <button>Logout</button>
-    </a>
+    <a id="logoutBtn" class="btn danger-btn" href="/auth/logout">Logout</a>
   </div>
 
   <h1>Paper_Talk Vision GPT</h1>
@@ -299,9 +225,7 @@ body.guest-mode .gpt-sidebar {
   <section id="loginBox" class="login-required-box" style="display:none;">
     <h2>Free sign-in available</h2>
     <p>Please sign in with Google to continue after your free guest questions.</p>
-    <a href="/auth/google">
-      <button>Sign in with Google</button>
-    </a>
+    <a class="btn" href="/auth/google">Sign in with Google</a>
   </section>
 
   <section id="gptApp" class="gpt-layout" style="display:none;">
@@ -392,7 +316,7 @@ async function init() {
     currentThreadId = null;
 
     document.body.classList.add("guest-mode");
-    document.getElementById("topLoginArea").style.display = "flex";
+    document.getElementById("topLoginArea").style.display = "block";
     document.getElementById("topLogoutArea").style.display = "none";
     document.getElementById("loginBox").style.display = "none";
     document.getElementById("gptApp").style.display = "grid";
@@ -415,7 +339,7 @@ async function init() {
 
   document.body.classList.remove("guest-mode");
   document.getElementById("topLoginArea").style.display = "none";
-  document.getElementById("topLogoutArea").style.display = "flex";
+  document.getElementById("topLogoutArea").style.display = "block";
   document.getElementById("userText").textContent =
     `Signed in as ${currentUser.name || currentUser.email}`;
   document.getElementById("gptApp").style.display = "grid";
