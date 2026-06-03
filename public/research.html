@@ -60,7 +60,7 @@ async function checkLoginStatus() {
   const res = await fetch("/api/me");
   const data = await res.json();
 
-  isLoggedIn = data.ok;
+  isLoggedIn = Boolean(data.ok && data.user);
 
   const userInfo = document.getElementById("userInfo");
   const loginBtn = document.getElementById("loginBtn");
@@ -87,7 +87,7 @@ function showLoginRequired() {
 
   box.innerHTML = `
     <article class="post-card">
-      <h3>Google login required</h3>
+      <h3>Login Required</h3>
       <p class="post-body">Please sign in with Google to view research papers.</p>
       <a class="btn" href="/auth/google">Sign in with Google</a>
     </article>
