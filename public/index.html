@@ -234,6 +234,13 @@ async function loadHomePapers() {
   }
 }
 
+function getStudyTypeLabel(type) {
+  if (type === "study" || type === "study_post") return "Study";
+  if (type === "methodology_page") return "Methodology";
+  if (type === "blog") return "Blog";
+  return "Study Material";
+}
+
 async function loadHomeStudyMaterials() {
   const box = document.getElementById("homeStudyMaterials");
   if (!box) return;
@@ -250,7 +257,7 @@ async function loadHomeStudyMaterials() {
     box.innerHTML = posts.map(p => `
       <div class="home-list-item">
         <h3>${escapeHtml(p.title)}</h3>
-        <p>Study Material · ${formatDate(p.created_at)}</p>
+        <p>${getStudyTypeLabel(p.type)} · ${formatDate(p.created_at)}</p>
       </div>
     `).join("");
   } catch (error) {
