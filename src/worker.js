@@ -1945,7 +1945,7 @@ async function adminCreateStudyPost(request, env) {
       linkedin_url,
       status
     )
-    VALUES (?, 'study', 'study_post', ?, ?, ?, 'Admin', '', '', 'published')
+    VALUES (?, 'study', 'study', ?, ?, ?, 'Admin', '', '', 'published')
   `).bind(
     crypto.randomUUID(),
     title,
@@ -1955,7 +1955,7 @@ async function adminCreateStudyPost(request, env) {
 
   return json({
     ok: true,
-    message: "Study post saved."
+    message: "Study material saved."
   });
 }
 
