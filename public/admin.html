@@ -43,9 +43,9 @@
 
   <section class="card">
     <h2>Users</h2>
-    <p>Check how many users have signed in with Google.</p>
-    <button onclick="loadUserCount()">Show User Count</button>
-    <p id="userCountBox"></p>
+    <p>Registered users are loaded automatically after admin access is saved.</p>
+    <p id="userCountBox">Save your admin key to view the current user count.</p>
+    <button onclick="loadUserCount()">Refresh User Count</button>
   </section>
 
 
@@ -408,6 +408,7 @@ function saveAdminKey() {
   localStorage.setItem(ADMIN_KEY_EXPIRES, String(Date.now() + ONE_HOUR));
 
   updateAdminKeyStatus();
+  loadUserCount();
   alert("Admin key saved for 1 hour.");
 }
 
@@ -535,12 +536,19 @@ async function loadUserCount() {
   const key = requireAdminKey();
   if (!key) return;
 
-  const res = await fetch("/api/admin/users/count?key=" + encodeURIComponent(key));
+  const box = document.getElementById("userCountBox");
+  box.textContent = "Loading current user count...";
+
+  const res = await fetch("/api/admin/users/count", {
+    method: "GET",
+    headers: {
+      "X-Admin-Key": key
+    }
+  });
+
   const data = await res.json();
 
-  const box = document.getElementById("userCountBox");
-
-  if (!data.ok) {
+  if (!res.ok || !data.ok) {
     box.textContent = data.error || "Failed to load user count.";
     return;
   }
@@ -1051,6 +1059,10 @@ window.addEventListener("load", () => {
   }
 
   updateAdminKeyStatus();
+
+  if (key) {
+    loadUserCount();
+  }
 });
 </script>
 </body>
