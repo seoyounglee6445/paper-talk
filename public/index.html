@@ -80,7 +80,7 @@ gtag('config', 'G-WWSD3F58L6');
 
   <section class="home-three-grid">
     <div class="home-column">
-      <h2>Latest Papers</h2>
+      <h2>Vision GPT DB Updates</h2>
       <div id="homePapers"></div>
     </div>
 
@@ -218,7 +218,7 @@ async function loadHomePapers() {
       .slice(0, HOME_LIMIT);
 
     if (posts.length === 0) {
-      renderEmpty(box, "No papers yet.");
+      renderEmpty(box, "No Vision GPT DB updates yet.");
       return;
     }
 
@@ -230,7 +230,7 @@ async function loadHomePapers() {
     `).join("");
   } catch (error) {
     console.error(error);
-    renderError(box, "Could not load latest papers.");
+    renderError(box, "Could not load Vision GPT DB updates.");
   }
 }
 
