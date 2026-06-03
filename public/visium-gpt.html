@@ -499,7 +499,7 @@ async function sendMessage() {
   stopBtn.style.display = "inline-block";
 
   addMessage("user", text);
-  addMessage("assistant", "Thinking...");
+  addMessage("assistant", "Analyzing your question...\nSearching the Paper_Talk research database...\nPreparing a grounded answer...");
   scrollChatToBottom();
 
   chatController = new AbortController();
@@ -523,7 +523,7 @@ async function sendMessage() {
 
     const data = await res.json();
 
-    removeLastThinking();
+    removeLastProgress();
 
     if (!data.ok) {
       if (data.signupUrl) {
@@ -549,7 +549,7 @@ async function sendMessage() {
       currentThreadId = data.threadId;
     }
 
-    addMessage("assistant", data.answer || "No answer was generated.");
+    await typeWriterMessage(data.answer || "No answer was generated.");
 
     if (data.quota) {
       updateQuotaText(data.quota.remaining, data.quota.limit, Boolean(data.guest || isGuestMode));
@@ -565,7 +565,7 @@ async function sendMessage() {
     scrollChatToBottom();
 
   } catch (error) {
-    removeLastThinking();
+    removeLastProgress();
 
     if (error.name === "AbortError") {
       addMessage(
@@ -592,11 +592,18 @@ function stopMessage() {
   }
 }
 
-function removeLastThinking() {
+function removeLastProgress() {
   const messages = document.querySelectorAll(".message.assistant");
   const last = messages[messages.length - 1];
 
-  if (last && last.textContent === "Thinking...") {
+  if (
+    last &&
+    (
+      last.textContent.includes("Analyzing your question...") ||
+      last.textContent.includes("Searching the Paper_Talk research database...") ||
+      last.textContent.includes("Preparing a grounded answer...")
+    )
+  ) {
     last.remove();
   }
 }
@@ -607,6 +614,26 @@ function addMessage(role, content) {
   div.className = `message ${role}`;
   div.textContent = content;
   box.appendChild(div);
+}
+
+async function typeWriterMessage(text) {
+  const box = document.getElementById("chatBox");
+  const div = document.createElement("div");
+  div.className = "message assistant";
+  box.appendChild(div);
+
+  const value = String(text || "");
+  let current = "";
+
+  for (let i = 0; i < value.length; i++) {
+    current += value[i];
+    div.textContent = current;
+    box.scrollTop = box.scrollHeight;
+
+    // Faster on spaces/new lines so long research answers do not feel too slow.
+    const delay = value[i] === " " || value[i] === "\n" ? 2 : 8;
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
 }
 
 function addSignupMessage(message, signupUrl) {
