@@ -53,12 +53,24 @@ gtag('config', 'G-WWSD3F58L6');
 }
 
 .logo {
+  font-weight: 900;
+  font-size: 26px;
+  margin-right: auto;
   color: white;
   text-decoration: none;
-  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  z-index: 10;
+}
+
+.logo:visited {
+  color: white;
 }
 
 .logo:hover {
+  color: white;
   text-decoration: none;
 }
 </style>
@@ -67,7 +79,7 @@ gtag('config', 'G-WWSD3F58L6');
 <body>
 <header class="header">
   <nav class="nav">
-    <a href="/index.html" class="logo">Paper_Talk</a>
+    <a href="/" class="logo" onclick="window.location.href='/'; return false;">Paper_Talk</a>
     <a href="/">Home</a>
     <a href="/research.html">Research Paper</a>
     <a href="/study.html">Study Materials</a>
