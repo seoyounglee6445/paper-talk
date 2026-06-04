@@ -5647,62 +5647,54 @@ function isThinkingLogicKnowledgeItem(item) {
 }
 
 async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
+  // Runtime-safe retrieval:
+  // Do NOT run broad LIKE searches over the whole thinking-logic PDF content.
+  // Large uploaded books can make D1 scans slow and may cause Cloudflare 503 errors.
+  // We only load the latest compact distilled framework, which was already summarized at import time.
   try {
     if (!env.DB) return [];
 
-    const queryText = String(userMessage || "");
-    const tokens = getImportantSearchTokens(queryText)
-      .filter(token => token.length >= 4)
-      .slice(0, 8);
+    const recent = await env.DB.prepare(`
+      SELECT title, content, updated_at
+      FROM research_knowledge
+      WHERE status = 'indexed'
+        AND (
+          post_id LIKE 'thinking_logic_%'
+          OR title LIKE '[Thinking Logic]%'
+          OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+          OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
+        )
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 1
+    `).all();
 
-    let rows = [];
-
-    if (tokens.length > 0) {
-      const clauses = tokens.map(() => `(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)`).join(" OR ");
-      const params = tokens.flatMap(token => [`%${token}%`, `%${token}%`]);
-
-      const result = await env.DB.prepare(`
-        SELECT title, content, updated_at
-        FROM research_knowledge
-        WHERE status = 'indexed'
-          AND (
-            post_id LIKE 'thinking_logic_%'
-            OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
-            OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
-          )
-          AND (${clauses})
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 2
-      `).bind(...params).all();
-
-      rows = result.results || [];
-    }
-
-    if (!rows.length) {
-      const recent = await env.DB.prepare(`
-        SELECT title, content, updated_at
-        FROM research_knowledge
-        WHERE status = 'indexed'
-          AND (
-            post_id LIKE 'thinking_logic_%'
-            OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
-            OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
-          )
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 1
-      `).all();
-
-      rows = recent.results || [];
-    }
+    const rows = recent.results || [];
 
     return rows.map(row => ({
-      title: cleanBibtexText(row.title || "Scientific Thinking Logic").slice(0, 240),
-      content: cleanBibtexText(row.content || "").slice(0, 2500),
-      updated_at: row.updated_at || ""
+      title: cleanBibtexText(row.title || 'Scientific Thinking Logic').slice(0, 240),
+      content: extractDistilledThinkingLogicOnly(row.content || '').slice(0, 2200),
+      updated_at: row.updated_at || ''
     }));
-  } catch {
+  } catch (error) {
     return [];
   }
+}
+
+function extractDistilledThinkingLogicOnly(content) {
+  const text = cleanBibtexText(content || '');
+  const marker = 'Distilled scientific reasoning framework:';
+  const markerIndex = text.toLowerCase().indexOf(marker.toLowerCase());
+  if (markerIndex >= 0) {
+    return text.slice(markerIndex + marker.length).trim();
+  }
+
+  const marker2 = 'PAPER_TALK DISTILLED SCIENTIFIC THINKING LOGIC';
+  const marker2Index = text.toLowerCase().indexOf(marker2.toLowerCase());
+  if (marker2Index >= 0) {
+    return text.slice(marker2Index).trim();
+  }
+
+  return text;
 }
 
 function buildThinkingLogicContext(thinkingLogicFrameworks = []) {
@@ -6311,7 +6303,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const contextText = hasContext
     ? context.slice(0, 10).map((item, index) => {
         const title = cleanBibtexText(item.title || "");
-        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 1600);
+        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 1000);
 
         return [
           `DB_SOURCE_${index + 1}`,
@@ -6463,7 +6455,7 @@ Do not answer about the framework itself.
 Do not change the final answer into a textbook-style explanation.
 The final answer must keep the existing Paper_Talk style: warm Korean research mentor, natural paragraphs, practical research suggestions, and concrete examples.
 
-${thinkingLogicContext.slice(0, 3500)}
+${thinkingLogicContext.slice(0, 2400)}
       `.trim()
     },
     {
@@ -6480,7 +6472,7 @@ ${thinkingLogicContext.slice(0, 3500)}
     },
     {
       role: "system",
-      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 10000)}`
+      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 6500)}`
     },
     {
       role: "system",
@@ -6506,7 +6498,7 @@ ${thinkingLogicContext.slice(0, 3500)}
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 110000);
+  const timeout = setTimeout(() => controller.abort(), 45000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -6520,7 +6512,7 @@ ${thinkingLogicContext.slice(0, 3500)}
         model: env.OPENAI_MODEL || "gpt-4o-mini",
         messages,
         temperature: isResearchRelated ? 0 : 0.1,
-        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 1400 : 2200
+        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 900 : 1300
       })
     });
 
@@ -6540,7 +6532,7 @@ ${thinkingLogicContext.slice(0, 3500)}
     return data?.choices?.[0]?.message?.content || "No answer was generated.";
   } catch (error) {
     if (error && error.name === "AbortError") {
-      return "OpenAI API timeout after 110 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
+      return "OpenAI API timeout after 45 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
     }
 
     return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
