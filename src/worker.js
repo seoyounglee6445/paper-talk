@@ -104,6 +104,10 @@ export default {
         return adminImportThinkingLogic(request, env);
       }
 
+      if (pathname === "/api/admin/thinking-logic/delete" && request.method === "POST") {
+        return adminDeleteThinkingLogic(request, env);
+      }
+
       if (pathname === "/api/admin/research/reindex" && request.method === "POST") {
         return adminReindexResearchPapers(request, env);
       }
@@ -1314,6 +1318,60 @@ async function adminImportThinkingLogic(request, env) {
     title: safeTitle,
     characters: rawText.length,
     message: "Thinking logic file was saved and indexed as reasoning framework. It will guide GPT reasoning but will not be treated as paper evidence."
+  });
+}
+
+
+async function adminDeleteThinkingLogic(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  // Find all rows imported as Scientific Thinking Logic.
+  // These rows are reasoning frameworks only, stored in research_knowledge with post_id starting "thinking_logic_".
+  const rows = await env.DB.prepare(`
+    SELECT post_id
+    FROM research_knowledge
+    WHERE post_id LIKE 'thinking_logic_%'
+       OR title LIKE '[Thinking Logic]%'
+       OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+       OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
+  `).all();
+
+  const postIds = [...new Set((rows.results || [])
+    .map(row => String(row.post_id || "").trim())
+    .filter(Boolean)
+  )];
+
+  await env.DB.prepare(`
+    DELETE FROM research_knowledge
+    WHERE post_id LIKE 'thinking_logic_%'
+       OR title LIKE '[Thinking Logic]%'
+       OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+       OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
+  `).run();
+
+  // Clean Vectorize chunks too. Each knowledge row can create up to 24 vector IDs: postId:0 ... postId:23.
+  let vectorDeleted = 0;
+  if (env.VECTORIZE && postIds.length) {
+    for (const postId of postIds) {
+      try {
+        const ids = Array.from({ length: 24 }, (_, index) => `${postId}:${index}`);
+        await env.VECTORIZE.deleteByIds(ids);
+        vectorDeleted += ids.length;
+      } catch {
+        // Ignore Vectorize cleanup errors so DB deletion still succeeds.
+      }
+    }
+  }
+
+  return json({
+    ok: true,
+    deleted: postIds.length,
+    vectorDeleted,
+    message: postIds.length
+      ? `Deleted ${postIds.length} thinking logic file(s).`
+      : "No thinking logic files were found."
   });
 }
 
