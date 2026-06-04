@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin | Paper_Talk</title>
-  <!-- v42 admin: one-click auto reindex + CSV/BibTeX + Thinking Logic + Research Full Text PDF/TXT import enabled -->
+  <!-- v43 admin: multi PDF/TXT full-text import + duplicate PDF skip enabled -->
   <link rel="stylesheet" href="/style.css">
 </head>
 
@@ -134,12 +134,12 @@
 
   <section class="card write-form">
     <h2>Import Research Paper Full Text PDF / TXT</h2>
-    <p>Upload the actual paper PDF or TXT full text. This is paper evidence, not Thinking Logic. GPT will use this before abstract/metadata when answering about the matched paper.</p>
+    <p>Upload one or many actual paper PDF/TXT full texts. This is paper evidence, not Thinking Logic. GPT will use this before abstract/metadata when answering about the matched paper. Duplicate PDFs in the same batch will be skipped automatically.</p>
 
     <form onsubmit="importResearchFullTextFile(event)">
       <div class="full-row">
-        <label>Paper Title or Article URL to Match</label>
-        <input id="fullTextPaperMatch" placeholder="Paste exact paper title or article URL already saved in Paper_Talk DB" required>
+        <label>Optional Paper Title or Article URL to Match</label>
+        <input id="fullTextPaperMatch" placeholder="Optional. Leave blank to match each PDF by its file name.">
       </div>
 
       <div class="full-row">
@@ -148,12 +148,13 @@
       </div>
 
       <div class="full-row">
-        <label>Research Paper Full Text PDF / TXT File</label>
-        <input type="file" id="researchFullTextFile" accept=".pdf,.txt,text/plain,application/pdf" required>
+        <label>Research Paper Full Text PDF / TXT File(s)</label>
+        <input type="file" id="researchFullTextFile" accept=".pdf,.txt,text/plain,application/pdf" multiple required>
       </div>
 
-      <button type="submit">Import Research Paper Full Text</button>
+      <button type="submit">Import Research Paper Full Text File(s)</button>
       <p id="researchFullTextStatus"></p>
+      <div id="researchFullTextResultList"></div>
     </form>
   </section>
 
@@ -841,6 +842,25 @@ async function extractPdfTextFromFile(file) {
 }
 
 
+async function sha256Text(value) {
+  const buffer = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(String(value || ""))
+  );
+
+  return Array.from(new Uint8Array(buffer))
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function titleFromFullTextFileName(fileName) {
+  return String(fileName || "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function importResearchFullTextFile(e) {
   e.preventDefault();
 
@@ -851,86 +871,161 @@ async function importResearchFullTextFile(e) {
   const pdfLinkInput = document.getElementById("fullTextPdfLink");
   const fileInput = document.getElementById("researchFullTextFile");
   const status = document.getElementById("researchFullTextStatus");
+  const resultList = document.getElementById("researchFullTextResultList");
 
-  const matchValue = (matchInput.value || "").trim();
+  const globalMatchValue = (matchInput.value || "").trim();
   const pdfLink = (pdfLinkInput.value || "").trim();
-  const file = fileInput.files[0];
+  const files = Array.from(fileInput.files || []);
 
-  if (!matchValue) {
-    alert("Please paste the exact paper title or article URL to match.");
+  if (!files.length) {
+    alert("Please select one or more research paper PDF or TXT files.");
     return;
   }
 
-  if (!file) {
-    alert("Please select a research paper PDF or TXT file.");
+  if (files.length > 1 && globalMatchValue && !confirm("You selected multiple files with one shared title/URL match. This will attach every selected PDF to the same matched paper if the Worker finds the same record. Continue?\n\nTip: Leave the match box empty for batch upload so each PDF is matched by its file name.")) {
     return;
   }
 
-  const fileName = file.name || "research-full-text";
-  const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
-  const isUrl = /^https?:\/\//i.test(matchValue);
+  if (status) status.textContent = `Starting full-text import for ${files.length} file(s)...`;
+  if (resultList) resultList.innerHTML = "";
 
-  try {
-    if (status) {
-      status.textContent = isPdf
-        ? "Reading paper PDF text in your browser... Large PDFs can take a little while."
-        : "Reading paper TXT file...";
-    }
+  const seenHashes = new Map();
+  const results = [];
 
-    const extractedText = isPdf
-      ? await extractPdfTextFromFile(file)
-      : await file.text();
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const fileName = file.name || `research-full-text-${index + 1}`;
+    const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
 
-    if (!String(extractedText || "").trim() || String(extractedText || "").trim().length < 500) {
-      alert("I could not extract enough text from this paper. If it is a scanned PDF, OCR it first or upload a text-based PDF/TXT.");
-      if (status) status.textContent = "Import stopped: not enough readable full text was extracted.";
-      return;
-    }
+    try {
+      if (status) {
+        status.textContent = `Reading ${index + 1}/${files.length}: ${fileName}`;
+      }
 
-    if (status) {
-      status.textContent = "Uploading research full text to Paper_Talk DB and re-indexing...";
-    }
+      const extractedText = isPdf
+        ? await extractPdfTextFromFile(file)
+        : await file.text();
 
-    const res = await fetch("/api/admin/research/fulltext/import", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Admin-Key": key
-      },
-      body: JSON.stringify({
-        title: isUrl ? "" : matchValue,
-        sourceUrl: isUrl ? matchValue : "",
-        pdfLink,
+      const cleanText = String(extractedText || "").trim();
+
+      if (!cleanText || cleanText.length < 500) {
+        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first." });
+        continue;
+      }
+
+      const textHash = await sha256Text(cleanText.replace(/\s+/g, " ").slice(0, 350000));
+
+      if (seenHashes.has(textHash)) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Duplicate in this batch. Same as: ${seenHashes.get(textHash)}`
+        });
+        continue;
+      }
+
+      seenHashes.set(textHash, fileName);
+
+      const matchValue = globalMatchValue || titleFromFullTextFileName(fileName);
+      const isUrl = /^https?:\/\//i.test(matchValue);
+
+      if (status) {
+        status.textContent = `Uploading ${index + 1}/${files.length}: ${fileName}`;
+      }
+
+      const res = await fetch("/api/admin/research/fulltext/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Key": key
+        },
+        body: JSON.stringify({
+          title: isUrl ? "" : matchValue,
+          sourceUrl: isUrl ? matchValue : "",
+          pdfLink,
+          fileName,
+          sourceType: isPdf ? "pdf" : "text",
+          text: cleanText
+        })
+      });
+
+      const result = await res.json().catch(() => ({}));
+
+      if (!res.ok || !result.ok) {
+        results.push({
+          fileName,
+          status: "failed",
+          message: result.error || result.message || "Research full text import failed."
+        });
+        continue;
+      }
+
+      if (result.duplicate) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Already imported: ${result.duplicateTitle || result.title || "existing paper"}`
+        });
+        continue;
+      }
+
+      results.push({
         fileName,
-        sourceType: isPdf ? "pdf" : "text",
-        text: extractedText
-      })
-    });
-
-    const result = await res.json().catch(() => ({}));
-
-    if (!res.ok || !result.ok) {
-      const message = result.error || result.message || "Research full text import failed.";
-      if (status) status.textContent = message;
-      alert(message);
-      return;
+        status: "imported",
+        message: `${result.title || "paper"} (${result.fullTextCharacters || 0} characters)`
+      });
+    } catch (error) {
+      results.push({
+        fileName,
+        status: "failed",
+        message: error?.message || String(error)
+      });
     }
 
-    const doneMessage =
-      `Research full text imported.\nMatched existing paper: ${result.matchedExistingPaper ? "yes" : "no"}\nTitle: ${result.title || ""}\nCharacters: ${result.fullTextCharacters || 0}`;
-
-    if (status) {
-      status.textContent = `Research full text imported and indexed: ${result.title || "paper"} (${result.fullTextCharacters || 0} characters).`;
+    if (resultList) {
+      resultList.innerHTML = renderResearchFullTextResults(results);
     }
 
-    alert(doneMessage);
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+
+  const imported = results.filter(r => r.status === "imported").length;
+  const skipped = results.filter(r => r.status === "skipped").length;
+  const failed = results.filter(r => r.status === "failed").length;
+
+  if (status) {
+    status.textContent = `Full-text import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
+  }
+
+  if (resultList) {
+    resultList.innerHTML = renderResearchFullTextResults(results);
+  }
+
+  alert(`Full-text import complete.\nImported: ${imported}\nSkipped duplicates: ${skipped}\nFailed: ${failed}`);
+
+  if (imported > 0) {
     e.target.reset();
     loadAdminPosts();
-  } catch (error) {
-    const message = `Research full text import failed: ${error?.message || error}`;
-    if (status) status.textContent = message;
-    alert(message);
   }
+}
+
+function renderResearchFullTextResults(results) {
+  if (!results || !results.length) return "";
+
+  return `
+    <div style="margin-top:14px;">
+      <h3>Full Text Import Results</h3>
+      ${results.map(row => {
+        const icon = row.status === "imported" ? "✅" : row.status === "skipped" ? "⏭️" : "❌";
+        return `
+          <p style="margin:6px 0;">
+            ${icon} <strong>${escapeHtml(row.fileName)}</strong><br>
+            <span>${escapeHtml(row.message)}</span>
+          </p>
+        `;
+      }).join("")}
+    </div>
+  `;
 }
 
 
