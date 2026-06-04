@@ -50,6 +50,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v50: Long-term stable chat path. /api/gpt/chat uses bounded title/file-name retrieval only, never broad full-text scans, and always returns JSON errors instead of Cloudflare HTML whenever the Worker reaches the route.
 - v52: Robust D1 retrieval. Chat searches uploaded full-text chunks by title, file name, keyword tokens, and pasted full-text snippets using bounded LIKE queries, so already-imported PDFs are retrievable without waiting for full batch import or Vectorize.
 - v53: Multilingual automatic retrieval. Query understanding no longer depends on Korean/English stopword lists; it extracts title-like scientific spans, symbols, Unicode tokens, and n-grams, then scores D1 matches across title/file/full-text chunks.
+- v54: Restores richer Paper_Talk mentor answer style and strengthens exact paper-title retrieval. Chat now always tries bounded D1 retrieval first, then falls back to general answers only for truly casual/general questions.
 */
 
 export default {
@@ -4832,10 +4833,10 @@ function isSameKnowledgePaper(a, b) {
 
 const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 4;
 const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 0;
-const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 2;
-const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 1800;
-const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 650;
-const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 400;
+const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 4;
+const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 7000;
+const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 2200;
+const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 1200;
 const PAPER_TALK_MIN_FULLTEXT_CHARS = 20;
 const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS = 12000;
 const PAPER_TALK_SKIP_VECTORIZE_DURING_IMPORT = true;
@@ -4845,6 +4846,15 @@ function isLikelyGeneralQuestionFast(message) {
   if (!text) return false;
 
   const lower = text.toLowerCase();
+
+  // v54: If the message contains a paper-title-like scientific span, never route it
+  // to the no-retrieval/general path. This catches multilingual instructions such as
+  // "<English title> 을 읽고 요약해줘", "résume cet article: <title>", etc.
+  try {
+    const titleLike = extractLikelyPaperTitleForSafeLookup(text);
+    const sciTokens = String(titleLike || "").match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || [];
+    if (titleLike.length >= 18 && sciTokens.length >= 3) return false;
+  } catch {}
 
   const explicitResearchSignal = /paper_talk|db|논문|연구|literature|paper|papers|abstract|doi|pubmed|pmid|reindex|full\s*text|pdf|암|cancer|tumou?r|genomics|single[-\s]?cell|spatial|rna[-\s]?seq|scrna|transcriptomics|proteomics|multi[-\s]?omics|trajectory|velocity|scvelo|velocyto|visium|xenium|cosmx|mutation|variant|biomarker|immunotherapy|checkpoint|t\s*cell|b\s*cell|myeloid|macrophage|fibroblast|pancreatic|melanoma|glioma|breast|lung|colon|metastasis|organoid|crispr|sequencing/i;
   if (explicitResearchSignal.test(text)) return false;
@@ -5082,7 +5092,7 @@ async function callOpenAIGeneralNoRetrieval(userMessage, env) {
         messages: [
           {
             role: "system",
-            content: `You are Paper_Talk Vision GPT. Answer in the user's language. For broad research-idea, planning, or recommendation-style questions, give a helpful senior cancer genomics/bioinformatics mentor answer using general reasoning. Do not claim that the answer came from Paper_Talk DB unless specific DB context is provided. Keep it concise, practical, and calm. Plain text only.`
+            content: `You are Paper_Talk Vision GPT. Answer in the user's language. For broad research-idea, planning, or recommendation-style questions, give a helpful senior cancer genomics/bioinformatics mentor answer using general reasoning. Do not claim that the answer came from Paper_Talk DB unless specific DB context is provided. Be practical, calm, and sufficiently detailed. Avoid one-line answers. Usually give 3 to 6 short paragraphs when the user asks for research direction. Plain text only.`
           },
           {
             role: "user",
@@ -5090,7 +5100,7 @@ async function callOpenAIGeneralNoRetrieval(userMessage, env) {
           }
         ],
         temperature: 0.2,
-        max_tokens: 900
+        max_tokens: 1300
       })
     });
 
@@ -5180,9 +5190,23 @@ async function gptChat(request, env) {
     const generalOrBroad = isLikelyGeneralQuestionFast(message);
     let context = [];
 
-    if (!generalOrBroad) {
+    // v54: Always attempt the cheap bounded D1 retrieval first.
+    // This is safe because safeRetrievePaperContextForChat never performs a broad full-text scan,
+    // and it fixes cases where a user gives a title/keyword/full-text snippet plus instructions
+    // in Korean, English, French, Japanese, etc.
+    try {
+      context = await safeRetrievePaperContextForChat(message, env);
+    } catch {
+      context = [];
+    }
+
+    // Extra exact-title retry for multilingual instruction wrappers.
+    if (!context.length) {
       try {
-        context = await safeRetrievePaperContextForChat(message, env);
+        const titleCandidate = extractLikelyPaperTitleForSafeLookup(message);
+        if (titleCandidate && titleCandidate !== message) {
+          context = await safeRetrievePaperContextForChat(titleCandidate, env);
+        }
       } catch {
         context = [];
       }
@@ -5190,7 +5214,7 @@ async function gptChat(request, env) {
 
     const autoIntent = makeFallbackResearchIntent(message);
 
-    let assistantText = generalOrBroad
+    let assistantText = (generalOrBroad && !context.length)
       ? await callOpenAIGeneralNoRetrieval(message, env)
       : await callOpenAIForPaperTalk({
           userMessage: message,
@@ -5628,52 +5652,144 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
   }
 
   const terms = buildRobustFullTextSearchTerms(userQuery);
-  if (!terms.length) return [];
+  const titleCandidate = extractLikelyPaperTitleForSafeLookup(userQuery);
 
-  const sqlTerms = terms.slice(0, 10);
-  const clauses = [];
-  const params = [];
+  const exactTitleVariants = [];
+  const addVariant = (value) => {
+    const v = String(value || "")
+      .toLowerCase()
+      .replace(/https?:\/\/\S+/gi, " ")
+      .replace(/\.pdf\b/gi, " ")
+      .replace(/[“”"'`]/g, " ")
+      .replace(/[‐‑‒–—]/g, "-")
+      .replace(/[%_]/g, " ")
+      .replace(/[^\p{L}\p{N}+\-\s:/()]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (v.length >= 6 && !exactTitleVariants.includes(v)) exactTitleVariants.push(v.slice(0, 160));
+  };
 
-  for (const term of sqlTerms) {
-    clauses.push(`(
-      LOWER(title) LIKE ?
-      OR LOWER(file_name) LIKE ?
-      OR LOWER(text) LIKE ?
-    )`);
+  addVariant(titleCandidate);
 
-    const like = `%${String(term || "").toLowerCase()}%`;
-    params.push(like, like, like);
+  // Prefix title variants are the key fix for multilingual instructions.
+  // Example: "Inhibitory PD-1 axis ... T cells 을 읽고 요약해줘".
+  // We search the scientific/title prefix rather than the whole user sentence.
+  const latinTokens = String(titleCandidate || userQuery).match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || [];
+  for (let n of [10, 8, 6, 5, 4, 3]) {
+    if (latinTokens.length >= n) addVariant(latinTokens.slice(0, n).join(" "));
   }
 
-  let rows = [];
+  const rows = [];
+  const seenRows = new Set();
 
-  try {
-    const result = await env.DB.prepare(`
-      SELECT
-        post_id,
-        title,
-        source_url,
-        pdf_link,
-        file_name,
-        chunk_index,
-        text,
-        text_length,
-        created_at
-      FROM paper_fulltext_chunks
-      WHERE ${clauses.join(" OR ")}
-      ORDER BY datetime(created_at) DESC, chunk_index ASC
-      LIMIT 90
-    `).bind(...params).all();
+  async function addRowsFromResult(result) {
+    for (const row of (result?.results || [])) {
+      const key = `${row.post_id || ""}:${row.file_name || ""}:${row.chunk_index || 0}:${String(row.title || "").slice(0, 80)}`;
+      if (seenRows.has(key)) continue;
+      seenRows.add(key);
+      rows.push(row);
+    }
+  }
 
-    rows = result.results || [];
-  } catch {
-    rows = [];
+  // 1) Exact/partial title and file-name retrieval first. This is cheap and high precision.
+  for (const variant of exactTitleVariants.slice(0, 8)) {
+    try {
+      const like = `%${variant}%`;
+      const result = await env.DB.prepare(`
+        SELECT
+          post_id,
+          title,
+          source_url,
+          pdf_link,
+          file_name,
+          chunk_index,
+          text,
+          text_length,
+          created_at
+        FROM paper_fulltext_chunks
+        WHERE LOWER(title) LIKE ?
+           OR LOWER(file_name) LIKE ?
+        ORDER BY
+          CASE
+            WHEN LOWER(title) LIKE ? THEN 0
+            WHEN LOWER(file_name) LIKE ? THEN 1
+            ELSE 2
+          END,
+          chunk_index ASC
+        LIMIT 40
+      `).bind(like, like, like, like).all();
+      await addRowsFromResult(result);
+    } catch {
+      // Continue to token search.
+    }
+  }
+
+  // 2) Token/n-gram fallback across title, file name, and bounded text.
+  if (terms.length) {
+    const sqlTerms = terms.slice(0, 12);
+    const clauses = [];
+    const params = [];
+
+    for (const term of sqlTerms) {
+      clauses.push(`(
+        LOWER(title) LIKE ?
+        OR LOWER(file_name) LIKE ?
+        OR LOWER(text) LIKE ?
+      )`);
+
+      const like = `%${String(term || "").toLowerCase()}%`;
+      params.push(like, like, like);
+    }
+
+    try {
+      const result = await env.DB.prepare(`
+        SELECT
+          post_id,
+          title,
+          source_url,
+          pdf_link,
+          file_name,
+          chunk_index,
+          text,
+          text_length,
+          created_at
+        FROM paper_fulltext_chunks
+        WHERE ${clauses.join(" OR ")}
+        ORDER BY datetime(created_at) DESC, chunk_index ASC
+        LIMIT 120
+      `).bind(...params).all();
+      await addRowsFromResult(result);
+    } catch {
+      // Continue with whatever exact title retrieval found.
+    }
   }
 
   if (!rows.length) return [];
 
+  const allScoringTerms = [...exactTitleVariants, ...terms];
+
   const scoredRows = rows
-    .map(row => ({ row, score: scoreFullTextChunkRow(row, terms) }))
+    .map(row => {
+      let score = scoreFullTextChunkRow(row, allScoringTerms);
+      const title = String(row.title || "").toLowerCase();
+      const file = String(row.file_name || "").toLowerCase();
+
+      for (const variant of exactTitleVariants) {
+        if (!variant) continue;
+        if (title.includes(variant)) score += 260 + Math.min(80, variant.length);
+        if (file.includes(variant)) score += 180 + Math.min(60, variant.length);
+
+        const parts = variant.split(/\s+/).filter(v => v.length >= 2);
+        const titleHits = parts.filter(p => title.includes(p)).length;
+        const fileHits = parts.filter(p => file.includes(p)).length;
+        if (parts.length >= 3) {
+          score += (titleHits / parts.length) * 180;
+          score += (fileHits / parts.length) * 120;
+        }
+      }
+
+      return { row, score };
+    })
     .filter(item => item.score > 0)
     .sort((a, b) => b.score - a.score || Number(a.row.chunk_index || 0) - Number(b.row.chunk_index || 0));
 
@@ -5696,7 +5812,7 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
     }
 
     const group = grouped.get(key);
-    if (group.chunks.length < 3) {
+    if (group.chunks.length < 4) {
       group.chunks.push(row);
       group.score += score;
     }
@@ -5710,7 +5826,7 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
         .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0))
         .map(row => [
           `Chunk index: ${row.chunk_index}`,
-          String(row.text || "").slice(0, 1600)
+          String(row.text || "").slice(0, 2300)
         ].join("\n"))
         .join("\n\n--- Full-text chunk ---\n\n");
 
@@ -5726,16 +5842,15 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
           group.file_name ? `Full text file: ${group.file_name}` : "",
           "",
           chunkText
-        ].filter(Boolean).join("\n").slice(0, 6500),
-        matched_chunk: cleanBibtexText(chunkText).slice(0, 4000),
-        similarity_score: group.score,
+        ].filter(Boolean).join("\n").slice(0, 10000),
+        matched_chunk: cleanBibtexText(chunkText).slice(0, 7000),
+        similarity_score: Math.round(group.score),
         from_fulltext_chunk_search: true,
         from_direct_db_search: true,
         from_explicit_title_search: true
       };
     });
 }
-
 
 
 
@@ -8428,7 +8543,7 @@ Answer in the user's language.
 Formatting:
 Return plain text only.
 Do not use markdown symbols such as #, *, or **.
-Use short paragraphs.
+Use readable paragraphs. Do not be too brief unless the user explicitly asks for one-line or short answer. For paper summaries, usually explain the main question, core finding, why it matters, and what limitations or next validation are implied.
 Use bullets only for concrete research questions, candidate project ideas, or validation steps. Do not use bullets to list papers. If a retrieved paper is relevant, mention it naturally inside a paragraph.
 Headings are optional. If used, make them natural Korean headings, not report labels.
 
@@ -8511,7 +8626,7 @@ ${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
         model: env.OPENAI_MODEL || "gpt-4o-mini",
         messages,
         temperature: isResearchRelated ? 0 : 0.1,
-        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 900 : 1400
+        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 1200 : 1900
       })
     });
 
