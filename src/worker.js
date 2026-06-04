@@ -52,6 +52,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v53: Multilingual automatic retrieval. Query understanding no longer depends on Korean/English stopword lists; it extracts title-like scientific spans, symbols, Unicode tokens, and n-grams, then scores D1 matches across title/file/full-text chunks.
 - v54: Restores richer Paper_Talk mentor answer style and strengthens exact paper-title retrieval. Chat now always tries bounded D1 retrieval first, then falls back to general answers only for truly casual/general questions.
 - v55: Richer friendly mentor style. Paper summaries and research answers are expanded into practical, kind explanations with stronger max_tokens while keeping DB-only evidence rules.
+- v56: Research-purpose GPT routing. Research/literature/validation questions now infer biomedical concepts automatically, search Paper_Talk DB with inferred retrieval queries, and never bypass DB retrieval for broad research-advice questions.
 */
 
 export default {
@@ -5138,6 +5139,144 @@ Plain text only.`
   }
 }
 
+
+async function inferPaperTalkResearchIntentForChat(userMessage, env) {
+  const text = String(userMessage || "").trim();
+
+  const fallback = {
+    question_type: isLikelyGeneralQuestionFast(text) ? "GENERAL" : "RESEARCH",
+    answer_style: "calm_research_mentor",
+    should_generate_hypotheses: /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text),
+    should_use_db_evidence: !isLikelyGeneralQuestionFast(text),
+    is_research_related: !isLikelyGeneralQuestionFast(text),
+    interpreted_intent: text.slice(0, 240),
+    primary_domain: "",
+    key_entities: [],
+    retrieval_queries: [text].filter(Boolean),
+    retrieval_query: text,
+    gap_axes: [],
+    hypothesis_angle: "",
+    validation_angle: ""
+  };
+
+  if (!text || !env.OPENAI_API_KEY) return fallback;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You are the intent and retrieval planner for Paper_Talk, a DB-grounded biomedical research GPT.",
+              "Infer whether the user is asking a research/literature/scientific/validation/paper-related question.",
+              "Do not rely on one fixed keyword list. Interpret the meaning of the whole question.",
+              "If the question is research-related, create 4-8 concise English biomedical retrieval queries that a paper database can search.",
+              "Queries should include inferred concepts, synonyms, mechanisms, cell types, disease context, assays, methods, and likely adjacent concepts.",
+              "Do not answer the user.",
+              "Return strict JSON only with keys: is_research_related, question_type, answer_style, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, primary_domain, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
+            ].join(" ")
+          },
+          {
+            role: "user",
+            content: text.slice(0, 1600)
+          }
+        ],
+        temperature: 0,
+        max_tokens: 700
+      })
+    });
+
+    const data = await readJsonResponseSafely(res, "OpenAI research intent inference request");
+    let raw = String(data?.choices?.[0]?.message?.content || "").trim();
+    raw = raw.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+
+    const parsed = JSON.parse(raw);
+    const queries = Array.isArray(parsed.retrieval_queries)
+      ? parsed.retrieval_queries.map(v => String(v || "").trim()).filter(Boolean)
+      : [];
+
+    const inferred = {
+      ...fallback,
+      ...parsed,
+      is_research_related: Boolean(parsed.is_research_related),
+      should_use_db_evidence: Boolean(parsed.should_use_db_evidence || parsed.is_research_related),
+      should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses),
+      question_type: parsed.question_type || (parsed.is_research_related ? "RESEARCH" : "GENERAL"),
+      answer_style: parsed.answer_style || "calm_research_mentor",
+      key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v || "").trim()).filter(Boolean).slice(0, 12) : [],
+      retrieval_queries: queries.length ? queries.slice(0, 8) : fallback.retrieval_queries,
+      retrieval_query: queries.length ? queries.join(", ") : fallback.retrieval_query,
+      gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v || "").trim()).filter(Boolean).slice(0, 8) : [],
+      interpreted_intent: String(parsed.interpreted_intent || fallback.interpreted_intent).slice(0, 500),
+      primary_domain: String(parsed.primary_domain || "").slice(0, 200),
+      hypothesis_angle: String(parsed.hypothesis_angle || "").slice(0, 500),
+      validation_angle: String(parsed.validation_angle || "").slice(0, 500)
+    };
+
+    // Research-purpose policy:
+    // If the user is asking anything scientific/research-like, force DB-grounded mode.
+    // The answer generator will not fall back to outside literature if retrieval returns no DB context.
+    if (inferred.is_research_related) {
+      inferred.should_use_db_evidence = true;
+      if (!inferred.retrieval_queries.includes(text)) inferred.retrieval_queries.unshift(text);
+      inferred.retrieval_queries = [...new Set(inferred.retrieval_queries)].slice(0, 8);
+      inferred.retrieval_query = inferred.retrieval_queries.join(", ");
+    }
+
+    return inferred;
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent, env) {
+  const text = String(userMessage || "").trim();
+  const queries = [
+    text,
+    ...(Array.isArray(inferredIntent?.retrieval_queries) ? inferredIntent.retrieval_queries : []),
+    inferredIntent?.retrieval_query || ""
+  ]
+    .map(v => String(v || "").trim())
+    .filter(Boolean);
+
+  const uniqueQueries = [...new Set(queries)].slice(0, 8);
+  const all = [];
+
+  // First: cheap chat-safe lookup on the original message so exact titles, URLs, and pasted snippets win.
+  try {
+    all.push(...await safeRetrievePaperContextForChat(text, env));
+  } catch {}
+
+  // Second: full Paper_Talk research retrieval with automatically inferred concepts.
+  // This uses the existing DB retrieval stack: explicit match, full-text chunks, D1 title/content,
+  // OpenAI query expansion, keyword fallback, research posts, and Vectorize if available.
+  for (const query of uniqueQueries) {
+    try {
+      all.push(...await searchResearchKnowledge(query, env));
+    } catch {}
+
+    try {
+      all.push(...await safeRetrievePaperContextForChat(query, env));
+    } catch {}
+  }
+
+  return trimContextForChat(mergeKnowledgeResults(all));
+}
+
+
 async function gptChat(request, env) {
   try {
     const user = await getSession(request, env);
@@ -5201,32 +5340,37 @@ async function gptChat(request, env) {
       threadId = "guest";
     }
 
-    const generalOrBroad = isLikelyGeneralQuestionFast(message);
+    const inferredIntent = await inferPaperTalkResearchIntentForChat(message, env);
+    const generalOrBroad = isLikelyGeneralQuestionFast(message) && !inferredIntent.is_research_related;
     let context = [];
 
-    // v54: Always attempt the cheap bounded D1 retrieval first.
-    // This is safe because safeRetrievePaperContextForChat never performs a broad full-text scan,
-    // and it fixes cases where a user gives a title/keyword/full-text snippet plus instructions
-    // in Korean, English, French, Japanese, etc.
-    try {
-      context = await safeRetrievePaperContextForChat(message, env);
-    } catch {
-      context = [];
+    // v56 research-purpose GPT policy:
+    // Research/literature/validation/paper-related questions must search Paper_Talk DB.
+    // The user should not have to type exact DB keywords. We infer biomedical concepts and retrieval
+    // queries from the whole question, then search the DB with those inferred concepts.
+    // If DB retrieval returns nothing, the answer remains truthful and says no matching DB source
+    // was retrieved instead of answering from outside literature.
+    if (!generalOrBroad || inferredIntent.should_use_db_evidence) {
+      try {
+        context = await retrievePaperTalkDbForResearchIntent(message, inferredIntent, env);
+      } catch {
+        context = [];
+      }
     }
 
     // Extra exact-title retry for multilingual instruction wrappers.
-    if (!context.length) {
+    if (!context.length && !generalOrBroad) {
       try {
         const titleCandidate = extractLikelyPaperTitleForSafeLookup(message);
         if (titleCandidate && titleCandidate !== message) {
-          context = await safeRetrievePaperContextForChat(titleCandidate, env);
+          context = await retrievePaperTalkDbForResearchIntent(titleCandidate, inferredIntent, env);
         }
       } catch {
         context = [];
       }
     }
 
-    const autoIntent = makeFallbackResearchIntent(message);
+    const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
 
     let assistantText = (generalOrBroad && !context.length)
       ? await callOpenAIGeneralNoRetrieval(message, env)
