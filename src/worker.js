@@ -4096,9 +4096,10 @@ async function gptChat(request, env) {
   // Every user message is first classified as CONCEPT, RESEARCH, VALIDATION, LITERATURE, or GENERAL.
   // Concept questions receive definition/overview answers.
   // Research questions trigger DB-grounded gaps, hypotheses, and validation strategy.
-  const recentMessages = isGuest
-    ? []
-    : await getRecentThreadMessages(threadId, user.id, env);
+  // v34: Keep answer generation identical for guest and signed-in users.
+  // Login status should affect only quota and chat saving, not the scientific answer.
+  // Therefore we do not feed saved thread history into the model.
+  const recentMessages = [];
 
   const autoIntent = await inferUserResearchIntent({
     userMessage: message,
