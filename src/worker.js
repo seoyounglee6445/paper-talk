@@ -1,4 +1,13 @@
 /*
+v65 additions:
+- Retrieved Paper_Talk DB papers are INTERNAL EVIDENCE ONLY by default.
+- Normal answers must never expose paper titles, author names, journal names, DOI/PMID, URLs, or paper-label citations.
+- Papers are shown only when the user explicitly asks for sources/references/which papers.
+- Research-direction questions automatically use readable insight-report style with blank lines and headings.
+- Concept, validation, literature, and source-trace questions automatically use different answer styles.
+- Supporting papers are stored silently in gpt_message_sources for later source follow-up.
+*/
+/*
 v64 additions:
 - The answer style is chosen automatically from the user's actual intent.
 - Research-direction questions use readable insight sections with spacing and short paragraphs.
@@ -14,7 +23,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v64 update - automatic user-adaptive answer style:
+Paper_Talk v65 update - strict internal-evidence-only answers + adaptive research style:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -5718,6 +5727,7 @@ async function gptChat(request, env) {
 
     if (!isSupportingPaperFollowUp(message)) {
       assistantText = hideAccidentalPaperListFromNormalAnswer(assistantText);
+      assistantText = hideInternalEvidenceLeaksFromNormalAnswer(assistantText);
     }
 
     assistantText = formatAnswerForReadability(
@@ -8570,6 +8580,65 @@ function makeFallbackResearchIntent(userMessage) {
 
 
 
+
+function hideInternalEvidenceLeaksFromNormalAnswer(answer) {
+  let text = String(answer || "");
+  if (!text.trim()) return text;
+
+  // Remove explicit internal source dumps after phrases like "다음과 같은 연구 방향".
+  text = text.replace(/(:\s*)?(?:[A-Z][^:\n]{20,180}:\s*){2,}/g, "$1");
+
+  // Remove parenthetical source leaks like (논문 A: Title...) or (Paper B: Title...).
+  text = text.replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J]\s*[:：][^\)\]\n]{0,800}[\)\]]/gi, "");
+
+  // Remove direct source labels.
+  text = text
+    .replace(/(?:논문|paper)\s*[A-J]\s*[:：][^\n]{0,800}/gi, "")
+    .replace(/(?:예를\s*들어\s*)?(?:논문|paper)\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|shows|suggests|indicates|reports|demonstrates|reveals|finds)\s*/gi, "")
+    .replace(/(?:\(|\[)?\s*(?:논문|paper)\s*[A-J]\s*(?:\)|\])?/gi, "");
+
+  const lines = text.split(/\r?\n/);
+  const kept = [];
+
+  for (let rawLine of lines) {
+    let line = rawLine.trim();
+
+    if (!line) {
+      kept.push("");
+      continue;
+    }
+
+    // Remove source-list headings and title-looking dumps in normal answers.
+    if (/^(근거\s*논문|참고\s*논문|사용한\s*논문|supporting papers?|references?|sources?|relevant papers?)\s*[:：]?$/i.test(line)) continue;
+    if (/^(?:article|pdf|doi|pmid|journal|authors?)\s*[:：]/i.test(line)) continue;
+    if (/^[-•]\s*(?:[A-Z][A-Za-z0-9,;:'"“”\- ]{25,})$/.test(line)) continue;
+
+    // Remove likely pasted title chain lines containing multiple title separators.
+    const colonCount = (line.match(/:/g) || []).length;
+    if (colonCount >= 3 && /[A-Za-z]{8,}/.test(line) && line.length > 120) continue;
+
+    // Remove inline parenthetical citation leftovers.
+    line = line
+      .replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J][^\)\]]{0,600}[\)\]]/gi, "")
+      .replace(/^(첫째|둘째|셋째|넷째|다섯째)\s*,?\s*(?:논문|paper)?\s*[A-J]?\s*(?:에서는|은|는|에서)?\s*/i, "")
+      .replace(/^논문\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|은\/는)\s*/i, "")
+      .replace(/^Paper\s*[A-J]\s*(?:shows|suggests|indicates|reports|demonstrates|reveals|finds|에서는|은|는)?\s*/i, "");
+
+    if (line.trim()) kept.push(line);
+  }
+
+  text = kept.join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/(?:아래|다음)\s*(?:논문|문헌|Paper_Talk DB 논문|근거)\s*(?:들을|을)?\s*(?:기반으로|토대로|참고해서)?\s*(?:답변|종합)?(?:했습니다|합니다|드리겠습니다)?\s*[:：]?\s*/gi, "")
+    .replace(/검색된\s*Paper_Talk\s*DB\s*근거들을\s*종합하면,\s*다음과\s*같은\s*연구\s*방향이\s*특히\s*유망할\s*것으로\s*보입니다\s*[:：]\s*/gi, "검색된 Paper_Talk DB 근거들을 종합하면,\n현재 이 주제는 몇 가지 연구 축으로 정리할 수 있습니다.\n\n")
+    .replace(/\s+\./g, ".")
+    .replace(/\s+,/g, ",")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return text || String(answer || "");
+}
+
 function hideAccidentalPaperListFromNormalAnswer(answer) {
   const original = String(answer || "");
   if (!original.trim()) return original;
@@ -9135,6 +9204,47 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
   return text;
 }
 
+
+function buildStrictInternalEvidenceInstruction({ outputStyle, hasContext }) {
+  const sourceRequested = outputStyle === "SOURCE_TRACE" || outputStyle === "LITERATURE_REVIEW";
+
+  if (sourceRequested) {
+    return `
+SOURCE DISCLOSURE MODE
+
+The user explicitly asked for papers, literature, references, or sources.
+You may show only retrieved Paper_Talk DB titles and source metadata.
+Never invent papers from outside the DB.
+    `.trim();
+  }
+
+  return `
+CRITICAL INTERNAL EVIDENCE RULE
+
+Retrieved Paper_Talk DB papers are INTERNAL EVIDENCE ONLY.
+
+For normal answers, NEVER expose:
+- paper titles
+- paper labels such as 논문 A, 논문 B, Paper A, Paper B
+- author names
+- journal names
+- DOI, PMID, URL
+- source lists
+- parenthetical paper citations such as "(논문 A: ...)" or "(Paper B: ...)"
+- phrases like "이 논문에서는", "논문 C에 따르면", "The paper shows"
+
+Use retrieved papers only to infer:
+- common biological themes
+- research gaps
+- promising directions
+- validation ideas
+- limitations
+
+The user should see the synthesized research insight, not the retrieval evidence.
+If the user later asks "어떤 논문 기반이야?", the Worker will show stored sources separately.
+  `.trim();
+}
+
 async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env) {
   context = trimContextForChat(context);
   const hasContext = context.length > 0;
@@ -9142,6 +9252,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const intent = autoIntent || makeFallbackResearchIntent(userMessage);
   const outputStyle = determinePaperTalkOutputStyle({ userMessage, intent, hasContext });
   const adaptiveStyleInstruction = buildAdaptiveStyleInstruction({ outputStyle, hasContext });
+  const strictInternalEvidenceInstruction = buildStrictInternalEvidenceInstruction({ outputStyle, hasContext });
   const questionType = normalizeQuestionType(intent.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent.answer_style || "concise_answer");
   const shouldGenerateHypotheses = Boolean(intent.should_generate_hypotheses);
@@ -9169,10 +9280,10 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
 
         return [
           `DB_SOURCE_${index + 1}`,
-          `INTERNAL_SOURCE_LABEL: ${paperLabel}`,
-          `EXACT_DB_TITLE_FOR_INTERNAL_USE_ONLY: ${title}`,
-          item.source_url ? `ARTICLE_URL: ${item.source_url}` : "",
-          item.pdf_link ? `PDF_URL: ${item.pdf_link}` : "",
+          `INTERNAL_SOURCE_LABEL_DO_NOT_OUTPUT: ${paperLabel}`,
+          `INTERNAL_DB_TITLE_DO_NOT_OUTPUT: ${title}`,
+          item.source_url ? `INTERNAL_ARTICLE_URL_DO_NOT_OUTPUT: ${item.source_url}` : "",
+          item.pdf_link ? `INTERNAL_PDF_URL_DO_NOT_OUTPUT: ${item.pdf_link}` : "",
           `DB_EXCERPT: ${excerpt}`
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
@@ -9228,7 +9339,7 @@ The user has retrieved Paper_Talk DB context.
 For research-related answers:
 1. Use ONLY the retrieved Paper_Talk DB sources below as evidence.
 2. Do NOT add outside papers from your general knowledge.
-3. Do NOT mention a paper title unless it appears exactly in the EXACT_DB_TITLE list.
+3. Do NOT mention a paper title in normal answers. Titles are internal evidence only unless the user explicitly asks for sources.
 4. Do NOT cite La Manno, Nature papers, famous landmark papers, PubMed papers, or any external publication unless that exact title is present in the retrieved DB context.
 5. Do NOT invent authors, years, journals, sample sizes, datasets, biomarkers, mechanisms, or conclusions.
 6. If a detail is not in the DB excerpt, say "이 정보는 현재 검색된 Paper_Talk DB excerpt에는 명확하지 않습니다."
