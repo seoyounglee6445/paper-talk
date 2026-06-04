@@ -1,4 +1,12 @@
 /*
+v71 additions:
+- LITERATURE_REVIEW is now hard-separated from RESEARCH_INSIGHT.
+- "논문 추천/최신 논문/트렌디한 논문/관련 논문/읽어볼 논문" always returns a paper recommendation layout.
+- Paper recommendation answers show actual retrieved DB paper titles, grouped by theme, with no retrieval scores and no 논문 A/B/C labels.
+- Research direction questions hide paper titles and synthesize directions only.
+- Source trace questions show prior supporting papers only when explicitly asked.
+*/
+/*
 v70 additions:
 - Paper recommendation questions are now deterministically routed to LITERATURE_REVIEW before research-direction routing.
 - Queries containing "논문 추천", "트렌디한 논문", "최근 논문", "관련 논문", "paper recommendation", "related papers" are never treated as RESEARCH_INSIGHT.
@@ -63,7 +71,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v70 update - stable literature recommendation vs research-direction routing:
+Paper_Talk v71 update - hard-separated paper recommendation, source trace, and research insight modes:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -5415,21 +5423,21 @@ function isPaperRecommendationRequest(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
 
   return (
-    /(논문\s*추천|추천\s*논문|관련\s*논문|트렌디한\s*논문|최신\s*논문|최근\s*논문|핫한\s*논문|좋은\s*논문|paper\s*recommendation|recommend\s*papers?|related\s*papers?|trendy\s*papers?|recent\s*papers?|latest\s*papers?|papers?\s+to\s+read|literature\s+recommendation)/i.test(text)
+    /(논문\s*추천|추천\s*논문|관련\s*논문|트렌디한\s*논문|최신\s*논문|최근\s*논문|핫한\s*논문|읽어볼\s*논문|볼\s*만한\s*논문|좋은\s*논문|paper\s*recommendation|recommend\s*papers?|related\s*papers?|trendy\s*papers?|recent\s*papers?|latest\s*papers?|papers?\s+to\s+read|literature\s+recommendation)/i.test(text)
   );
 }
 
 function isResearchDirectionRequest(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
 
-  // IMPORTANT:
-  // Paper recommendation has priority and should not be treated as research-direction.
+  // Paper recommendation has absolute priority.
   if (isPaperRecommendationRequest(text)) return false;
 
   return (
-    /(유망|앞으로|향후|관련해서\s*어떤\s*연구|간에\s*어떤\s*연구|접목해서\s*연구|어떤게\s*접목|연구\s*방향|연구\s*주제|연구\s*아이디어|어떤\s*연구|무슨\s*연구|뭘\s*연구|연구하면\s*좋|gap|knowledge gap|future direction|research direction|promising|hypothesis|가설|아이디어)/i.test(text)
+    /(유망|앞으로|향후|관련해서\s*어떤\s*연구|간에\s*어떤\s*연구|접목해서\s*연구|어떤게\s*접목|어떤\s*연구를\s*할|어떤\s*연구를\s*하면|연구\s*방향|연구\s*주제|연구\s*아이디어|어떤\s*연구|무슨\s*연구|뭘\s*연구|연구하면\s*좋|할\s*수\s*있을까|gap|knowledge gap|future direction|research direction|promising|hypothesis|가설|아이디어)/i.test(text)
   );
 }
+
 
 function isContinuationMoreRequest(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -9187,17 +9195,15 @@ function normalizePaperTalkIntentLabel(value) {
 
 function detectPaperTalkUserIntent(userMessage, intent = null) {
   const raw = String(userMessage || "");
-  const text = raw.toLowerCase().replace(/\s+/g, " ").trim();
   const questionType = normalizeQuestionType(intent?.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent?.answer_style || "concise_answer");
 
-  // Routing priority must be deterministic:
-  // 1) explicit source tracing
-  // 2) paper/literature recommendation
-  // 3) follow-up continuation
-  // 4) research direction
-  // 5) validation
-  // 6) comparison/method/concept
+  // Hard priority:
+  // 1. Explicit source tracing: "어떤 논문 기반?", "근거 논문?", "출처?"
+  // 2. Paper recommendation/literature: "논문 추천", "최신 논문", "트렌디한 논문"
+  // 3. Follow-up more: use previous topic/task
+  // 4. Research direction: "어떤 연구", "유망", "앞으로", "연구 방향"
+  // 5. Validation / comparison / method / concept
 
   if (isExplicitSourceTraceRequest(raw)) {
     return "SOURCE_TRACE";
@@ -9207,7 +9213,6 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
     return "LITERATURE_REVIEW";
   }
 
-  // Explicit paper/literature review request that may not include "추천".
   if (/(논문\s*정리|논문\s*요약|문헌\s*리뷰|문헌\s*정리|literature review|paper review|summarize papers?|papers?\s+about)/i.test(raw)) {
     return "LITERATURE_REVIEW";
   }
@@ -9250,10 +9255,10 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
   switch (detectedIntent) {
     case "SOURCE_TRACE":
       return "SOURCE_TRACE";
-    case "FOLLOW_UP_MORE":
-      return "FOLLOW_UP_MORE";
     case "LITERATURE_REVIEW":
       return "LITERATURE_REVIEW";
+    case "FOLLOW_UP_MORE":
+      return "FOLLOW_UP_MORE";
     case "RESEARCH_DIRECTION":
       return "RESEARCH_INSIGHT";
     case "VALIDATION_PLAN":
@@ -9463,39 +9468,35 @@ Rules:
     return `
 ${common}
 
-AUTOMATIC STYLE: PAPER / LITERATURE RECOMMENDATION
+AUTOMATIC STYLE: PAPER RECOMMENDATION
 
-The user is asking for papers, paper recommendations, recent/trendy papers, or a literature-oriented answer.
-In this mode, it is allowed to show retrieved Paper_Talk DB paper titles.
+The user asked for papers or paper recommendations.
+Show retrieved Paper_Talk DB paper titles.
 
-Use this structure:
+Required format:
 
-현재 Paper_Talk DB에서 이 주제와 관련해 참고할 만한 연구들은
-대략 몇 가지 흐름으로 나눠볼 수 있습니다.
+현재 Paper_Talk DB에서 이 주제와 관련해 참고할 만한 논문들은 다음과 같습니다.
 
-### 1. [Theme or subfield]
+### 1. [Theme]
 
-- [Exact retrieved DB paper title]
+- [Exact DB paper title]
   - 왜 볼 만한지 1문장
-- [Exact retrieved DB paper title]
-  - 왜 볼 만한지 1문장
-
-### 2. [Theme or subfield]
-
-- [Exact retrieved DB paper title]
+- [Exact DB paper title]
   - 왜 볼 만한지 1문장
 
-### 정리하면
+### 2. [Theme]
 
-[Which theme is most trendy / useful, 2-3 short lines.]
+- [Exact DB paper title]
+  - 왜 볼 만한지 1문장
+
+정리하면,
+
+[Which theme is most useful/trendy.]
 
 Rules:
-- Recommend several retrieved DB papers when available.
-- Group by theme if possible.
-- Do NOT show retrieval scores.
-- Do NOT use 논문 A/B/C labels.
-- Do NOT invent papers outside retrieved Paper_Talk DB context.
-- If only one paper is retrieved, say that only one matching DB paper was retrieved and suggest narrowing/adding papers.
+- Do not show retrieval scores.
+- Do not use 논문 A/B/C labels.
+- Do not invent papers outside retrieved DB context.
     `.trim();
   }
 
@@ -9608,6 +9609,69 @@ If the user later asks "어떤 논문 기반이야?", the Worker will show store
   `.trim();
 }
 
+
+
+function buildLiteratureRecommendationAnswerFromContext({ context, userMessage }) {
+  const items = selectTopSupportingPapersForAnswer(context, 10, "LITERATURE_REVIEW");
+  if (!items.length) {
+    return "현재 Paper_Talk DB에서 이 주제와 직접 매칭되는 논문을 찾지 못했습니다. 검색어를 조금 더 구체화하거나 DB에 해당 논문을 추가한 뒤 다시 시도해 주세요.";
+  }
+
+  const topic = String(userMessage || "")
+    .replace(/추천해\s*주세요|추천해주세요|관련|최신|최근|트렌디한|논문|paper|papers/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const heading = topic
+    ? `현재 Paper_Talk DB에서 ${topic} 주제와 관련해 참고할 만한 논문들은 다음과 같습니다.`
+    : "현재 Paper_Talk DB에서 이 주제와 관련해 참고할 만한 논문들은 다음과 같습니다.";
+
+  const groups = [];
+  const used = new Set();
+
+  function addGroup(name, predicate) {
+    const selected = items.filter(item => {
+      const hay = `${item.title || ""} ${item.content || ""} ${item.matched_chunk || ""}`.toLowerCase();
+      return !used.has(item.title) && predicate(hay);
+    }).slice(0, 4);
+
+    if (selected.length) {
+      selected.forEach(item => used.add(item.title));
+      groups.push({ name, items: selected });
+    }
+  }
+
+  addGroup("Spatial representation learning", hay => /graph|representation|embedding|contrastive|morpholog|image|histolog|deep|learning|neural|공간|표현/.test(hay));
+  addGroup("Spatial architecture and tissue organization", hay => /architecture|organization|atlas|3d|tissue|microenvironment|niche|cell type|세포|조직|미세환경/.test(hay));
+  addGroup("Spatial trajectory and cell-state modeling", hay => /trajectory|transition|state|fate|velocity|differentiation|pseudotime|운명|상태/.test(hay));
+  addGroup("Clinical or translational spatial analysis", hay => /clinical|patient|therapy|response|biomarker|prognosis|cancer|tumou?r|치료|바이오마커|암/.test(hay));
+
+  const remaining = items.filter(item => !used.has(item.title)).slice(0, 5);
+  if (remaining.length) groups.push({ name: "Additional relevant papers", items: remaining });
+
+  const body = groups.slice(0, 4).map((group, groupIndex) => {
+    const bullets = group.items.map(item => {
+      const title = cleanBibtexText(item.title || "").trim();
+      const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 220);
+      const why = excerpt
+        ? excerpt.replace(/\s+/g, " ").replace(/^(title|abstract)\s*[:：]\s*/i, "")
+        : "이 주제와 직접적으로 연결되는 Paper_Talk DB 논문입니다.";
+      return `- ${title}\n  - ${why}`;
+    }).join("\n");
+
+    return `### ${groupIndex + 1}. ${group.name}\n\n${bullets}`;
+  }).join("\n\n");
+
+  return [
+    heading,
+    "",
+    body,
+    "",
+    "정리하면,",
+    "",
+    "이 주제는 spatial representation learning, 조직 구조 해석, 세포 상태 모델링, translational biomarker 발굴 쪽으로 나누어 읽으면 흐름을 잡기 좋습니다."
+  ].join("\n");
+}
 
 async function normalizeFinalAnswerToUserIntentStyle({ answer, userMessage, outputStyle, env }) {
   const original = String(answer || "").trim();
