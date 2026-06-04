@@ -144,6 +144,26 @@
     <button type="submit">Import CSV / BibTeX File</button>
   </form>
 </section>
+
+  <section class="card write-form">
+    <h2>Import Scientific Thinking Logic PDF / TXT</h2>
+    <p>Upload a PDF or TXT book/note that teaches the GPT how to think scientifically. It will be used as a reasoning framework only, not as paper evidence.</p>
+
+    <form onsubmit="importThinkingLogicFile(event)">
+      <div class="full-row">
+        <label>Logic Title</label>
+        <input id="thinkingLogicTitle" placeholder="Thinking Data Science, Scientific Reasoning Notes, Reviewer Logic...">
+      </div>
+
+      <div class="full-row">
+        <label>Thinking Logic PDF / TXT File</label>
+        <input type="file" id="thinkingLogicFile" accept=".pdf,.txt,text/plain,application/pdf">
+      </div>
+
+      <button type="submit">Import Thinking Logic File</button>
+      <p id="thinkingLogicStatus"></p>
+    </form>
+  </section>
   
 
   <section class="card write-form">
@@ -369,6 +389,7 @@
   </div>
 </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 const ADMIN_KEY_STORAGE = "paperTalkAdminKey";
 const ADMIN_KEY_EXPIRES = "paperTalkAdminKeyExpires";
@@ -760,6 +781,110 @@ async function importLinkedInCsvFile(e) {
   alert(doneMessage);
   e.target.reset();
   loadAdminPosts();
+}
+
+
+async function extractPdfTextFromFile(file) {
+  if (!window.pdfjsLib) {
+    throw new Error("PDF reader library did not load. Please refresh the page and try again.");
+  }
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const maxPages = Math.min(pdf.numPages, 500);
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items
+      .map(item => item.str || "")
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (pageText) {
+      pages.push(`Page ${pageNumber}\n${pageText}`);
+    }
+  }
+
+  return pages.join("\n\n");
+}
+
+async function importThinkingLogicFile(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const fileInput = document.getElementById("thinkingLogicFile");
+  const titleInput = document.getElementById("thinkingLogicTitle");
+  const status = document.getElementById("thinkingLogicStatus");
+  const file = fileInput.files[0];
+
+  if (!file) {
+    alert("Please select a PDF or TXT file for thinking logic.");
+    return;
+  }
+
+  const fileName = file.name || "thinking-logic-file";
+  const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
+
+  try {
+    if (status) {
+      status.textContent = isPdf
+        ? "Reading PDF text in your browser... This can take a little while for large books."
+        : "Reading text file...";
+    }
+
+    const extractedText = isPdf
+      ? await extractPdfTextFromFile(file)
+      : await file.text();
+
+    if (!String(extractedText || "").trim() || String(extractedText || "").trim().length < 200) {
+      alert("I could not extract enough text from this file. If the PDF is scanned images, please upload a text-based PDF or TXT version.");
+      if (status) status.textContent = "Import stopped: not enough readable text was extracted.";
+      return;
+    }
+
+    if (status) {
+      status.textContent = "Uploading thinking logic to Paper_Talk GPT knowledge...";
+    }
+
+    const res = await fetch("/api/admin/thinking-logic/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      },
+      body: JSON.stringify({
+        title: titleInput.value.trim() || fileName.replace(/\.[^.]+$/, ""),
+        fileName,
+        sourceType: isPdf ? "pdf" : "text",
+        text: extractedText
+      })
+    });
+
+    const result = await res.json().catch(() => ({}));
+
+    if (!res.ok || !result.ok) {
+      const message = result.error || result.message || "Thinking logic import failed.";
+      if (status) status.textContent = message;
+      alert(message);
+      return;
+    }
+
+    const doneMessage = `Thinking logic imported. Characters learned: ${result.characters || 0}.`;
+    if (status) status.textContent = doneMessage;
+    alert(doneMessage);
+    e.target.reset();
+  } catch (error) {
+    const message = `Thinking logic import failed: ${error?.message || error}`;
+    if (status) status.textContent = message;
+    alert(message);
+  }
 }
 
 async function createStudyPost(e) {
