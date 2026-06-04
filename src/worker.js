@@ -9134,22 +9134,7 @@ function enforceStrictUserOutputFormat(answer, userMessage) {
 }
 
 
-function normalizePaperTalkIntentLabel(value) {
-  const label = String(value || "").trim().toUpperCase();
-  const allowed = [
-    "SOURCE_TRACE",
-    "LITERATURE_REVIEW",
-    "RESEARCH_DIRECTION",
-    "VALIDATION_PLAN",
-    "CONCEPT_EXPLANATION",
-    "PAPER_SUMMARY",
-    "COMPARISON",
-    "METHOD_EXPLANATION",
-    "GENERAL_RESEARCH",
-    "STANDARD"
-  ];
-  return allowed.includes(label) ? label : "STANDARD";
-}
+// v72 note: legacy normalizePaperTalkIntentLabel was removed to avoid duplicate top-level declaration.
 
 function detectPaperTalkUserIntent(userMessage, intent = null) {
   const raw = String(userMessage || "");
