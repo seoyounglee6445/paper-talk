@@ -4448,6 +4448,22 @@ async function searchResearchKnowledge(query, env) {
     return latestResearchPostsAsKnowledge(env, 12);
   }
 
+  // v35 explicit paper lookup:
+  // If the user provides a paper URL, DOI, PMID/PII-like identifier, or full title,
+  // first retrieve that exact Paper_Talk DB row by source_url/pdf_link/title/content.
+  // If the row has a stored source_url, fetch that publisher page/metadata once and
+  // merge the readable abstract/page text with the stored admin abstract/content.
+  // This fixes cases where the DB contains the title/url but natural-language retrieval misses it.
+  try {
+    const explicitMatches = await findExplicitPaperMatchesFromQuestion(userQuery, env);
+    if (explicitMatches.length > 0) {
+      const enriched = await enrichExplicitPaperMatchesWithStoredUrls(explicitMatches, env);
+      return mergeKnowledgeResults(enriched).slice(0, 12);
+    }
+  } catch {
+    // Continue with normal retrieval.
+  }
+
   const allResults = [];
 
   // v24 retrieval fix:
@@ -4512,6 +4528,281 @@ async function searchResearchKnowledge(query, env) {
   if (merged.length > 0) return merged;
 
   return [];
+}
+
+
+function extractUrlsFromQuestion(value) {
+  const text = String(value || "");
+  const matches = text.match(/https?:\/\/[^\s<>"']+/gi) || [];
+  return [...new Set(matches.map(url => url.replace(/[\]\).,;]+$/g, "").trim()).filter(Boolean))];
+}
+
+function makeUrlSearchVariants(url) {
+  const variants = new Set();
+  const raw = String(url || "").trim();
+  if (!raw) return [];
+
+  variants.add(raw);
+
+  try {
+    variants.add(decodeURIComponent(raw));
+  } catch {
+    // ignore malformed percent encoding
+  }
+
+  try {
+    variants.add(encodeURI(decodeURIComponent(raw)));
+  } catch {
+    // ignore malformed percent encoding
+  }
+
+  const noQuery = raw.split("?")[0].split("#")[0];
+  if (noQuery) variants.add(noQuery);
+
+  try {
+    const decodedNoQuery = decodeURIComponent(noQuery);
+    if (decodedNoQuery) variants.add(decodedNoQuery);
+  } catch {
+    // ignore
+  }
+
+  const doi = extractDoiFromTextOrUrl(raw);
+  if (doi) {
+    variants.add(doi);
+    variants.add(`https://doi.org/${doi}`);
+  }
+
+  const pii = raw.match(/S\d{4}-\d{4}(?:%28|\()\d{2}(?:%29|\))\d{5}-\d/i);
+  if (pii) {
+    variants.add(pii[0]);
+    try { variants.add(decodeURIComponent(pii[0])); } catch {}
+    variants.add(pii[0].replace(/%28/gi, "(").replace(/%29/gi, ")"));
+  }
+
+  return [...variants].filter(v => v && v.length >= 6).slice(0, 12);
+}
+
+function extractLikelyPaperTitlesFromQuestion(value) {
+  const text = String(value || "")
+    .replace(/https?:\/\/[^\s<>"']+/gi, "\n")
+    .replace(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/gi, "\n");
+
+  const lines = text
+    .split(/[\n\r]+/)
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  const titles = [];
+
+  for (const line of lines) {
+    const cleaned = line
+      .replace(/^(title|paper|논문|제목)\s*[:：]\s*/i, "")
+      .replace(/(이\s*논문을|이\s*논문|읽고|요약|정리|중요|부분|답변|해주세요|해줘|찾아|줘|기반으로|abstract|초록)/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const englishWords = (cleaned.match(/[A-Za-z][A-Za-z\-]+/g) || []).length;
+    if (cleaned.length >= 25 && englishWords >= 4) {
+      titles.push(cleaned);
+    }
+  }
+
+  // Sometimes the user pastes title + request in one line. Keep a phrase before Korean request words.
+  const single = text.replace(/\s+/g, " ").trim();
+  const beforeKoreanRequest = single.split(/이\s*논문|읽고|요약|정리|중요|해줘|해주세요|답해|분석/)[0]?.trim();
+  if (beforeKoreanRequest) {
+    const englishWords = (beforeKoreanRequest.match(/[A-Za-z][A-Za-z\-]+/g) || []).length;
+    if (beforeKoreanRequest.length >= 25 && englishWords >= 4) titles.push(beforeKoreanRequest);
+  }
+
+  return [...new Set(titles.map(cleanBibtexText).filter(v => v.length >= 20))].slice(0, 5);
+}
+
+async function findExplicitPaperMatchesFromQuestion(query, env) {
+  const text = String(query || "").trim();
+  if (!text) return [];
+
+  const results = [];
+  const urlVariants = extractUrlsFromQuestion(text).flatMap(makeUrlSearchVariants);
+  const doi = extractDoiFromTextOrUrl(text);
+  const titles = extractLikelyPaperTitlesFromQuestion(text);
+
+  const identifierVariants = [...new Set([
+    ...urlVariants,
+    doi,
+    doi ? `https://doi.org/${doi}` : ""
+  ].filter(v => v && v.length >= 6))].slice(0, 16);
+
+  for (const value of identifierVariants) {
+    const like = `%${value.toLowerCase()}%`;
+    try {
+      const found = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content, updated_at
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND post_id NOT LIKE 'thinking_logic_%'
+          AND title NOT LIKE '[Thinking Logic]%'
+          AND (
+            LOWER(source_url) LIKE ?
+            OR LOWER(pdf_link) LIKE ?
+            OR LOWER(content) LIKE ?
+            OR LOWER(title) LIKE ?
+          )
+        ORDER BY
+          CASE
+            WHEN LOWER(source_url) LIKE ? THEN 0
+            WHEN LOWER(pdf_link) LIKE ? THEN 1
+            WHEN LOWER(title) LIKE ? THEN 2
+            ELSE 3
+          END,
+          datetime(updated_at) DESC
+        LIMIT 6
+      `).bind(like, like, like, like, like, like, like).all();
+
+      results.push(...(found.results || []).map(item => ({
+        ...item,
+        title: cleanBibtexText(item.title),
+        content: cleanBibtexText(item.content),
+        matched_chunk: makeBestEvidenceExcerpt(item.content || ""),
+        similarity_score: null,
+        from_explicit_url_or_identifier_search: true
+      })));
+    } catch {
+      // Continue.
+    }
+  }
+
+  for (const title of titles) {
+    const normalizedTitle = normalizeSearchText(title);
+    if (!normalizedTitle || normalizedTitle.length < 15) continue;
+
+    const tokens = getImportantSearchTokens(title).slice(0, 8);
+    try {
+      const exactLike = `%${normalizedTitle.slice(0, 180)}%`;
+      let found = await env.DB.prepare(`
+        SELECT title, source_url, pdf_link, content, updated_at
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND post_id NOT LIKE 'thinking_logic_%'
+          AND title NOT LIKE '[Thinking Logic]%'
+          AND (
+            LOWER(title) LIKE ?
+            OR LOWER(content) LIKE ?
+          )
+        ORDER BY
+          CASE WHEN LOWER(title) LIKE ? THEN 0 ELSE 1 END,
+          datetime(updated_at) DESC
+        LIMIT 6
+      `).bind(exactLike, exactLike, exactLike).all();
+
+      results.push(...(found.results || []).map(item => ({
+        ...item,
+        title: cleanBibtexText(item.title),
+        content: cleanBibtexText(item.content),
+        matched_chunk: makeBestEvidenceExcerpt(item.content || ""),
+        similarity_score: null,
+        from_explicit_title_search: true
+      })));
+
+      if (tokens.length >= 4) {
+        const titleClauses = tokens.map(() => `LOWER(title) LIKE ?`).join(" AND ");
+        const contentClauses = tokens.slice(0, 5).map(() => `LOWER(content) LIKE ?`).join(" AND ");
+        const params = [
+          ...tokens.map(t => `%${t}%`),
+          ...tokens.slice(0, 5).map(t => `%${t}%`)
+        ];
+
+        found = await env.DB.prepare(`
+          SELECT title, source_url, pdf_link, content, updated_at
+          FROM research_knowledge
+          WHERE status = 'indexed'
+            AND post_id NOT LIKE 'thinking_logic_%'
+            AND title NOT LIKE '[Thinking Logic]%'
+            AND ((${titleClauses}) OR (${contentClauses}))
+          ORDER BY datetime(updated_at) DESC
+          LIMIT 6
+        `).bind(...params).all();
+
+        results.push(...(found.results || []).map(item => ({
+          ...item,
+          title: cleanBibtexText(item.title),
+          content: cleanBibtexText(item.content),
+          matched_chunk: makeBestEvidenceExcerpt(item.content || ""),
+          similarity_score: null,
+          from_explicit_title_token_search: true
+        })));
+      }
+    } catch {
+      // Continue.
+    }
+  }
+
+  // If the user provides a URL that is not in DB, still try to read that URL directly.
+  // This supports "사용자가 논문 URL을 주면 그것도 찾아서 답" while keeping DB as priority.
+  if (!results.length && urlVariants.length) {
+    const url = urlVariants.find(v => /^https?:\/\//i.test(v)) || "";
+    if (url) {
+      try {
+        const fetched = await fetchReadableArticleText(url, "");
+        if (fetched && containsExternalArticleData(fetched)) {
+          results.push({
+            title: extractTitleFromFetchedText(fetched) || url,
+            source_url: url,
+            pdf_link: "",
+            content: `User-provided URL live fetch result:\n${fetched}`,
+            matched_chunk: makeBestEvidenceExcerpt(fetched),
+            similarity_score: null,
+            from_user_provided_url_fetch: true
+          });
+        }
+      } catch {
+        // If live fetch fails, no explicit fallback here.
+      }
+    }
+  }
+
+  return mergeKnowledgeResults(results);
+}
+
+function extractTitleFromFetchedText(value) {
+  const text = String(value || "");
+  const titleLine = text.split(/\n+/).find(line => /^Title:\s*/i.test(line.trim()));
+  if (titleLine) return cleanBibtexText(titleLine.replace(/^Title:\s*/i, "")).slice(0, 220);
+  return "";
+}
+
+async function enrichExplicitPaperMatchesWithStoredUrls(items, env) {
+  const output = [];
+  for (const item of (items || []).slice(0, 4)) {
+    const sourceUrl = String(item.source_url || item.pdf_link || "").trim();
+    let enriched = { ...item };
+
+    // Always keep stored DB abstract/content as fallback. Live fetch only augments it.
+    if (sourceUrl && /^https?:\/\//i.test(sourceUrl)) {
+      try {
+        const fetched = await fetchReadableArticleText(sourceUrl, item.title || "");
+        if (fetched && containsExternalArticleData(fetched)) {
+          const combined = [
+            `Paper_Talk DB stored evidence and admin abstract/content:\n${item.content || ""}`,
+            `Live source page / metadata fetched from stored URL (${sourceUrl}):\n${fetched}`
+          ].join("\n\n---\n\n");
+
+          enriched = {
+            ...item,
+            content: cleanFetchedArticleText(combined).slice(0, 52000),
+            matched_chunk: makeBestEvidenceExcerpt(combined),
+            from_stored_url_live_fetch: true
+          };
+        }
+      } catch {
+        // Publisher pages often block Workers. If so, stored abstract/content remains the answer basis.
+      }
+    }
+
+    output.push(enriched);
+  }
+
+  return output.length ? output : items;
 }
 
 
@@ -4670,11 +4961,13 @@ async function smartKeywordKnowledgeSearch(query, env, limit = 14) {
     clauses.push(`(
       LOWER(title) LIKE ?
       OR LOWER(content) LIKE ?
+      OR LOWER(source_url) LIKE ?
+      OR LOWER(pdf_link) LIKE ?
       OR LOWER(REPLACE(REPLACE(REPLACE(title, '{', ''), '}', ''), 'title =', '')) LIKE ?
       OR LOWER(REPLACE(REPLACE(REPLACE(content, '{', ''), '}', ''), 'title =', '')) LIKE ?
     )`);
     const like = `%${keyword}%`;
-    params.push(like, like, like, like);
+    params.push(like, like, like, like, like, like);
   }
 
   const result = await env.DB.prepare(`
@@ -4821,16 +5114,20 @@ async function exactPhraseKnowledgeSearch(phrase, env) {
       AND (
         LOWER(title) LIKE ?
         OR LOWER(content) LIKE ?
+        OR LOWER(source_url) LIKE ?
+        OR LOWER(pdf_link) LIKE ?
       )
     ORDER BY
       CASE
         WHEN LOWER(title) LIKE ? THEN 0
-        WHEN LOWER(content) LIKE ? THEN 1
-        ELSE 2
+        WHEN LOWER(source_url) LIKE ? THEN 1
+        WHEN LOWER(pdf_link) LIKE ? THEN 2
+        WHEN LOWER(content) LIKE ? THEN 3
+        ELSE 4
       END,
       datetime(updated_at) DESC
     LIMIT 12
-  `).bind(like, like, like, like).all();
+  `).bind(like, like, like, like, like, like, like, like).all();
 
   return (result.results || []).map(item => ({
     ...item,
