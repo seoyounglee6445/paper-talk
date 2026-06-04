@@ -34,6 +34,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v28: Guest users can ask Paper_Talk Vision GPT up to 3 questions per day per hashed IP address before signing in.
 - v29: Adds /api/admin/check so admin.html can verify the admin key before saving it; trims admin keys before comparison.
 - v30: Adds no-store JSON headers to prevent stale guest quota/admin auth responses from browser or edge cache.
+- v31: Adds Admin upload for Scientific Thinking Logic PDF/TXT; extracted text is indexed as reasoning framework, not paper evidence.
 */
 
 export default {
@@ -97,6 +98,10 @@ export default {
 
       if (pathname === "/api/admin/research/import-linkedin-csv" && request.method === "POST") {
         return adminImportLinkedInCsv(request, env);
+      }
+
+      if (pathname === "/api/admin/thinking-logic/import" && request.method === "POST") {
+        return adminImportThinkingLogic(request, env);
       }
 
       if (pathname === "/api/admin/research/reindex" && request.method === "POST") {
@@ -1229,6 +1234,87 @@ async function adminImportLinkedInCsv(request, env) {
   }
 
   return adminImportLinkedInCsvText(rawText, env);
+}
+
+
+async function adminImportThinkingLogic(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json().catch(() => ({}));
+  const title = String(data.title || data.fileName || "Scientific Thinking Logic").trim();
+  const fileName = String(data.fileName || "").trim();
+  const sourceType = String(data.sourceType || "thinking_logic_pdf_or_text").trim();
+  const rawText = String(data.text || data.extractedText || "").trim();
+
+  if (!rawText || rawText.length < 200) {
+    return json({
+      ok: false,
+      error: "Thinking logic text is too short. If this was a PDF, make sure the browser finished extracting the PDF text before importing."
+    }, 400);
+  }
+
+  const safeTitle = cleanBibtexText(title || fileName || "Scientific Thinking Logic").slice(0, 220);
+  const fingerprint = `${safeTitle}:${fileName}:${rawText.slice(0, 2000)}`;
+  const postId = "thinking_logic_" + await sha256Hex(fingerprint);
+
+  const content = [
+    "Paper_Talk Scientific Thinking Logic",
+    "Knowledge role: THINKING_FRAMEWORK_ONLY",
+    "Important: Use this as reasoning guidance for reading papers, evaluating data science methods, validation, uncertainty, and limitations. Do not use it as biological research evidence.",
+    `Title: ${safeTitle}`,
+    fileName ? `Imported file: ${fileName}` : "",
+    sourceType ? `Imported source type: ${sourceType}` : "",
+    "",
+    "Extracted thinking framework text:",
+    rawText.slice(0, 120000)
+  ].filter(Boolean).join("\n");
+
+  await env.DB.prepare(`
+    INSERT INTO research_knowledge (
+      id,
+      post_id,
+      title,
+      source_url,
+      pdf_link,
+      content,
+      status,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP)
+    ON CONFLICT(post_id) DO UPDATE SET
+      title = excluded.title,
+      source_url = excluded.source_url,
+      pdf_link = excluded.pdf_link,
+      content = excluded.content,
+      status = 'indexed',
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(
+    crypto.randomUUID(),
+    postId,
+    `[Thinking Logic] ${safeTitle}`,
+    "",
+    "",
+    content
+  ).run();
+
+  await upsertResearchKnowledgeVectors({
+    postId,
+    title: `[Thinking Logic] ${safeTitle}`,
+    sourceUrl: "",
+    pdfLink: "",
+    content
+  }, env);
+
+  return json({
+    ok: true,
+    imported: 1,
+    sourceType: "thinking_logic",
+    title: safeTitle,
+    characters: rawText.length,
+    message: "Thinking logic file was saved and indexed as reasoning framework. It will guide GPT reasoning but will not be treated as paper evidence."
+  });
 }
 
 async function adminImportLinkedInCsvText(csvText, env) {
@@ -3744,10 +3830,14 @@ ${autoIntent.retrieval_query}`
     : message;
 
   const context = await searchResearchKnowledge(retrievalMessage, env);
+  const thinkingLogicFrameworks = await retrieveThinkingLogicFrameworks({
+    userMessage: message
+  }, env);
 
   let assistantText = await callOpenAIForPaperTalk({
     userMessage: message,
     context,
+    thinkingLogicFrameworks,
     pastFrameworks: [],
     generatedFramework: "",
     recentMessages,
@@ -5080,6 +5170,16 @@ function normalizeKnowledgeItem(item) {
   const content = cleanBibtexText(item.content || item.matched_chunk || "");
   let title = cleanBibtexText(item.title || "");
 
+  // Thinking-logic uploads are retrieved separately as reasoning frameworks.
+  // They must not appear as Paper_Talk DB paper evidence.
+  if (
+    String(item.post_id || "").startsWith("thinking_logic_") ||
+    /^\[Thinking Logic\]/i.test(title) ||
+    /Knowledge role:\s*THINKING_FRAMEWORK_ONLY|Paper_Talk Scientific Thinking Logic/i.test(content)
+  ) {
+    return null;
+  }
+
   if (isMetadataOnlyTitle(title)) {
     const extractedTitle = extractTitleFromKnowledgeContent(content);
     if (extractedTitle) title = extractedTitle;
@@ -5257,6 +5357,81 @@ async function getRecentThreadMessages(threadId, userId, env) {
 }
 
 
+
+
+async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
+  try {
+    if (!env.DB) return [];
+
+    const queryText = String(userMessage || "");
+    const tokens = getImportantSearchTokens(queryText)
+      .filter(token => token.length >= 4)
+      .slice(0, 8);
+
+    let rows = [];
+
+    if (tokens.length > 0) {
+      const clauses = tokens.map(() => `(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)`).join(" OR ");
+      const params = tokens.flatMap(token => [`%${token}%`, `%${token}%`]);
+
+      const result = await env.DB.prepare(`
+        SELECT title, content, updated_at
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND (
+            post_id LIKE 'thinking_logic_%'
+            OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+            OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
+          )
+          AND (${clauses})
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 4
+      `).bind(...params).all();
+
+      rows = result.results || [];
+    }
+
+    if (!rows.length) {
+      const recent = await env.DB.prepare(`
+        SELECT title, content, updated_at
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND (
+            post_id LIKE 'thinking_logic_%'
+            OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+            OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
+          )
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 3
+      `).all();
+
+      rows = recent.results || [];
+    }
+
+    return rows.map(row => ({
+      title: cleanBibtexText(row.title || "Scientific Thinking Logic").slice(0, 240),
+      content: cleanBibtexText(row.content || "").slice(0, 6000),
+      updated_at: row.updated_at || ""
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function buildThinkingLogicContext(thinkingLogicFrameworks = []) {
+  if (!Array.isArray(thinkingLogicFrameworks) || thinkingLogicFrameworks.length === 0) {
+    return "No admin-uploaded thinking-logic PDF/TXT has been retrieved yet. Use the built-in Paper_Talk scientific thinking logic only.";
+  }
+
+  return thinkingLogicFrameworks.slice(0, 4).map((item, index) => {
+    return [
+      `THINKING_LOGIC_SOURCE_${index + 1}`,
+      `TITLE: ${cleanBibtexText(item.title || "Scientific Thinking Logic")}`,
+      `ROLE: Reasoning framework only. Not biological evidence.`,
+      `EXCERPT:\n${cleanBibtexText(item.content || "").slice(0, 5000)}`
+    ].join("\n");
+  }).join("\n\n---\n\n");
+}
 
 async function retrievePastFrameworks({ userMessage, context }, env) {
   // Retrieve previous Paper_Talk reasoning patterns so the system can behave more like a research twin.
@@ -5821,7 +5996,7 @@ function convertReportStyleAnswerLocally(answer) {
 }
 
 
-async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
+async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
   context = mergeKnowledgeResults(Array.isArray(context) ? context : []).slice(0, 12);
   const hasContext = context.length > 0;
 
@@ -5841,6 +6016,8 @@ async function callOpenAIForPaperTalk({ userMessage, context, pastFrameworks = [
   const dbTitles = hasContext
     ? [...new Set(context.map(item => cleanBibtexText(item.title || "").trim()).filter(Boolean))]
     : [];
+
+  const thinkingLogicContext = buildThinkingLogicContext(thinkingLogicFrameworks);
 
   const contextText = hasContext
     ? context.slice(0, 10).map((item, index) => {
