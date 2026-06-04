@@ -5632,7 +5632,6 @@ async function getRecentThreadMessages(threadId, userId, env) {
 
 
 
-async 
 function isThinkingLogicKnowledgeItem(item) {
   const postId = String(item?.post_id || item?.postId || "").toLowerCase();
   const title = String(item?.title || "").toLowerCase();
