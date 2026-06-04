@@ -1,4 +1,12 @@
 /*
+v70 additions:
+- Paper recommendation questions are now deterministically routed to LITERATURE_REVIEW before research-direction routing.
+- Queries containing "논문 추천", "트렌디한 논문", "최근 논문", "관련 논문", "paper recommendation", "related papers" are never treated as RESEARCH_INSIGHT.
+- Follow-up "더 주세요" reuses previous topic but preserves previous task type: paper recommendation continues as LITERATURE_REVIEW, research direction continues as RESEARCH_INSIGHT.
+- LITERATURE_REVIEW answers group retrieved DB papers by theme, hide retrieval scores, and avoid 논문 A/B/C labels.
+- RESEARCH_INSIGHT answers remain hidden-source synthesis with clean section formatting.
+*/
+/*
 v69 additions:
 - Follow-up requests such as "더 주세요", "추가로", "1개가 끝인가요?", "다른 것도" reuse the previous user topic/assistant context.
 - These continuation requests do NOT trigger source-trace mode.
@@ -55,7 +63,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v69 update - follow-up continuation retrieval + safer source-trace routing:
+Paper_Talk v70 update - stable literature recommendation vs research-direction routing:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -5402,6 +5410,27 @@ function getRequestedPaperOrdinal(message) {
 }
 
 
+
+function isPaperRecommendationRequest(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  return (
+    /(논문\s*추천|추천\s*논문|관련\s*논문|트렌디한\s*논문|최신\s*논문|최근\s*논문|핫한\s*논문|좋은\s*논문|paper\s*recommendation|recommend\s*papers?|related\s*papers?|trendy\s*papers?|recent\s*papers?|latest\s*papers?|papers?\s+to\s+read|literature\s+recommendation)/i.test(text)
+  );
+}
+
+function isResearchDirectionRequest(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  // IMPORTANT:
+  // Paper recommendation has priority and should not be treated as research-direction.
+  if (isPaperRecommendationRequest(text)) return false;
+
+  return (
+    /(유망|앞으로|향후|관련해서\s*어떤\s*연구|간에\s*어떤\s*연구|접목해서\s*연구|어떤게\s*접목|연구\s*방향|연구\s*주제|연구\s*아이디어|어떤\s*연구|무슨\s*연구|뭘\s*연구|연구하면\s*좋|gap|knowledge gap|future direction|research direction|promising|hypothesis|가설|아이디어)/i.test(text)
+  );
+}
+
 function isContinuationMoreRequest(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -5469,18 +5498,23 @@ function buildContinuationQuestionFromHistory({ currentMessage, recentMessages }
     lastAssistant ? `직전 답변 요약/context: ${lastAssistant}` : "",
     `현재 사용자의 follow-up 요청: ${current}`,
     "",
-    "요청 해석: 사용자는 같은 주제에서 추가 후보/추가 설명을 원합니다. 이전 답변을 반복하지 말고, 같은 주제의 Paper_Talk DB 근거를 더 활용해 이어서 답하세요."
+    "요청 해석: 사용자는 같은 주제에서 추가 후보/추가 설명을 원합니다. 이전 답변을 반복하지 말고, 같은 주제의 Paper_Talk DB 근거를 더 활용해 이어서 답하세요. 이전 요청이 논문 추천이었다면 추가 논문 추천으로 답하세요."
   ].filter(Boolean).join("\\n");
 }
 
 function inferContinuationOutputStyle({ currentMessage, previousTopic, previousAssistant, fallbackStyle }) {
   const combined = [currentMessage, previousTopic, previousAssistant].join(" ").toLowerCase();
 
-  if (/(논문\s*추천|관련\s*논문|트렌디한\s*논문|paper|papers|literature|문헌|추천)/i.test(combined)) {
+  // If the previous topic or assistant answer was about recommending papers, "더 주세요" should
+  // continue paper recommendation, not source tracing and not generic research insight.
+  if (
+    isPaperRecommendationRequest(previousTopic) ||
+    /(논문\s*추천|관련\s*논문|트렌디한\s*논문|추천\s*논문|paper recommendation|related papers|recent papers|latest papers)/i.test(combined)
+  ) {
     return "LITERATURE_REVIEW";
   }
 
-  if (/(유망|앞으로|연구\s*방향|future direction|promising|research direction|아이디어|가설|gap)/i.test(combined)) {
+  if (isResearchDirectionRequest(previousTopic) || /(유망|앞으로|연구\s*방향|future direction|promising|research direction|아이디어|가설|gap)/i.test(combined)) {
     return "RESEARCH_INSIGHT";
   }
 
@@ -8744,6 +8778,7 @@ function makeFallbackResearchIntent(userMessage) {
 
 function hideInternalEvidenceLeaksFromNormalAnswer(answer) {
   let text = String(answer || "");
+  text = text.replace(/\s*\/\s*retrieval score:\s*[0-9.]+/gi, "").replace(/retrieval score:\s*[0-9.]+/gi, "");
   if (!text.trim()) return text;
 
   // Remove parenthetical source leaks like (논문 A: Title...) or (Paper B: Title...).
@@ -9156,49 +9191,54 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
   const questionType = normalizeQuestionType(intent?.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent?.answer_style || "concise_answer");
 
-  if (isContinuationMoreRequest(raw)) {
-    return "FOLLOW_UP_MORE";
-  }
+  // Routing priority must be deterministic:
+  // 1) explicit source tracing
+  // 2) paper/literature recommendation
+  // 3) follow-up continuation
+  // 4) research direction
+  // 5) validation
+  // 6) comparison/method/concept
 
-  // 1. Source tracing must be first: only this mode can reveal supporting papers.
   if (isExplicitSourceTraceRequest(raw)) {
     return "SOURCE_TRACE";
   }
 
-  // 2. Explicit literature / paper review request.
-  if (/(논문\s*정리|논문\s*요약|문헌\s*리뷰|문헌\s*정리|관련\s*논문|논문\s*추천|literature review|paper review|related papers|summarize papers?|papers?\s+about)/i.test(raw)) {
+  if (isPaperRecommendationRequest(raw)) {
     return "LITERATURE_REVIEW";
   }
 
-  // 3. Research direction / promising topic / gap / hypothesis.
-  // This catches both "cancer와 aging..." and "cancer와 metabolic..." consistently.
-  if (/(유망|앞으로|향후|관련해서\s*어떤\s*연구|간에\s*어떤\s*연구|접목해서\s*연구|어떤게\s*접목|연구\s*방향|연구\s*주제|연구\s*아이디어|어떤\s*연구|무슨\s*연구|뭘\s*연구|연구하면\s*좋|gap|knowledge gap|future direction|research direction|promising|hypothesis|가설|아이디어)/i.test(raw)) {
+  // Explicit paper/literature review request that may not include "추천".
+  if (/(논문\s*정리|논문\s*요약|문헌\s*리뷰|문헌\s*정리|literature review|paper review|summarize papers?|papers?\s+about)/i.test(raw)) {
+    return "LITERATURE_REVIEW";
+  }
+
+  if (isContinuationMoreRequest(raw)) {
+    return "FOLLOW_UP_MORE";
+  }
+
+  if (isResearchDirectionRequest(raw)) {
     return "RESEARCH_DIRECTION";
   }
 
-  // 4. Validation / experiment / analysis design.
   if (/(검증|실험|validation|validate|experimental design|experiment|protocol|control|대조군|분석\s*방법|어떻게\s*확인|how to test|test this|assay|perturbation)/i.test(raw)) {
     return "VALIDATION_PLAN";
   }
 
-  // 5. Comparison.
   if (/(비교|차이|다른점|공통점|compare|comparison|difference|similarity|versus| vs\.? )/i.test(raw)) {
     return "COMPARISON";
   }
 
-  // 6. Method explanation.
   if (/(방법론|method|pipeline|workflow|algorithm|분석법|분석\s*파이프라인|어떻게\s*분석|tool|툴)/i.test(raw)) {
     return "METHOD_EXPLANATION";
   }
 
-  // 7. Concept/mechanism explanation.
   if (/(개념|정의|뜻|뭐야|무엇|설명|기전|메커니즘|mechanism|overview|explain|what is|define|meaning|why does|how does)/i.test(raw)) {
     return "CONCEPT_EXPLANATION";
   }
 
+  if (questionType === "LITERATURE" || answerStyle === "literature_review") return "LITERATURE_REVIEW";
   if (questionType === "RESEARCH" || answerStyle === "hypothesis_generation") return "RESEARCH_DIRECTION";
   if (questionType === "VALIDATION" || answerStyle === "validation_plan") return "VALIDATION_PLAN";
-  if (questionType === "LITERATURE" || answerStyle === "literature_review") return "LITERATURE_REVIEW";
   if (questionType === "CONCEPT" || answerStyle === "educational_overview") return "CONCEPT_EXPLANATION";
 
   return "GENERAL_RESEARCH";
@@ -9423,34 +9463,42 @@ Rules:
     return `
 ${common}
 
-AUTOMATIC STYLE: LITERATURE REVIEW
+AUTOMATIC STYLE: PAPER / LITERATURE RECOMMENDATION
 
-The user is asking for literature/papers, so it is allowed to show retrieved Paper_Talk DB paper titles.
+The user is asking for papers, paper recommendations, recent/trendy papers, or a literature-oriented answer.
+In this mode, it is allowed to show retrieved Paper_Talk DB paper titles.
 
 Use this structure:
 
-### 전체 흐름
+현재 Paper_Talk DB에서 이 주제와 관련해 참고할 만한 연구들은
+대략 몇 가지 흐름으로 나눠볼 수 있습니다.
 
-Summarize the shared direction across retrieved DB papers.
+### 1. [Theme or subfield]
 
-### 주요 근거
+- [Exact retrieved DB paper title]
+  - 왜 볼 만한지 1문장
+- [Exact retrieved DB paper title]
+  - 왜 볼 만한지 1문장
 
-Recommend several retrieved Paper_Talk DB papers when available, preferably grouped by theme.
-Do not show retrieval scores.
-Do not use 논문 A/B/C labels.
-Do not invent external papers.
+### 2. [Theme or subfield]
 
-### 연구적으로 보이는 gap
-
-Explain what is still missing.
+- [Exact retrieved DB paper title]
+  - 왜 볼 만한지 1문장
 
 ### 정리하면
 
-Give a short synthesis.
+[Which theme is most trendy / useful, 2-3 short lines.]
 
-If retrieved DB context is empty, say that no matching Paper_Talk DB source was retrieved.
+Rules:
+- Recommend several retrieved DB papers when available.
+- Group by theme if possible.
+- Do NOT show retrieval scores.
+- Do NOT use 논문 A/B/C labels.
+- Do NOT invent papers outside retrieved Paper_Talk DB context.
+- If only one paper is retrieved, say that only one matching DB paper was retrieved and suggest narrowing/adding papers.
     `.trim();
   }
+
 
   if (outputStyle === "SOURCE_TRACE") {
     return `
