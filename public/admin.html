@@ -781,8 +781,8 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
 
       const cleanText = String(extractedText || "").trim();
 
-      if (!cleanText || cleanText.length < 500) {
-        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first." });
+      if (!cleanText || cleanText.length < 120) {
+        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version." });
         continue;
       }
 
@@ -1030,8 +1030,8 @@ async function importResearchFullTextFile(e) {
 
       const cleanText = String(extractedText || "").trim();
 
-      if (!cleanText || cleanText.length < 500) {
-        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first." });
+      if (!cleanText || cleanText.length < 120) {
+        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version." });
         continue;
       }
 
