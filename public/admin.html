@@ -127,6 +127,15 @@
         <textarea name="note" placeholder="Optional note"></textarea>
       </div>
 
+      <div class="full-row">
+        <label>Optional Full Text PDF / TXT Upload</label>
+        <input type="file" id="newResearchFullTextFiles" name="newResearchFullTextFiles" accept=".pdf,.txt,text/plain,application/pdf" multiple>
+        <p class="post-meta">Optional. Select one or more text-based PDFs/TXT files. After the paper is saved, the full text will be attached to this paper and indexed automatically. Duplicate PDFs are skipped.</p>
+      </div>
+
+      <p id="newResearchFullTextStatus"></p>
+      <div id="newResearchFullTextResultList"></div>
+
       <button type="submit">Save Research Paper</button>
     </form>
   </section>
@@ -712,8 +721,18 @@ async function createResearchPaper(e) {
   const key = requireAdminKey();
   if (!key) return;
 
-  const form = new FormData(e.target);
+  const formEl = e.target;
+  const fileInput = document.getElementById("newResearchFullTextFiles");
+  const status = document.getElementById("newResearchFullTextStatus");
+  const resultList = document.getElementById("newResearchFullTextResultList");
+  const fullTextFiles = Array.from(fileInput?.files || []);
+
+  const form = new FormData(formEl);
+  form.delete("newResearchFullTextFiles");
   const data = Object.fromEntries(form.entries());
+
+  if (status) status.textContent = "Saving research paper...";
+  if (resultList) resultList.innerHTML = "";
 
   const res = await fetch("/api/admin/research/create", {
     method: "POST",
@@ -724,16 +743,142 @@ async function createResearchPaper(e) {
     body: JSON.stringify(data)
   });
 
-  const result = await res.json();
+  const result = await res.json().catch(() => ({}));
 
-  if (!result.ok) {
-    alert(result.error || "Save failed");
+  if (!res.ok || !result.ok) {
+    const message = result.error || result.message || "Save failed";
+    if (status) status.textContent = message;
+    alert(message);
     return;
   }
 
-  alert("Research paper saved.");
-  e.target.reset();
+  if (!fullTextFiles.length) {
+    if (status) status.textContent = "Research paper saved.";
+    alert("Research paper saved.");
+    formEl.reset();
+    loadAdminPosts();
+    return;
+  }
+
+  const uploadResults = await importNewResearchPaperFullTextFiles({
+    key,
+    title: data.title || "",
+    sourceUrl: data.articleLink || "",
+    pdfLink: data.pdfLink || "",
+    files: fullTextFiles,
+    status,
+    resultList
+  });
+
+  const imported = uploadResults.filter(r => r.status === "imported").length;
+  const skipped = uploadResults.filter(r => r.status === "skipped").length;
+  const failed = uploadResults.filter(r => r.status === "failed").length;
+
+  if (status) {
+    status.textContent = `Research paper saved. Full-text import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
+  }
+
+  alert(`Research paper saved.
+Full-text imported: ${imported}
+Skipped duplicates: ${skipped}
+Failed: ${failed}`);
+  formEl.reset();
   loadAdminPosts();
+}
+
+async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfLink, files, status, resultList }) {
+  const seenHashes = new Map();
+  const results = [];
+
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const fileName = file.name || `research-full-text-${index + 1}`;
+    const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
+
+    try {
+      if (status) status.textContent = `Reading full text ${index + 1}/${files.length}: ${fileName}`;
+
+      const extractedText = isPdf
+        ? await extractPdfTextFromFile(file)
+        : await file.text();
+
+      const cleanText = String(extractedText || "").trim();
+
+      if (!cleanText || cleanText.length < 500) {
+        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first." });
+        continue;
+      }
+
+      const textHash = await sha256Text(cleanText.replace(/\s+/g, " ").slice(0, 350000));
+
+      if (seenHashes.has(textHash)) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Duplicate in this batch. Same as: ${seenHashes.get(textHash)}`
+        });
+        continue;
+      }
+
+      seenHashes.set(textHash, fileName);
+
+      if (status) status.textContent = `Uploading full text ${index + 1}/${files.length}: ${fileName}`;
+
+      const res = await fetch("/api/admin/research/fulltext/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Key": key
+        },
+        body: JSON.stringify({
+          title,
+          sourceUrl,
+          pdfLink,
+          fileName,
+          sourceType: isPdf ? "pdf" : "text",
+          text: cleanText
+        })
+      });
+
+      const result = await res.json().catch(() => ({}));
+
+      if (!res.ok || !result.ok) {
+        results.push({
+          fileName,
+          status: "failed",
+          message: result.error || result.message || "Research full text import failed."
+        });
+        continue;
+      }
+
+      if (result.duplicate) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Already imported: ${result.duplicateTitle || result.title || "existing paper"}`
+        });
+        continue;
+      }
+
+      results.push({
+        fileName,
+        status: "imported",
+        message: `${result.title || title || "paper"} (${result.fullTextCharacters || 0} characters)`
+      });
+    } catch (error) {
+      results.push({
+        fileName,
+        status: "failed",
+        message: error?.message || String(error)
+      });
+    }
+
+    if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+
+  if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
+  return results;
 }
 
 async function importLinkedInCsvFile(e) {
