@@ -273,6 +273,26 @@ let isGuestMode = true;
 
 const GUEST_LIMIT = 3;
 
+async function readJsonSafely(response, label = "API request") {
+  const contentType = response.headers.get("Content-Type") || "";
+  const rawText = await response.text();
+
+  try {
+    return JSON.parse(rawText);
+  } catch (error) {
+    const preview = rawText
+      .replace(/\s+/g, " ")
+      .slice(0, 300);
+
+    throw new Error(
+      `${label} returned a non-JSON response. HTTP ${response.status}. ` +
+      `This usually means the Worker route is not deployed or the request is being served by an HTML page. ` +
+      `Content-Type: ${contentType || "unknown"}. Preview: ${preview}`
+    );
+  }
+}
+
+
 // Local fallback only for display before the server returns real guest quota.
 // The actual guest limit must be enforced in the Worker by IP hash.
 function getLocalGuestUsedToday() {
@@ -317,7 +337,7 @@ async function init() {
   setupEventListeners();
 
   const meRes = await fetch("/api/me");
-  const me = await meRes.json();
+  const me = await readJsonSafely(meRes, "/api/me");
 
   if (!me.ok || !me.user) {
     isGuestMode = true;
@@ -364,7 +384,7 @@ async function loadThreads() {
   if (isGuestMode) return;
 
   const res = await fetch("/api/gpt/threads");
-  const data = await res.json();
+  const data = await readJsonSafely(res, "API request");
 
   const list = document.getElementById("threadList");
   list.innerHTML = "";
@@ -412,7 +432,7 @@ async function createThread() {
     body: JSON.stringify({ title: "New chat" })
   });
 
-  const data = await res.json();
+  const data = await readJsonSafely(res, "API request");
 
   if (!data.ok) {
     alert(data.error || "Failed to create chat.");
@@ -441,7 +461,7 @@ async function deleteThread(threadId) {
     method: "DELETE"
   });
 
-  const data = await res.json();
+  const data = await readJsonSafely(res, "API request");
 
   if (!data.ok) {
     alert(data.error || "Failed to delete chat.");
@@ -464,7 +484,7 @@ async function loadMessages() {
   if (!currentThreadId) return;
 
   const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}`);
-  const data = await res.json();
+  const data = await readJsonSafely(res, "API request");
 
   if (!data.ok) {
     box.innerHTML = `<p>${escapeHtml(data.error || "Failed to load messages.")}</p>`;
@@ -522,6 +542,7 @@ async function sendMessage() {
   try {
     const res = await fetch("/api/gpt/chat", {
       method: "POST",
+      cache: "no-store",
       signal: chatController.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -530,7 +551,7 @@ async function sendMessage() {
       })
     });
 
-    const data = await res.json();
+    const data = await readJsonSafely(res, "API request");
 
     removeLastProgress();
 
