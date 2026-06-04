@@ -43,6 +43,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v41: Related-paper exception + truthful full-text access. Active-paper follow-ups stay locked, but requests for similar/related/other papers search Paper_Talk DB using the active paper as the seed. GPT must explain that publisher full text is read only if it is stored in DB or openly fetchable by the Worker; the user browser/IP/institution access is not available to the Worker.
 - v42: Adds Admin Research Paper Full Text PDF/TXT import. Browser-extracted PDF/TXT text is attached to the matched research_knowledge paper as FULL_TEXT_PDF_UPLOAD evidence, reindexed into Vectorize, and preferred before abstracts/metadata in GPT excerpts.
 - v43: Full-text import stores a content hash and skips duplicate PDFs/TXTs already imported into Paper_Talk DB.
+- v44: Full-text PDF/TXT import is chunked into paper_fulltext_chunks for 1000+ PDF scaling; Admin can list/delete stored full text files.
 */
 
 export default {
@@ -110,6 +111,14 @@ export default {
 
       if (pathname === "/api/admin/research/fulltext/import" && request.method === "POST") {
         return adminImportResearchFullText(request, env);
+      }
+
+      if (pathname === "/api/admin/research/fulltext/list" && request.method === "GET") {
+        return adminListResearchFullText(request, env);
+      }
+
+      if (pathname === "/api/admin/research/fulltext/delete" && request.method === "POST") {
+        return adminDeleteResearchFullText(request, env);
       }
 
       if (pathname === "/api/admin/thinking-logic/import" && request.method === "POST") {
@@ -1073,6 +1082,36 @@ async function adminDeletePost(request, env) {
     return json({ ok: false, error: "Post ID is required." }, 400);
   }
 
+  // Delete chunked full-text evidence first.
+  try {
+    await ensurePaperFullTextTables(env);
+
+    const fullTextRows = await env.DB.prepare(`
+      SELECT vector_id, chunk_index, content_hash
+      FROM paper_fulltext_chunks
+      WHERE post_id = ?
+    `).bind(data.id).all();
+
+    await env.DB.prepare(`
+      DELETE FROM paper_fulltext_chunks
+      WHERE post_id = ?
+    `).bind(data.id).run();
+
+    if (env.VECTORIZE) {
+      const ids = (fullTextRows.results || [])
+        .map(row => row.vector_id || `${data.id}:fulltext:${String(row.content_hash || "").slice(0, 16)}:${row.chunk_index}`)
+        .filter(Boolean);
+
+      if (ids.length) {
+        try {
+          await env.VECTORIZE.deleteByIds(ids);
+        } catch {}
+      }
+    }
+  } catch {
+    // Continue deleting the post and old research_knowledge row.
+  }
+
   await env.DB.prepare(`
     DELETE FROM research_knowledge
     WHERE post_id = ?
@@ -1082,7 +1121,7 @@ async function adminDeletePost(request, env) {
     try {
       const ids = Array.from({ length: 24 }, (_, index) => `${data.id}:${index}`);
       await env.VECTORIZE.deleteByIds(ids);
-    } catch (error) {
+    } catch {
       // Ignore Vectorize delete errors so post deletion still works.
     }
   }
@@ -1094,6 +1133,8 @@ async function adminDeletePost(request, env) {
 
   return json({ ok: true });
 }
+
+
 
 
 async function adminUpdatePost(request, env) {
@@ -1183,17 +1224,18 @@ async function adminCreateResearchPaper(request, env) {
 
   const postId = crypto.randomUUID();
 
+  // v44:
+  // New Research Paper metadata is intentionally compact.
+  // Removed admin-only fields: figures, description, note.
+  // Full-text PDF/TXT evidence is stored separately in paper_fulltext_chunks.
   const researchData = {
     year: data.year || "",
     authors: data.authors || "",
     journal: data.journal || "",
     abstract: data.abstract || "",
     category: data.category || "",
-    figures: data.figures || "",
     pdfLink: data.pdfLink || "",
-    tags: data.tags || "",
-    description: data.description || "",
-    note: data.note || ""
+    tags: data.tags || ""
   };
 
   await env.DB.prepare(`
@@ -1227,39 +1269,141 @@ async function adminCreateResearchPaper(request, env) {
 
   return json({
     ok: true,
+    postId,
     message: "Research paper saved and added to Paper_Talk GPT knowledge base."
   });
 }
 
 
-async function adminImportResearchFullText(request, env) {
-  if (!isAdmin(request, env)) {
-    return json({ ok: false, error: "Unauthorized" }, 401);
+
+
+async function ensurePaperFullTextTables(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS paper_fulltext_chunks (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      source_url TEXT,
+      pdf_link TEXT,
+      file_name TEXT,
+      source_type TEXT,
+      content_hash TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      vector_id TEXT,
+      text TEXT NOT NULL,
+      text_length INTEGER NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_paper_fulltext_chunks_post_id
+    ON paper_fulltext_chunks(post_id)
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_paper_fulltext_chunks_hash
+    ON paper_fulltext_chunks(content_hash)
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_paper_fulltext_chunks_title
+    ON paper_fulltext_chunks(title)
+  `).run();
+
+  try {
+    await env.DB.prepare(`
+      ALTER TABLE paper_fulltext_chunks ADD COLUMN vector_id TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+}
+
+function chunkFullTextForStorage(text, chunkSize = 2800, overlap = 350) {
+  const clean = String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+
+  const chunks = [];
+  let start = 0;
+
+  while (start < clean.length) {
+    const end = Math.min(start + chunkSize, clean.length);
+    let chunk = clean.slice(start, end).trim();
+
+    // Try not to end in the middle of a sentence when possible.
+    if (end < clean.length) {
+      const lastStop = Math.max(
+        chunk.lastIndexOf(". "),
+        chunk.lastIndexOf("\n"),
+        chunk.lastIndexOf("; ")
+      );
+
+      if (lastStop > Math.floor(chunk.length * 0.55)) {
+        chunk = chunk.slice(0, lastStop + 1).trim();
+      }
+    }
+
+    if (chunk.length >= 300) chunks.push(chunk);
+
+    if (end >= clean.length) break;
+    start = Math.max(end - overlap, start + 1);
   }
 
-  const data = await request.json().catch(() => ({}));
+  // Safety cap:
+  // 160 chunks x ~2.8k chars is enough for most biomedical full texts
+  // and prevents Cloudflare Worker / D1 / Vectorize burst failures.
+  return chunks.slice(0, 160);
+}
 
-  const titleInput = String(data.title || "").trim();
-  const sourceUrlInput = String(data.sourceUrl || data.articleLink || "").trim();
-  const pdfLinkInput = String(data.pdfLink || "").trim();
-  const fileName = String(data.fileName || "full-text-file").trim();
-  const sourceType = String(data.sourceType || "full_text_pdf_or_txt").trim();
-  const rawText = String(data.text || data.extractedText || "").trim();
-
-  if (!titleInput && !sourceUrlInput && !pdfLinkInput) {
-    return json({
-      ok: false,
-      error: "Please provide at least a paper title, article URL, or PDF link so I can connect the full text to the correct paper."
-    }, 400);
+async function upsertFullTextChunkVectors({ postId, title, sourceUrl, pdfLink, fileName, contentHash, chunks }, env) {
+  if (!env.AI || !env.VECTORIZE) {
+    return false;
   }
 
-  if (!rawText || rawText.length < 500) {
-    return json({
-      ok: false,
-      error: "Full text is too short. If this PDF is scanned images, use a text-based PDF or OCR it first."
-    }, 400);
+  const pending = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const text = chunks[i];
+    const vectorId = `${postId}:fulltext:${String(contentHash || "").slice(0, 16)}:${i}`;
+
+    const embedding = await createEmbedding(text, env);
+
+    pending.push({
+      id: vectorId,
+      values: embedding,
+      metadata: {
+        post_id: postId,
+        chunk_index: i,
+        title,
+        source_url: sourceUrl || "",
+        pdf_link: pdfLink || "",
+        file_name: fileName || "",
+        content_hash: contentHash || "",
+        source_type: "full_text_chunk",
+        text
+      }
+    });
+
+    if (pending.length >= 24) {
+      await env.VECTORIZE.upsert(pending.splice(0, pending.length));
+    }
+
+    // Avoid burst limits during large batch imports.
+    await sleep(20);
   }
 
+  if (pending.length) {
+    await env.VECTORIZE.upsert(pending);
+  }
+
+  return true;
+}
+
+async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInput, pdfLinkInput, env }) {
   const normalizedSourceUrl = normalizeUrlForMatch(sourceUrlInput);
   const normalizedPdfLink = normalizeUrlForMatch(pdfLinkInput);
 
@@ -1303,6 +1447,7 @@ async function adminImportResearchFullText(request, env) {
 
   if (!matched && titleInput) {
     const safeLikeTitle = titleInput.slice(0, 120).replace(/[%_]/g, " ").trim();
+
     if (safeLikeTitle.length >= 12) {
       matched = await env.DB.prepare(`
         SELECT id, post_id, title, source_url, pdf_link, content
@@ -1343,53 +1488,29 @@ async function adminImportResearchFullText(request, env) {
     }
   }
 
-  const finalTitle = matched?.title || titleInput || fileName.replace(/\.[^.]+$/, "");
-  const finalSourceUrl = matched?.source_url || sourceUrlInput || "";
-  const finalPdfLink = matched?.pdf_link || pdfLinkInput || "";
-  const postId = matched?.post_id || "fulltext_" + await sha256Hex(`${finalTitle}:${finalSourceUrl}:${fileName}`);
+  return matched;
+}
 
-  const existingContent = String(matched?.content || "").trim();
-  const cleanedFullText = cleanUploadedFullText(rawText);
-  const fullTextHash = await sha256Hex(cleanedFullText.replace(/\s+/g, " "));
-
-  const duplicateRow = await env.DB.prepare(`
-    SELECT post_id, title, source_url, pdf_link
+async function ensureMinimalResearchKnowledgeForFullText({ postId, title, sourceUrl, pdfLink, fileName, contentHash, env }) {
+  const existing = await env.DB.prepare(`
+    SELECT post_id
     FROM research_knowledge
-    WHERE content LIKE ?
-    ORDER BY datetime(updated_at) DESC
+    WHERE post_id = ?
     LIMIT 1
-  `).bind(`%Full text content hash: ${fullTextHash}%`).first();
+  `).bind(postId).first();
 
-  if (duplicateRow) {
-    return json({
-      ok: true,
-      duplicate: true,
-      duplicatePostId: duplicateRow.post_id || "",
-      duplicateTitle: duplicateRow.title || "",
-      title: duplicateRow.title || finalTitle,
-      fullTextCharacters: cleanedFullText.length,
-      message: "This exact PDF/TXT full text was already imported, so it was skipped."
-    });
-  }
+  if (existing) return;
 
-  const fullTextBlock = [
+  const content = [
     "Paper_Talk DB Research Paper",
-    "Knowledge source: FULL_TEXT_PDF_UPLOAD",
-    "Important: This block is paper evidence. Use it before abstract/metadata when answering questions about this paper.",
-    `Full text file: ${fileName}`,
-    `Full text source type: ${sourceType}`,
-    `Full text extracted characters: ${rawText.length}`,
-    `Full text stored characters: ${cleanedFullText.length}`,
-    `Full text content hash: ${fullTextHash}`,
-    `Title: ${finalTitle}`,
-    finalSourceUrl ? `Article link: ${finalSourceUrl}` : "",
-    finalPdfLink ? `PDF link: ${finalPdfLink}` : "",
-    "",
-    "Uploaded full text:",
-    cleanedFullText
+    "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
+    "Important: Full text is stored separately in paper_fulltext_chunks. Retrieve chunks by post_id when answering.",
+    `Title: ${title}`,
+    sourceUrl ? `Article link: ${sourceUrl}` : "",
+    pdfLink ? `PDF link: ${pdfLink}` : "",
+    fileName ? `Full text file: ${fileName}` : "",
+    contentHash ? `Full text content hash: ${contentHash}` : ""
   ].filter(Boolean).join("\n");
-
-  const mergedContent = mergeFullTextIntoKnowledge(existingContent, fullTextBlock);
 
   await env.DB.prepare(`
     INSERT INTO research_knowledge (
@@ -1411,35 +1532,284 @@ async function adminImportResearchFullText(request, env) {
       status = 'indexed',
       updated_at = CURRENT_TIMESTAMP
   `).bind(
-    matched?.id || crypto.randomUUID(),
+    crypto.randomUUID(),
     postId,
-    finalTitle,
-    finalSourceUrl,
-    finalPdfLink,
-    mergedContent
+    title,
+    sourceUrl || "",
+    pdfLink || "",
+    content
   ).run();
+}
 
-  await upsertResearchKnowledgeVectors({
+async function adminImportResearchFullText(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  await ensurePaperFullTextTables(env);
+
+  const data = await request.json().catch(() => ({}));
+
+  const titleInput = String(data.title || "").trim();
+  const sourceUrlInput = String(data.sourceUrl || data.articleLink || "").trim();
+  const pdfLinkInput = String(data.pdfLink || "").trim();
+  const fileName = String(data.fileName || "full-text-file").trim();
+  const sourceType = String(data.sourceType || "full_text_pdf_or_txt").trim();
+  const rawText = String(data.text || data.extractedText || "").trim();
+
+  if (!titleInput && !sourceUrlInput && !pdfLinkInput) {
+    return json({
+      ok: false,
+      error: "Please provide at least a paper title, article URL, or PDF link so I can connect the full text to the correct paper."
+    }, 400);
+  }
+
+  if (!rawText || rawText.length < 500) {
+    return json({
+      ok: false,
+      error: "Full text is too short. If this PDF is scanned images, use a text-based PDF or OCR it first."
+    }, 400);
+  }
+
+  const matched = await findResearchKnowledgeMatchForFullText({
+    titleInput,
+    sourceUrlInput,
+    pdfLinkInput,
+    env
+  });
+
+  const finalTitle = matched?.title || titleInput || fileName.replace(/\.[^.]+$/, "");
+  const finalSourceUrl = matched?.source_url || sourceUrlInput || "";
+  const finalPdfLink = matched?.pdf_link || pdfLinkInput || "";
+  const postId = matched?.post_id || "fulltext_" + await sha256Hex(`${finalTitle}:${finalSourceUrl}:${fileName}`);
+
+  const cleanedFullText = cleanUploadedFullText(rawText);
+  const fullTextHash = await sha256Hex(cleanedFullText.replace(/\s+/g, " "));
+
+  const duplicateRow = await env.DB.prepare(`
+    SELECT post_id, title, file_name, content_hash
+    FROM paper_fulltext_chunks
+    WHERE content_hash = ?
+    LIMIT 1
+  `).bind(fullTextHash).first();
+
+  if (duplicateRow) {
+    return json({
+      ok: true,
+      duplicate: true,
+      duplicatePostId: duplicateRow.post_id || "",
+      duplicateTitle: duplicateRow.title || "",
+      title: duplicateRow.title || finalTitle,
+      fileName: duplicateRow.file_name || fileName,
+      fullTextCharacters: cleanedFullText.length,
+      message: "This exact PDF/TXT full text was already imported, so it was skipped."
+    });
+  }
+
+  const chunks = chunkFullTextForStorage(cleanedFullText);
+
+  if (!chunks.length) {
+    return json({
+      ok: false,
+      error: "No usable full-text chunks were created. OCR or convert this PDF to text first."
+    }, 400);
+  }
+
+  await ensureMinimalResearchKnowledgeForFullText({
     postId,
     title: finalTitle,
     sourceUrl: finalSourceUrl,
     pdfLink: finalPdfLink,
-    content: mergedContent
-  }, env);
+    fileName,
+    contentHash: fullTextHash,
+    env
+  });
+
+  const vectorIds = chunks.map((_, index) => `${postId}:fulltext:${fullTextHash.slice(0, 16)}:${index}`);
+
+  for (let i = 0; i < chunks.length; i++) {
+    await env.DB.prepare(`
+      INSERT INTO paper_fulltext_chunks (
+        id,
+        post_id,
+        title,
+        source_url,
+        pdf_link,
+        file_name,
+        source_type,
+        content_hash,
+        chunk_index,
+        vector_id,
+        text,
+        text_length
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      `${postId}:fulltext:${fullTextHash.slice(0, 16)}:${i}`,
+      postId,
+      finalTitle,
+      finalSourceUrl,
+      finalPdfLink,
+      fileName,
+      sourceType,
+      fullTextHash,
+      i,
+      vectorIds[i],
+      chunks[i],
+      chunks[i].length
+    ).run();
+  }
+
+  let vectorIndexed = false;
+  try {
+    vectorIndexed = await upsertFullTextChunkVectors({
+      postId,
+      title: finalTitle,
+      sourceUrl: finalSourceUrl,
+      pdfLink: finalPdfLink,
+      fileName,
+      contentHash: fullTextHash,
+      chunks
+    }, env);
+  } catch (error) {
+    // D1 chunk storage should still succeed even if Vectorize temporarily fails.
+    vectorIndexed = false;
+  }
 
   return json({
     ok: true,
     matchedExistingPaper: Boolean(matched),
     postId,
     title: finalTitle,
+    fileName,
     fullTextCharacters: cleanedFullText.length,
+    chunks: chunks.length,
     fullTextHash,
     duplicate: false,
-    message: matched
-      ? "Full text PDF/TXT was attached to the existing Paper_Talk research paper and re-indexed."
-      : "Full text PDF/TXT was imported as a new Paper_Talk research knowledge record and indexed."
+    vectorIndexed,
+    message: vectorIndexed
+      ? "Full text PDF/TXT was stored as searchable chunks and indexed in Vectorize."
+      : "Full text PDF/TXT was stored as searchable chunks. Vectorize indexing was skipped or failed, but D1 keyword retrieval can still use it."
   });
 }
+
+
+
+
+async function adminListResearchFullText(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  await ensurePaperFullTextTables(env);
+
+  const url = new URL(request.url);
+  const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
+
+  let rows;
+
+  if (q) {
+    rows = await env.DB.prepare(`
+      SELECT
+        post_id,
+        title,
+        file_name,
+        source_url,
+        pdf_link,
+        content_hash,
+        COUNT(*) AS chunks,
+        SUM(text_length) AS characters,
+        MAX(created_at) AS created_at
+      FROM paper_fulltext_chunks
+      WHERE LOWER(title) LIKE ?
+         OR LOWER(file_name) LIKE ?
+         OR LOWER(text) LIKE ?
+      GROUP BY post_id, file_name, content_hash
+      ORDER BY datetime(created_at) DESC
+      LIMIT 300
+    `).bind(`%${q}%`, `%${q}%`, `%${q}%`).all();
+  } else {
+    rows = await env.DB.prepare(`
+      SELECT
+        post_id,
+        title,
+        file_name,
+        source_url,
+        pdf_link,
+        content_hash,
+        COUNT(*) AS chunks,
+        SUM(text_length) AS characters,
+        MAX(created_at) AS created_at
+      FROM paper_fulltext_chunks
+      GROUP BY post_id, file_name, content_hash
+      ORDER BY datetime(created_at) DESC
+      LIMIT 300
+    `).all();
+  }
+
+  return json({
+    ok: true,
+    files: rows.results || []
+  });
+}
+
+async function adminDeleteResearchFullText(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  await ensurePaperFullTextTables(env);
+
+  const data = await request.json().catch(() => ({}));
+  const postId = String(data.postId || "").trim();
+  const contentHash = String(data.contentHash || "").trim();
+  const fileName = String(data.fileName || "").trim();
+
+  if (!postId || !contentHash) {
+    return json({
+      ok: false,
+      error: "postId and contentHash are required."
+    }, 400);
+  }
+
+  const chunkRows = await env.DB.prepare(`
+    SELECT vector_id, chunk_index
+    FROM paper_fulltext_chunks
+    WHERE post_id = ?
+      AND content_hash = ?
+  `).bind(postId, contentHash).all();
+
+  await env.DB.prepare(`
+    DELETE FROM paper_fulltext_chunks
+    WHERE post_id = ?
+      AND content_hash = ?
+  `).bind(postId, contentHash).run();
+
+  if (env.VECTORIZE) {
+    try {
+      const ids = (chunkRows.results || [])
+        .map(row => row.vector_id || `${postId}:fulltext:${contentHash.slice(0, 16)}:${row.chunk_index}`)
+        .filter(Boolean);
+
+      if (ids.length) {
+        await env.VECTORIZE.deleteByIds(ids);
+      }
+    } catch {
+      // Ignore Vectorize cleanup errors so D1 deletion still succeeds.
+    }
+  }
+
+  return json({
+    ok: true,
+    deleted: true,
+    postId,
+    fileName,
+    contentHash,
+    deletedChunks: chunkRows.results?.length || 0,
+    message: "Stored full text PDF/TXT chunks were deleted."
+  });
+}
+
 
 function normalizeTextForSearch(value) {
   return String(value || "")
@@ -4973,6 +5343,93 @@ async function deleteGptThread(request, env) {
   return json({ ok: true });
 }
 
+
+async function searchPaperFullTextChunks(query, env, limit = 10) {
+  const userQuery = String(query || "").trim();
+  if (!userQuery) return [];
+
+  try {
+    await ensurePaperFullTextTables(env);
+  } catch {
+    return [];
+  }
+
+  const tokens = getImportantSearchTokens(userQuery).slice(0, 8);
+  const phrases = [
+    ...extractScientificKeyPhrases(userQuery),
+    ...extractAutoResearchKeywords(userQuery)
+  ]
+    .map(v => cleanRetrievalPhrase(v))
+    .filter(v => v.length >= 3)
+    .slice(0, 10);
+
+  const terms = [...new Set([...phrases, ...tokens])].slice(0, 12);
+
+  if (!terms.length) return [];
+
+  const clauses = [];
+  const params = [];
+
+  for (const term of terms) {
+    clauses.push(`(
+      LOWER(title) LIKE ?
+      OR LOWER(file_name) LIKE ?
+      OR LOWER(text) LIKE ?
+    )`);
+
+    const like = `%${term.toLowerCase()}%`;
+    params.push(like, like, like);
+  }
+
+  const result = await env.DB.prepare(`
+    SELECT
+      post_id,
+      title,
+      source_url,
+      pdf_link,
+      file_name,
+      chunk_index,
+      text,
+      text_length,
+      created_at
+    FROM paper_fulltext_chunks
+    WHERE ${clauses.join(" OR ")}
+    ORDER BY
+      CASE
+        WHEN LOWER(title) LIKE ? THEN 0
+        WHEN LOWER(text) LIKE ? THEN 1
+        ELSE 2
+      END,
+      text_length DESC
+    LIMIT ?
+  `).bind(
+    ...params,
+    `%${terms[0].toLowerCase()}%`,
+    `%${terms[0].toLowerCase()}%`,
+    limit
+  ).all();
+
+  return (result.results || []).map(row => ({
+    post_id: row.post_id,
+    title: cleanBibtexText(row.title),
+    source_url: row.source_url || "",
+    pdf_link: row.pdf_link || "",
+    content: [
+      "Paper_Talk DB Research Paper",
+      "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
+      `Title: ${row.title || ""}`,
+      row.file_name ? `Full text file: ${row.file_name}` : "",
+      `Chunk index: ${row.chunk_index}`,
+      "",
+      row.text || ""
+    ].filter(Boolean).join("\n"),
+    matched_chunk: cleanBibtexText(row.text || ""),
+    from_fulltext_chunk_search: true,
+    from_direct_db_search: true
+  }));
+}
+
+
 async function searchResearchKnowledge(query, env) {
   const userQuery = String(query || "").trim();
 
@@ -5006,6 +5463,15 @@ async function searchResearchKnowledge(query, env) {
   // then search research_knowledge by title/content before and after Vectorize.
   const keyPhrases = extractScientificKeyPhrases(userQuery);
   const autoKeywords = extractAutoResearchKeywords(userQuery);
+
+  // v44 chunked full-text search:
+  // Search uploaded PDF/TXT chunks separately from research_knowledge.content.
+  // This lets Paper_Talk scale to 1000+ PDFs without putting full text into one DB row.
+  try {
+    allResults.push(...await searchPaperFullTextChunks(userQuery, env, 12));
+  } catch {
+    // Continue.
+  }
 
   // A) Exact phrase/entity D1 search first. This catches terms like:
   // RNA velocity, scVelo, velocyto, spatial transcriptomics, single-cell RNA-seq, TFvelo, SIRV, Visium.
@@ -5835,7 +6301,7 @@ async function vectorSemanticSearch(query, env) {
   const queryEmbedding = await createEmbedding(query, env);
 
   const vectorResult = await env.VECTORIZE.query(queryEmbedding, {
-    topK: 18,
+    topK: 24,
     returnMetadata: "all"
   });
 
@@ -5846,12 +6312,43 @@ async function vectorSemanticSearch(query, env) {
   for (const match of matches) {
     const metadata = match.metadata || {};
     const postId = metadata.post_id;
+    const sourceType = metadata.source_type || "";
 
-    if (!postId || seen.has(postId)) continue;
+    if (!postId) continue;
+
+    if (sourceType === "full_text_chunk") {
+      const key = `${postId}:fulltext:${metadata.content_hash || ""}:${metadata.chunk_index || ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      results.push({
+        post_id: postId,
+        title: cleanBibtexText(metadata.title || ""),
+        source_url: metadata.source_url || "",
+        pdf_link: metadata.pdf_link || "",
+        content: [
+          "Paper_Talk DB Research Paper",
+          "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
+          `Title: ${metadata.title || ""}`,
+          metadata.file_name ? `Full text file: ${metadata.file_name}` : "",
+          `Chunk index: ${metadata.chunk_index ?? ""}`,
+          "",
+          metadata.text || ""
+        ].filter(Boolean).join("\n"),
+        matched_chunk: cleanBibtexText(metadata.text || ""),
+        similarity_score: match.score || 0,
+        from_vector_search: true,
+        from_fulltext_chunk_search: true
+      });
+
+      continue;
+    }
+
+    if (seen.has(postId)) continue;
     seen.add(postId);
 
     const paper = await env.DB.prepare(`
-      SELECT title, source_url, pdf_link, content
+      SELECT post_id, title, source_url, pdf_link, content
       FROM research_knowledge
       WHERE post_id = ?
         AND status = 'indexed'
@@ -5871,6 +6368,8 @@ async function vectorSemanticSearch(query, env) {
 
   return results;
 }
+
+
 
 async function directResearchKnowledgeSearch(query, env) {
   const tokens = getImportantSearchTokens(query);
@@ -6035,9 +6534,12 @@ function mergeKnowledgeResults(items) {
     const item = normalizeKnowledgeItem(rawItem);
     if (!item) continue;
 
-    const key =
-      normalizeSearchText(item.title || "") ||
-      normalizeSearchText(item.source_url || item.pdf_link || item.post_id || "");
+    const key = item.from_fulltext_chunk_search
+      ? normalizeSearchText(`${item.post_id || ""}:${item.title || ""}:${item.matched_chunk || item.content || ""}`.slice(0, 260))
+      : (
+        normalizeSearchText(item.title || "") ||
+        normalizeSearchText(item.source_url || item.pdf_link || item.post_id || "")
+      );
 
     if (!key || seen.has(key)) continue;
 
