@@ -37,6 +37,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v31: Adds Admin upload for Scientific Thinking Logic PDF/TXT; extracted text is indexed as reasoning framework, not paper evidence.
 - v32: Thinking Logic PDF/TXT is distilled into compact reasoning rules before indexing. GPT uses it silently without changing the normal Paper_Talk research-mentor answer style.
 - v33: CPU-safe Thinking Logic: old full-PDF logic rows are deleted on import, chat retrieves only the latest compact distilled framework, and normal paper searches exclude Thinking Logic rows.
+- v37: Auto-detects user-requested output formats such as "- - - -", "4 lines", "4줄", or bullet requests and forces the final answer to match that exact format.
 */
 
 export default {
@@ -4134,18 +4135,22 @@ ${autoIntent.retrieval_query}`
   // such as "1. Direct answer / 2. Relevant papers / 3. Paper-by-paper findings".
   // If that happens, rewrite the answer into the preferred calm explanatory research style
   // before saving it or showing it to the user.
-  assistantText = await rewriteReportStyleAnswerIfNeeded({
-    originalAnswer: assistantText,
-    userMessage: message,
-    context,
-    env
-  });
+  if (!detectStrictUserOutputFormat(message).strict) {
+    assistantText = await rewriteReportStyleAnswerIfNeeded({
+      originalAnswer: assistantText,
+      userMessage: message,
+      context,
+      env
+    });
+  }
 
   assistantText = assistantText
     .replace(/\*\*/g, "")
     .replace(/__/g, "")
     .replace(/#/g, "")
     .replace(/\*/g, "");
+
+  assistantText = enforceStrictUserOutputFormat(assistantText, message);
 
   const assistantFailed =
     /^OpenAI API timeout/i.test(assistantText) ||
@@ -6662,6 +6667,103 @@ function convertReportStyleAnswerLocally(answer) {
 }
 
 
+
+function detectStrictUserOutputFormat(userMessage) {
+  const text = String(userMessage || "");
+  const standaloneDashCount = (text.match(/^\s*-\s*$/gm) || []).length;
+
+  const explicitCountMatch = text.match(/(?:^|[^0-9])(\d{1,2})\s*(?:줄|줄로|lines?|sentences?|문장|points?|bullets?|개|항목)/i);
+  const explicitCount = explicitCountMatch ? Math.max(1, Math.min(12, Number(explicitCountMatch[1] || 0))) : 0;
+
+  const asksBullet =
+    standaloneDashCount >= 2 ||
+    /bullet|bullets|point|points|목록|항목|불릿|하이픈|dash|dashes/i.test(text) ||
+    /아래\s*처럼|이런\s*식|이렇게|형식|format/i.test(text) && standaloneDashCount >= 1;
+
+  const asksLineCount =
+    explicitCount > 0 ||
+    /간략하게|짧게|brief|concise|short/i.test(text) && /줄|line|sentence|point|bullet/i.test(text);
+
+  const strict = asksBullet || asksLineCount;
+
+  let count = explicitCount || 0;
+  if (!count && standaloneDashCount >= 2) count = Math.min(standaloneDashCount, 12);
+
+  return {
+    strict,
+    bullet: asksBullet || standaloneDashCount >= 2,
+    count,
+    wantsEnglish: /영어|English/i.test(text),
+    wantsKorean: /한국어|Korean/i.test(text)
+  };
+}
+
+function buildUserRequestedFormatInstruction(userMessage) {
+  const format = detectStrictUserOutputFormat(userMessage);
+  if (!format.strict) return "";
+
+  const countRule = format.count
+    ? `- Return exactly ${format.count} lines/items.`
+    : `- Return only the requested number of lines/items if the user specified it; otherwise keep it very concise.`;
+
+  const bulletRule = format.bullet
+    ? `- Each line/item MUST begin with a plain hyphen and one space: "- ".`
+    : `- Use short separate lines, not a long paragraph.`;
+
+  const languageRule = format.wantsEnglish
+    ? `- The user requested English, so answer in English even if part of the prompt is Korean.`
+    : format.wantsKorean
+      ? `- The user requested Korean, so answer in Korean.`
+      : `- Use the user's requested language.`;
+
+  return `
+USER-REQUESTED OUTPUT FORMAT OVERRIDE
+The user explicitly requested a specific output format. This overrides the normal Paper_Talk paragraph style.
+${countRule}
+${bulletRule}
+- Do NOT add an introduction.
+- Do NOT add a conclusion.
+- Do NOT add headings.
+- Do NOT explain that you are following the format.
+- Maximum one sentence per line/item.
+${languageRule}
+`.trim();
+}
+
+function enforceStrictUserOutputFormat(answer, userMessage) {
+  const format = detectStrictUserOutputFormat(userMessage);
+  if (!format.strict) return String(answer || "").trim();
+
+  let text = String(answer || "")
+    .replace(/\r/g, "\n")
+    .replace(/^\s*(Here are|Sure|물론입니다|네[,，]?|아래는).*?:\s*/i, "")
+    .trim();
+
+  let items = text
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line.replace(/^[-•*]\s*/, "").replace(/^\d+[.)]\s*/, "").trim())
+    .filter(Boolean);
+
+  if (items.length <= 1) {
+    const sentenceMatches = text.replace(/\n+/g, " ").match(/[^.!?。！？]+[.!?。！？]?/g) || [];
+    items = sentenceMatches
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+  }
+
+  if (!items.length) return text;
+
+  const count = format.count || Math.min(items.length, 4);
+  const picked = items.slice(0, count);
+
+  return picked
+    .map(item => item.replace(/\s+/g, " ").trim())
+    .map(item => `- ${item}`)
+    .join("\n");
+}
+
 async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
   context = mergeKnowledgeResults(Array.isArray(context) ? context : [])
     .filter(item => !isThinkingLogicKnowledgeItem(item))
@@ -6686,6 +6788,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
     : [];
 
   const thinkingLogicContext = buildThinkingLogicContext(thinkingLogicFrameworks);
+  const requestedFormatInstruction = buildUserRequestedFormatInstruction(userMessage);
 
   const contextText = hasContext
     ? context.slice(0, 10).map((item, index) => {
@@ -6825,6 +6928,8 @@ Do not use markdown symbols such as #, *, or **.
 Use short paragraphs.
 Use bullets only for concrete research questions, candidate project ideas, or validation steps. Do not use bullets to list papers. If a retrieved paper is relevant, mention it naturally inside a paragraph.
 Headings are optional. If used, make them natural Korean headings, not report labels.
+
+${requestedFormatInstruction || ""}
       `.trim()
     },
     {
