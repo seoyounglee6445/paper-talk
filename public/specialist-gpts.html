@@ -13,20 +13,20 @@ gtag('js', new Date());
 gtag('config', 'G-WWSD3F58L6');
 </script>
 
-<title>Research GPTs - Paper_Talk</title>
+<title>Specialist GPTs - Paper_Talk</title>
 <link rel="stylesheet" href="/style.css">
 
 <style>
-.research-gpts-hero {
+.specialist-gpts-hero {
   margin-top: 32px;
   margin-bottom: 30px;
 }
 
-.research-gpts-hero h1 {
+.specialist-gpts-hero h1 {
   margin-bottom: 12px;
 }
 
-.research-gpts-hero p {
+.specialist-gpts-hero p {
   max-width: 760px;
   line-height: 1.7;
 }
@@ -72,13 +72,14 @@ gtag('config', 'G-WWSD3F58L6');
   font-weight: 700;
 }
 
-.gpt-card .coming-tag {
-  background: #f1f5f9;
-  color: #64748b;
+.clickable-card {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.gpt-card .btn {
-  margin-top: 12px;
+.clickable-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 22px 48px rgba(0,0,0,0.08);
 }
 
 .sample-box {
@@ -100,16 +101,19 @@ gtag('config', 'G-WWSD3F58L6');
   line-height: 1.5;
 }
 
-.disabled-btn {
-  display: inline-block;
-  margin-top: 12px;
-  padding: 10px 16px;
-  border-radius: 999px;
-  background: #e5e7eb;
+.coming-card {
+  display: flex;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: #f8fafc;
+  border-color: #dbe4ff;
+}
+
+.coming-card h2 {
+  margin: 0;
   color: #64748b;
-  font-weight: 700;
-  text-decoration: none;
-  cursor: not-allowed;
 }
 
 @media (max-width: 720px) {
@@ -127,7 +131,7 @@ gtag('config', 'G-WWSD3F58L6');
   <a href="/">Home</a>
   <a href="/research.html">Research Paper</a>
   <a href="/study.html">Study Materials</a>
-  <a href="/research-gpts.html">Research GPTs</a>
+  <a href="/specialist-gpts.html">Specialist GPTs</a>
   <a href="/community.html">Community</a>
   <a href="/career.html">Career</a>
  </nav>
@@ -135,8 +139,8 @@ gtag('config', 'G-WWSD3F58L6');
 
 <main class="container">
 
-  <section class="research-gpts-hero">
-    <h1>Research GPTs</h1>
+  <section class="specialist-gpts-hero">
+    <h1>Specialist GPTs</h1>
     <p>
       Specialized GPT workspaces built on curated scientific knowledge.
       Each GPT is designed around a specific research theme so researchers can ask focused scientific questions,
@@ -148,7 +152,10 @@ gtag('config', 'G-WWSD3F58L6');
     <h2>Available GPT</h2>
 
     <div class="gpt-grid">
-      <article class="gpt-card">
+      <article
+        class="gpt-card clickable-card"
+        onclick="location.href='/visium-gpt.html?gpt=neuroscience'"
+      >
         <span class="tag">Available</span>
         <h2>🧠 Neuroscience GPT</h2>
         <p>
@@ -171,8 +178,6 @@ gtag('config', 'G-WWSD3F58L6');
           <div>How does microglia contribute to neurodegeneration?</div>
           <div>What research directions connect aging and neuroscience?</div>
         </div>
-
-        <a class="btn" href="/visium-gpt.html?gpt=neuroscience">Open GPT</a>
       </article>
     </div>
   </section>
@@ -181,32 +186,20 @@ gtag('config', 'G-WWSD3F58L6');
     <h2>Coming Soon</h2>
 
     <div class="gpt-grid">
-      <article class="gpt-card">
-        <span class="tag coming-tag">Coming Soon</span>
-        <h2>🧬 Mitochondria GPT</h2>
-        <p>For questions about mitochondrial biology, metabolism, aging, and disease.</p>
-        <span class="disabled-btn">Coming Soon</span>
+      <article class="gpt-card coming-card">
+        <h2>🚀 Coming Soon</h2>
       </article>
 
-      <article class="gpt-card">
-        <span class="tag coming-tag">Coming Soon</span>
-        <h2>🔬 Single-cell GPT</h2>
-        <p>For single-cell RNA-seq, cell states, trajectories, annotation, and omics interpretation.</p>
-        <span class="disabled-btn">Coming Soon</span>
+      <article class="gpt-card coming-card">
+        <h2>🚀 Coming Soon</h2>
       </article>
 
-      <article class="gpt-card">
-        <span class="tag coming-tag">Coming Soon</span>
-        <h2>🗺️ Spatial Biology GPT</h2>
-        <p>For spatial transcriptomics, cell neighborhoods, tissue architecture, and spatial AI.</p>
-        <span class="disabled-btn">Coming Soon</span>
+      <article class="gpt-card coming-card">
+        <h2>🚀 Coming Soon</h2>
       </article>
 
-      <article class="gpt-card">
-        <span class="tag coming-tag">Coming Soon</span>
-        <h2>🧪 Cancer Genomics GPT</h2>
-        <p>For cancer genomics, tumor evolution, biomarkers, and translational research ideas.</p>
-        <span class="disabled-btn">Coming Soon</span>
+      <article class="gpt-card coming-card">
+        <h2>🚀 Coming Soon</h2>
       </article>
     </div>
   </section>
