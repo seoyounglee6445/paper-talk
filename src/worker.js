@@ -40,6 +40,8 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v37: Auto-detects user-requested output formats such as "- - - -", "4 lines", "4줄", or bullet requests and forces the final answer to match that exact format.
 - v38: Thread-aware paper follow-up fix. If a user first provides a paper URL/title and then asks follow-up questions like "Key takeaway" or "전체 논문", GPT reuses the same paper instead of retrieving unrelated papers.
 - v40: Strict active-paper lock. When a URL/title exists in the current thread, follow-up turns use ONLY that exact paper context and block unrelated Vectorize/keyword retrieval from entering the answer.
+- v41: Related-paper exception + truthful full-text access. Active-paper follow-ups stay locked, but requests for similar/related/other papers search Paper_Talk DB using the active paper as the seed. GPT must explain that publisher full text is read only if it is stored in DB or openly fetchable by the Worker; the user browser/IP/institution access is not available to the Worker.
+- v42: Adds Admin Research Paper Full Text PDF/TXT import. Browser-extracted PDF/TXT text is attached to the matched research_knowledge paper as FULL_TEXT_PDF_UPLOAD evidence, reindexed into Vectorize, and preferred before abstracts/metadata in GPT excerpts.
 */
 
 export default {
@@ -103,6 +105,10 @@ export default {
 
       if (pathname === "/api/admin/research/import-linkedin-csv" && request.method === "POST") {
         return adminImportLinkedInCsv(request, env);
+      }
+
+      if (pathname === "/api/admin/research/fulltext/import" && request.method === "POST") {
+        return adminImportResearchFullText(request, env);
       }
 
       if (pathname === "/api/admin/thinking-logic/import" && request.method === "POST") {
@@ -1223,6 +1229,261 @@ async function adminCreateResearchPaper(request, env) {
     message: "Research paper saved and added to Paper_Talk GPT knowledge base."
   });
 }
+
+
+async function adminImportResearchFullText(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const data = await request.json().catch(() => ({}));
+
+  const titleInput = String(data.title || "").trim();
+  const sourceUrlInput = String(data.sourceUrl || data.articleLink || "").trim();
+  const pdfLinkInput = String(data.pdfLink || "").trim();
+  const fileName = String(data.fileName || "full-text-file").trim();
+  const sourceType = String(data.sourceType || "full_text_pdf_or_txt").trim();
+  const rawText = String(data.text || data.extractedText || "").trim();
+
+  if (!titleInput && !sourceUrlInput && !pdfLinkInput) {
+    return json({
+      ok: false,
+      error: "Please provide at least a paper title, article URL, or PDF link so I can connect the full text to the correct paper."
+    }, 400);
+  }
+
+  if (!rawText || rawText.length < 500) {
+    return json({
+      ok: false,
+      error: "Full text is too short. If this PDF is scanned images, use a text-based PDF or OCR it first."
+    }, 400);
+  }
+
+  const normalizedSourceUrl = normalizeUrlForMatch(sourceUrlInput);
+  const normalizedPdfLink = normalizeUrlForMatch(pdfLinkInput);
+
+  let matched = null;
+
+  if (sourceUrlInput || pdfLinkInput) {
+    matched = await env.DB.prepare(`
+      SELECT id, post_id, title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE status = 'indexed'
+        AND (
+          source_url = ?
+          OR pdf_link = ?
+          OR source_url = ?
+          OR pdf_link = ?
+          OR REPLACE(source_url, '/', '') = REPLACE(?, '/', '')
+          OR REPLACE(pdf_link, '/', '') = REPLACE(?, '/', '')
+        )
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 1
+    `).bind(
+      sourceUrlInput,
+      pdfLinkInput,
+      normalizedSourceUrl,
+      normalizedPdfLink,
+      normalizedSourceUrl,
+      normalizedPdfLink
+    ).first();
+  }
+
+  if (!matched && titleInput) {
+    matched = await env.DB.prepare(`
+      SELECT id, post_id, title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE status = 'indexed'
+        AND lower(title) = lower(?)
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 1
+    `).bind(titleInput).first();
+  }
+
+  if (!matched && titleInput) {
+    const safeLikeTitle = titleInput.slice(0, 120).replace(/[%_]/g, " ").trim();
+    if (safeLikeTitle.length >= 12) {
+      matched = await env.DB.prepare(`
+        SELECT id, post_id, title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND title LIKE ?
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 1
+      `).bind(`%${safeLikeTitle}%`).first();
+    }
+  }
+
+  if (!matched && titleInput) {
+    const tokens = normalizeTextForSearch(titleInput)
+      .split(/\s+/)
+      .filter(token => token.length >= 5)
+      .slice(0, 8);
+
+    if (tokens.length) {
+      const rows = await env.DB.prepare(`
+        SELECT id, post_id, title, source_url, pdf_link, content
+        FROM research_knowledge
+        WHERE status = 'indexed'
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 500
+      `).all();
+
+      const scored = (rows.results || [])
+        .map(row => {
+          const haystack = normalizeTextForSearch(`${row.title || ""} ${row.content || ""}`);
+          const score = tokens.reduce((sum, token) => sum + (haystack.includes(token) ? 1 : 0), 0);
+          return { row, score };
+        })
+        .filter(item => item.score >= Math.min(4, Math.max(2, Math.ceil(tokens.length * 0.45))))
+        .sort((a, b) => b.score - a.score);
+
+      if (scored.length) matched = scored[0].row;
+    }
+  }
+
+  const finalTitle = matched?.title || titleInput || fileName.replace(/\.[^.]+$/, "");
+  const finalSourceUrl = matched?.source_url || sourceUrlInput || "";
+  const finalPdfLink = matched?.pdf_link || pdfLinkInput || "";
+  const postId = matched?.post_id || "fulltext_" + await sha256Hex(`${finalTitle}:${finalSourceUrl}:${fileName}`);
+
+  const existingContent = String(matched?.content || "").trim();
+  const cleanedFullText = cleanUploadedFullText(rawText);
+
+  const fullTextBlock = [
+    "Paper_Talk DB Research Paper",
+    "Knowledge source: FULL_TEXT_PDF_UPLOAD",
+    "Important: This block is paper evidence. Use it before abstract/metadata when answering questions about this paper.",
+    `Full text file: ${fileName}`,
+    `Full text source type: ${sourceType}`,
+    `Full text extracted characters: ${rawText.length}`,
+    `Full text stored characters: ${cleanedFullText.length}`,
+    `Title: ${finalTitle}`,
+    finalSourceUrl ? `Article link: ${finalSourceUrl}` : "",
+    finalPdfLink ? `PDF link: ${finalPdfLink}` : "",
+    "",
+    "Uploaded full text:",
+    cleanedFullText
+  ].filter(Boolean).join("\n");
+
+  const mergedContent = mergeFullTextIntoKnowledge(existingContent, fullTextBlock);
+
+  await env.DB.prepare(`
+    INSERT INTO research_knowledge (
+      id,
+      post_id,
+      title,
+      source_url,
+      pdf_link,
+      content,
+      status,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP)
+    ON CONFLICT(post_id) DO UPDATE SET
+      title = excluded.title,
+      source_url = excluded.source_url,
+      pdf_link = excluded.pdf_link,
+      content = excluded.content,
+      status = 'indexed',
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(
+    matched?.id || crypto.randomUUID(),
+    postId,
+    finalTitle,
+    finalSourceUrl,
+    finalPdfLink,
+    mergedContent
+  ).run();
+
+  await upsertResearchKnowledgeVectors({
+    postId,
+    title: finalTitle,
+    sourceUrl: finalSourceUrl,
+    pdfLink: finalPdfLink,
+    content: mergedContent
+  }, env);
+
+  return json({
+    ok: true,
+    matchedExistingPaper: Boolean(matched),
+    postId,
+    title: finalTitle,
+    fullTextCharacters: cleanedFullText.length,
+    message: matched
+      ? "Full text PDF/TXT was attached to the existing Paper_Talk research paper and re-indexed."
+      : "Full text PDF/TXT was imported as a new Paper_Talk research knowledge record and indexed."
+  });
+}
+
+function normalizeTextForSearch(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^a-z0-9가-힣]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeUrlForMatch(value) {
+  return String(value || "")
+    .trim()
+    .replace(/%28/g, "(")
+    .replace(/%29/g, ")")
+    .replace(/\/$/, "");
+}
+
+function cleanUploadedFullText(text) {
+  const cleaned = String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+
+  // Keep enough full text for retrieval while avoiding D1/Worker prompt and CPU failures.
+  // For very large PDFs, the first 350k characters usually preserves abstract, intro,
+  // methods, results, discussion, figure legends, and references.
+  return cleaned.slice(0, 350000);
+}
+
+function makeFullTextPreferredExcerpt(content) {
+  const text = cleanBibtexText(content || "");
+  const marker = "Knowledge source: FULL_TEXT_PDF_UPLOAD";
+  const idx = text.indexOf(marker);
+
+  if (idx < 0) return "";
+
+  const fullTextStart = text.indexOf("Uploaded full text:", idx);
+  const start = fullTextStart >= 0 ? fullTextStart : idx;
+  const section = text.slice(start);
+
+  const usefulMarkers = [
+    "Abstract", "Introduction", "Results", "Discussion", "Conclusion", "Methods", "Materials and methods", "Figure", "Fig."
+  ];
+
+  const lower = section.toLowerCase();
+  for (const m of usefulMarkers) {
+    const j = lower.indexOf(m.toLowerCase());
+    if (j >= 0) {
+      return section.slice(Math.max(0, j - 200), Math.min(section.length, j + 3200));
+    }
+  }
+
+  return section.slice(0, 3200);
+}
+
+function mergeFullTextIntoKnowledge(existingContent, fullTextBlock) {
+  const base = String(existingContent || "").trim();
+  const marker = "Knowledge source: FULL_TEXT_PDF_UPLOAD";
+
+  if (base.includes(marker)) {
+    const before = base.split("Paper_Talk DB Research Paper\nKnowledge source: FULL_TEXT_PDF_UPLOAD")[0].trim();
+    return [before, fullTextBlock].filter(Boolean).join("\n\n---\n\n");
+  }
+
+  return [base, fullTextBlock].filter(Boolean).join("\n\n---\n\n");
+}
+
 
 async function adminImportLinkedInCsv(request, env) {
   if (!isAdmin(request, env)) {
@@ -4154,6 +4415,56 @@ async function getStrictActivePaperContext({ message, recentMessages, env }) {
   return { activePaperContext: locked, activePaperQuery: explicitText, activePaperLocked: locked.length > 0 };
 }
 
+
+function isRelatedPaperDiscoveryRequest(message, autoIntent = {}) {
+  const text = [
+    message,
+    autoIntent?.interpreted_intent,
+    autoIntent?.retrieval_query,
+    autoIntent?.answer_style,
+    autoIntent?.question_type
+  ].filter(Boolean).join("\n").toLowerCase();
+
+  // v41: this is an intent detector, not the normal follow-up lock.
+  // When the user asks for similar/related/other papers, the active paper becomes the seed
+  // and Paper_Talk DB retrieval is allowed again. Ordinary follow-ups remain locked.
+  return /비슷한\s*논문|유사한\s*논문|관련\s*논문|다른\s*논문|또\s*(뭐|무엇)|같은\s*주제|후속\s*연구|비슷한\s*연구|관련\s*연구|similar\s+papers?|related\s+papers?|other\s+papers?|more\s+papers?|follow[-\s]?up\s+stud/i.test(text);
+}
+
+function buildRelatedPaperDiscoveryQuery(activePaperContext, message, autoIntent = {}) {
+  const active = Array.isArray(activePaperContext) && activePaperContext.length
+    ? activePaperContext[0]
+    : null;
+
+  const activeTitle = String(active?.title || "").trim();
+  const activeContent = String(active?.content || "").replace(/\s+/g, " ").slice(0, 2500);
+
+  return [
+    "Find Paper_Talk DB papers related to the active paper. Use the active paper as a seed, but retrieve OTHER related papers if available.",
+    activeTitle ? `Active paper title: ${activeTitle}` : "",
+    activeContent ? `Active paper excerpt: ${activeContent}` : "",
+    autoIntent?.retrieval_query ? `Auto retrieval query: ${autoIntent.retrieval_query}` : "",
+    `User request: ${message}`,
+    "Search concepts: disease, model system, method, gene/program, microenvironment, mechanism, validation, clinical implication."
+  ].filter(Boolean).join("\n\n");
+}
+
+function isSameKnowledgePaper(a, b) {
+  const ap = String(a?.post_id || "").trim();
+  const bp = String(b?.post_id || "").trim();
+  if (ap && bp && ap === bp) return true;
+
+  const at = normalizeSearchText(a?.title || "");
+  const bt = normalizeSearchText(b?.title || "");
+  if (at && bt && at === bt) return true;
+
+  const au = normalizeSearchText(`${a?.source_url || ""} ${a?.pdf_link || ""}`);
+  const bu = normalizeSearchText(`${b?.source_url || ""} ${b?.pdf_link || ""}`);
+  if (au && bu && (au.includes(bu) || bu.includes(au))) return true;
+
+  return false;
+}
+
 async function gptChat(request, env) {
   const user = await getSession(request, env);
   const isGuest = !user;
@@ -4276,18 +4587,32 @@ async function gptChat(request, env) {
 
   let context = [];
 
-  if (strictActivePaper.activePaperLocked) {
+  const relatedPaperDiscoveryRequest = strictActivePaper.activePaperLocked && isRelatedPaperDiscoveryRequest(message, autoIntent);
+
+  if (strictActivePaper.activePaperLocked && !relatedPaperDiscoveryRequest) {
     // v40 strict active-paper lock:
     // Follow-up turns must use only the exact paper selected by URL/title.
     // Do not merge broad Vectorize/keyword retrieval results, because that can pull unrelated papers.
     context = strictActivePaper.activePaperContext;
+  } else if (strictActivePaper.activePaperLocked && relatedPaperDiscoveryRequest) {
+    // v41 related-paper exception:
+    // The active paper remains the seed, but the user explicitly wants similar/related/other papers.
+    // In that case, allow Paper_Talk DB retrieval again and keep the active paper first.
+    const relatedQuery = buildRelatedPaperDiscoveryQuery(strictActivePaper.activePaperContext, message, autoIntent);
+    const relatedContext = (await searchResearchKnowledge(relatedQuery, env))
+      .filter(item => !isThinkingLogicKnowledgeItem(item))
+      .filter(item => !isSameKnowledgePaper(item, strictActivePaper.activePaperContext[0]));
+
+    context = mergeKnowledgeResults([
+      ...strictActivePaper.activePaperContext,
+      ...relatedContext
+    ]).slice(0, 7);
   } else {
     const retrievalMessage = [
       threadRetrievalAnchor,
       message,
       autoIntent?.retrieval_query
-        ? `Auto-inferred research retrieval query:
-${autoIntent.retrieval_query}`
+        ? `Auto-inferred research retrieval query:\n${autoIntent.retrieval_query}`
         : ""
     ].filter(Boolean).join("\n\n");
 
@@ -4306,7 +4631,7 @@ ${autoIntent.retrieval_query}`
     generatedFramework: "",
     recentMessages: recentMessagesForAnswer,
     autoIntent,
-    strictActivePaperLocked: strictActivePaper.activePaperLocked
+    strictActivePaperLocked: strictActivePaper.activePaperLocked && !relatedPaperDiscoveryRequest
   }, env);
 
   // v27:
@@ -5992,6 +6317,9 @@ function makeBestEvidenceExcerpt(content) {
   const text = cleanBibtexText(content || "");
   if (!text) return "";
 
+  const fullTextPreferred = makeFullTextPreferredExcerpt(text);
+  if (fullTextPreferred) return fullTextPreferred;
+
   const markers = [
     "Admin abstract:",
     "Abstract:",
@@ -6053,7 +6381,7 @@ function normalizeKnowledgeItem(item) {
     ...item,
     title,
     content,
-    matched_chunk: matchedChunk || content.slice(0, 1600)
+    matched_chunk: matchedChunk || content.slice(0, 2600)
   };
 }
 
@@ -6972,7 +7300,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const contextText = hasContext
     ? context.slice(0, 10).map((item, index) => {
         const title = cleanBibtexText(item.title || "");
-        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 1600);
+        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 2600);
 
         return [
           `DB_SOURCE_${index + 1}`,
@@ -7056,6 +7384,7 @@ Do NOT retrieve, mention, infer from, or answer using any other paper.
 If the user asks whether the full paper was read, answer honestly:
 - You are using the Paper_Talk DB stored excerpt/content and any readable metadata fetched from the stored URL.
 - Do not claim full publisher full text was read unless the retrieved context explicitly contains full text.
+Important technical truth: the Worker fetches publisher URLs from Cloudflare server-side, not from the user browser, user cookies, institutional VPN, or the user IP address. Therefore the user's personal/institutional access to Cell/Nature/Science cannot be used by the Worker. If the full text is not stored in Paper_Talk DB and is not openly fetchable, say so clearly.
 If the user asks where a statement came from and the statement is not supported by DB_SOURCE_1, say it was not supported by the active paper context and correct it using DB_SOURCE_1.
 For follow-up requests such as key takeaway, 1 line, 3 lines, why important, or clinical meaning, answer from DB_SOURCE_1 only.
     `.trim()
@@ -7106,6 +7435,7 @@ Adaptive format rules:
 - If the user asks a broad question, answer with a natural explanation rather than a database report.
 
 Paper_Talk DB rules:
+- Publisher URL reading is server-side from the Cloudflare Worker, not through the user's browser/IP/cookies. Do not imply that the user's institutional access lets the Worker read paywalled full text. For full-text-level answers, the full text must be stored in Paper_Talk DB, uploaded as PDF/TXT, or openly accessible to the Worker.
 - For research-related questions, literature questions, validation questions, paper comparison questions, and any question mentioning Paper_Talk DB, DB, 논문, or 연구, use the retrieved Paper_Talk DB context as the evidence source.
 - Do not mix outside papers into the evidence.
 - Do not invent paper titles, authors, years, journals, sample sizes, datasets, mechanisms, biomarkers, or conclusions.
