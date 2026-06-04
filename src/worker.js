@@ -38,6 +38,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v32: Thinking Logic PDF/TXT is distilled into compact reasoning rules before indexing. GPT uses it silently without changing the normal Paper_Talk research-mentor answer style.
 - v33: CPU-safe Thinking Logic: old full-PDF logic rows are deleted on import, chat retrieves only the latest compact distilled framework, and normal paper searches exclude Thinking Logic rows.
 - v37: Auto-detects user-requested output formats such as "- - - -", "4 lines", "4줄", or bullet requests and forces the final answer to match that exact format.
+- v38: Thread-aware paper follow-up fix. If a user first provides a paper URL/title and then asks follow-up questions like "Key takeaway" or "전체 논문", GPT reuses the same paper instead of retrieving unrelated papers.
 */
 
 export default {
@@ -3999,6 +4000,75 @@ Hard safety rules:
 `.trim();
 }
 
+
+async function getRecentUserMessagesForRetrieval(threadId, userId, env, limit = 8) {
+  if (!threadId || !userId) return [];
+
+  try {
+    const rows = await env.DB.prepare(`
+      SELECT role, content, created_at
+      FROM gpt_messages
+      WHERE thread_id = ?
+        AND user_id = ?
+        AND role = 'user'
+      ORDER BY datetime(created_at) DESC
+      LIMIT ?
+    `).bind(threadId, userId, limit).all();
+
+    return (rows.results || [])
+      .reverse()
+      .map(row => ({
+        role: row.role || 'user',
+        content: String(row.content || '').trim()
+      }))
+      .filter(row => row.content);
+  } catch {
+    return [];
+  }
+}
+
+function buildThreadRetrievalAnchor(recentMessages, currentMessage) {
+  const current = String(currentMessage || '');
+
+  // If the current message already contains a paper URL/DOI/title, no extra anchor is needed.
+  if (extractUrlsFromQuestion(current).length || extractDoiFromTextOrUrl(current)) {
+    return '';
+  }
+
+  const currentTitles = extractLikelyPaperTitlesFromQuestion(current);
+  if (currentTitles.length) return '';
+
+  const followUpLike = /^(key\s*takeaway|takeaway|요약|정리|중요|핵심|전체\s*논문|이\s*논문|그\s*논문|위\s*논문|abstract|초록|4줄|3줄|한\s*줄|1줄|영어로|bullet|불릿|줄\s*주세요|주세요|줘)/i.test(current.trim())
+    || /이\s*논문|그\s*논문|위\s*논문|key\s*takeaway|전체\s*논문|4줄|3줄|1줄|한\s*줄|영어로/i.test(current);
+
+  if (!followUpLike) return '';
+
+  const priorTexts = (recentMessages || [])
+    .map(m => String(m.content || ''))
+    .filter(Boolean)
+    .reverse();
+
+  for (const text of priorTexts) {
+    const urls = extractUrlsFromQuestion(text);
+    const doi = extractDoiFromTextOrUrl(text);
+    const titles = extractLikelyPaperTitlesFromQuestion(text);
+
+    if (urls.length || doi || titles.length) {
+      return [
+        'Previous explicit paper reference from this thread:',
+        urls.join('
+'),
+        doi ? `DOI: ${doi}` : '',
+        titles.join('
+')
+      ].filter(Boolean).join('
+');
+    }
+  }
+
+  return '';
+}
+
 async function gptChat(request, env) {
   const user = await getSession(request, env);
   const isGuest = !user;
@@ -4093,29 +4163,45 @@ async function gptChat(request, env) {
     threadId = "guest";
   }
 
-  // v4-auto-router:
-  // Every user message is first classified as CONCEPT, RESEARCH, VALIDATION, LITERATURE, or GENERAL.
-  // Concept questions receive definition/overview answers.
-  // Research questions trigger DB-grounded gaps, hypotheses, and validation strategy.
-  // v34: Keep answer generation identical for guest and signed-in users.
-  // Login status should affect only quota and chat saving, not the scientific answer.
-  // Therefore we do not feed saved thread history into the model.
-  const recentMessages = [];
+  // v38 thread-aware retrieval:
+  // Follow-up questions such as "Key takeaway", "전체 논문을 읽고 주는거죠?", or "4줄로 줘"
+  // must stay attached to the paper URL/title the user mentioned earlier in the same chat.
+  // We therefore use recent user messages only for retrieval anchoring.
+  // The final answer still focuses on the current user message and requested output format.
+  const recentMessages = isGuest
+    ? []
+    : await getRecentUserMessagesForRetrieval(threadId, user.id, env, 8);
+
+  const threadRetrievalAnchor = buildThreadRetrievalAnchor(recentMessages, message);
 
   const autoIntent = await inferUserResearchIntent({
     userMessage: message,
     recentMessages
   }, env);
 
-  const retrievalMessage = autoIntent?.retrieval_query
-    ? `${message}
-
-Auto-inferred research retrieval query:
+  const retrievalMessage = [
+    threadRetrievalAnchor,
+    message,
+    autoIntent?.retrieval_query
+      ? `Auto-inferred research retrieval query:
 ${autoIntent.retrieval_query}`
-    : message;
+      : ""
+  ].filter(Boolean).join("
 
-  const context = (await searchResearchKnowledge(retrievalMessage, env))
+");
+
+  let context = (await searchResearchKnowledge(retrievalMessage, env))
     .filter(item => !isThinkingLogicKnowledgeItem(item));
+
+  // Safety guard: if this is clearly a follow-up to an earlier paper, do not let broad
+  // keyword retrieval pull unrelated papers into the answer. Keep the explicit paper rows first.
+  if (threadRetrievalAnchor && !extractUrlsFromQuestion(message).length) {
+    const anchored = await searchResearchKnowledge(threadRetrievalAnchor, env);
+    const anchoredClean = anchored.filter(item => !isThinkingLogicKnowledgeItem(item));
+    if (anchoredClean.length) {
+      context = mergeKnowledgeResults([...anchoredClean, ...context]).slice(0, 6);
+    }
+  }
   const thinkingLogicFrameworks = await retrieveThinkingLogicFrameworks({
     userMessage: message
   }, env);
