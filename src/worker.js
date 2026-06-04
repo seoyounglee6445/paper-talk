@@ -5647,7 +5647,7 @@ function isThinkingLogicKnowledgeItem(item) {
   );
 }
 
-function retrieveThinkingLogicFrameworks({ userMessage }, env) {
+async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
   try {
     if (!env.DB) return [];
 
