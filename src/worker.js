@@ -1,9 +1,9 @@
 /*
-v60 additions:
-- Research answers select up to 5 Paper_Talk DB papers and synthesize from those papers.
-- Each assistant answer stores the exact supporting paper titles/URLs/scores in gpt_message_sources.
+v61 additions:
+- Research answers use Paper_Talk DB papers internally, but do NOT expose "논문 A/B/C" or paper-title lists in the normal answer.
+- Supporting papers are stored silently in gpt_message_sources and shown only when the user asks for evidence/sources.
+- The number of internal supporting papers is chosen adaptively between 3 and 10 based on available DB evidence strength.
 - Follow-up questions such as "어떤 논문 기반이야?", "근거 논문 보여줘", "논문 2 설명해줘" reuse the previous answer's stored sources.
-- User-facing answers can stay natural, but evidence is traceable later with exact paper titles.
 */
 /*
 Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titles:
@@ -11,7 +11,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v60 update - persistent supporting-paper memory for follow-up evidence questions:
+Paper_Talk v61 update - hidden supporting papers + adaptive evidence count:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -5286,9 +5286,34 @@ async function ensureGptMessageSourcesTable(env) {
   `).run();
 }
 
-function selectTopSupportingPapersForAnswer(context, limit = 5) {
+function estimateAdaptiveSupportingPaperLimit(context) {
+  const items = Array.isArray(context) ? context : [];
+  if (items.length <= 3) return Math.max(items.length, 0);
+
+  const scores = items
+    .map(item => Number(item?.similarity_score || 0))
+    .filter(score => Number.isFinite(score) && score > 0);
+
+  const best = scores.length ? Math.max(...scores) : 0;
+  const average = scores.length
+    ? scores.slice(0, Math.min(scores.length, 10)).reduce((a, b) => a + b, 0) / Math.min(scores.length, 10)
+    : 0;
+
+  // Adaptive rule:
+  // - If evidence is very focused, a few papers are enough.
+  // - If the question is broad or evidence is diffuse, use more papers internally.
+  // - Never exceed 10 in chat prompt/storage.
+  if (items.length <= 5) return items.length;
+  if (best >= 0.88 || average >= 0.76) return Math.min(3, items.length);
+  if (best >= 0.72 || average >= 0.58) return Math.min(5, items.length);
+  if (items.length >= 8) return Math.min(8, items.length);
+  return Math.min(10, items.length);
+}
+
+function selectTopSupportingPapersForAnswer(context, limit = null) {
   const seen = new Set();
   const selected = [];
+  const adaptiveLimit = limit || estimateAdaptiveSupportingPaperLimit(context) || 0;
 
   for (const item of Array.isArray(context) ? context : []) {
     const title = cleanBibtexText(item?.title || "").trim();
@@ -5299,12 +5324,11 @@ function selectTopSupportingPapersForAnswer(context, limit = 5) {
     seen.add(key);
 
     selected.push(item);
-    if (selected.length >= limit) break;
+    if (selected.length >= adaptiveLimit) break;
   }
 
   return selected;
 }
-
 function isSupportingPaperFollowUp(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -5361,7 +5385,7 @@ async function getLastSupportingPapersForThread({ threadId, userId, env }) {
       AND thread_id = ?
       AND user_id = ?
     ORDER BY rank_index ASC
-    LIMIT 5
+    LIMIT 10
   `).bind(last.message_id, threadId, userId).all();
 
   return rows.results || [];
@@ -5408,7 +5432,7 @@ function formatStoredSupportingPapersAnswer(rows, userMessage = "") {
 }
 
 async function saveSupportingPapersForAssistantMessage({ assistantMessageId, threadId, userId, context, env }) {
-  const selected = selectTopSupportingPapersForAnswer(context, 5);
+  const selected = selectTopSupportingPapersForAnswer(context);
   if (!assistantMessageId || !threadId || !userId || !selected.length) return;
 
   await ensureGptMessageSourcesTable(env);
@@ -5642,7 +5666,7 @@ async function gptChat(request, env) {
       }
     }
 
-    context = selectTopSupportingPapersForAnswer(context, 5);
+    context = selectTopSupportingPapersForAnswer(context);
 
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
 
@@ -5689,6 +5713,10 @@ async function gptChat(request, env) {
       .replace(/#/g, "")
       .replace(/\*/g, "");
 
+    if (!isSupportingPaperFollowUp(message)) {
+      assistantText = hideAccidentalPaperListFromNormalAnswer(assistantText);
+    }
+
     assistantText = enforceStrictUserOutputFormat(assistantText, message);
 
     if (!isGuest) {
@@ -5733,7 +5761,7 @@ async function gptChat(request, env) {
         resetsAt: quotaAfter.resetsAt
       },
       sources: context.map((item, index) => ({
-        paper_label: index < 5 ? `논문 ${String.fromCharCode(65 + index)}` : null,
+        paper_label: index < 10 ? `논문 ${String.fromCharCode(65 + index)}` : null,
         title: item.title,
         source_url: item.source_url,
         pdf_link: item.pdf_link,
@@ -8533,6 +8561,37 @@ function makeFallbackResearchIntent(userMessage) {
 
 
 
+
+function hideAccidentalPaperListFromNormalAnswer(answer) {
+  const text = String(answer || "");
+  if (!text.trim()) return text;
+
+  const lines = text.split(/\r?\n/);
+  const kept = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    // Hide internal retrieval labels and title dumps in normal answers.
+    if (/^(논문|paper)\s*[A-J]\s*[:：-]/i.test(line)) continue;
+    if (/^\d+\.\s*(논문|paper)\s*[A-J]\s*[:：-]/i.test(line)) continue;
+    if (/^(근거\s*논문|참고\s*논문|사용한\s*논문|supporting papers?|references?|sources?)\s*[:：]?$/i.test(line)) continue;
+
+    kept.push(rawLine);
+  }
+
+  let cleaned = kept.join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // Remove a dangling intro that only introduced the hidden list.
+  cleaned = cleaned
+    .replace(/(?:아래|다음)\s*(?:논문|문헌|Paper_Talk DB 논문|근거)\s*(?:들을|을)?\s*(?:기반으로|토대로|참고해서)?\s*(?:답변|종합)?(?:했습니다|합니다|드리겠습니다)?\s*[:：]?\s*$/i, "")
+    .trim();
+
+  return cleaned || text;
+}
+
 function containsReportStyleHeadings(answer) {
   const text = String(answer || "");
 
@@ -8842,8 +8901,8 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
 
         return [
           `DB_SOURCE_${index + 1}`,
-          `PAPER_LABEL: 논문 ${paperLabel}`,
-          `EXACT_DB_TITLE: ${title}`,
+          `INTERNAL_SOURCE_LABEL: ${paperLabel}`,
+          `EXACT_DB_TITLE_FOR_INTERNAL_USE_ONLY: ${title}`,
           item.source_url ? `ARTICLE_URL: ${item.source_url}` : "",
           item.pdf_link ? `PDF_URL: ${item.pdf_link}` : "",
           `DB_EXCERPT: ${excerpt}`
@@ -8893,18 +8952,21 @@ For research-related answers:
 9. You may make a cautious research interpretation, but it must be explicitly based on the DB excerpts.
 10. If the DB excerpts are too thin for a strong claim, say the evidence is limited.
 
-Allowed Paper_Talk DB titles:
+Internal Paper_Talk DB titles, not to be shown unless user explicitly asks for sources:
 ${dbTitles.map((title, index) => `${index + 1}. ${title}`).join("\n")}
 
 Important:
 The retrieval layer already removed metadata-only rows such as author=, journal=, year=, doi=, url=.
 Use the EXACT_DB_TITLE values above as the only paper names.
 
-v60 answer-source behavior:
-- Internally synthesize from up to 5 retrieved DB papers.
-- When you mention individual sources, write the real title, e.g. "논문 A: EXACT_DB_TITLE", not just "논문 A".
-- The main answer may be a synthesized research interpretation, but it must be traceable to the retrieved titles.
-- Do not invent "논문 A/B/C" content without using the exact retrieved title.
+v61 hidden-source behavior:
+- Internally synthesize from the retrieved DB papers.
+- In the normal answer, do NOT print a source list.
+- Do NOT write "논문 A", "논문 B", "논문 C", "Paper A", or any A/B/C/D source labels.
+- Do NOT list paper titles unless the user explicitly asks "어떤 논문 기반이야?", "근거 논문?", "sources?", "references?", or a similar source-tracing question.
+- The answer should read like a calm research mentor's synthesis, not like a retrieval report.
+- The retrieved titles are stored separately by the Worker for later source follow-up, so you do not need to expose them now.
+- You may say broad phrases like "검색된 Paper_Talk DB 근거들을 종합하면" but do not reveal individual titles in the normal answer.
     `.trim()
     : `
 STRICT PAPER_TALK DB-ONLY RULES FOR RESEARCH ANSWERS
