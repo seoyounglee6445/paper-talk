@@ -1,7 +1,8 @@
 /*
-v62 additions:
-- Research answers are insight-first: synthesize biological/research themes, not paper-by-paper summaries.
-- Normal answers must not say "논문 A에서는", "논문 B는", "Paper A shows", or expose source labels/titles.
+v63 additions:
+- Normal research answers are written as readable mentor-style synthesis: core insight -> why it matters -> promising directions.
+- Paper titles, paper labels, and parenthetical citations are fully hidden unless the user explicitly asks for sources.
+- The model must not write "(논문 A: ...)", "(논문 B: ...)", or any paper-title citation inside normal answers.
 - Supporting papers are stored silently in gpt_message_sources and shown only when the user asks for evidence/sources.
 - The number of internal supporting papers is chosen adaptively between 3 and 10 based on available DB evidence strength.
 - Follow-up questions such as "어떤 논문 기반이야?", "근거 논문 보여줘", "논문 2 설명해줘" reuse the previous answer's stored sources.
@@ -12,7 +13,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v62 update - insight-first synthesis with hidden supporting papers:
+Paper_Talk v63 update - readable synthesis style with fully hidden paper titles:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -8564,8 +8565,19 @@ function makeFallbackResearchIntent(userMessage) {
 
 
 function hideAccidentalPaperListFromNormalAnswer(answer) {
-  const text = String(answer || "");
-  if (!text.trim()) return text;
+  const original = String(answer || "");
+  if (!original.trim()) return original;
+
+  let text = original;
+
+  // Remove parenthetical source leaks like:
+  // (논문 A: Title...), (논문 B: Title...), (Paper C: Title...)
+  text = text.replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J]\s*[:：][^\)\]\n]{0,500}[\)\]]/gi, "");
+
+  // Remove inline source labels while keeping the biological sentence readable.
+  text = text
+    .replace(/(?:예를\s*들어\s*)?(?:논문|paper)\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|shows|suggests|indicates|reports|demonstrates|reveals|finds)\s*/gi, "")
+    .replace(/(?:\(|\[)?\s*(?:논문|paper)\s*[A-J]\s*(?:\)|\])?/gi, "");
 
   const lines = text.split(/\r?\n/);
   const kept = [];
@@ -8573,18 +8585,18 @@ function hideAccidentalPaperListFromNormalAnswer(answer) {
   for (const rawLine of lines) {
     let line = rawLine.trim();
 
-    // Hide internal retrieval labels, title dumps, and paper-by-paper phrasings in normal answers.
+    // Hide internal retrieval labels, title dumps, and source-list headings in normal answers.
     if (/^(논문|paper)\s*[A-J]\s*[:：-]/i.test(line)) continue;
     if (/^\d+\.\s*(논문|paper)\s*[A-J]\s*[:：-]/i.test(line)) continue;
-    if (/^(근거\s*논문|참고\s*논문|사용한\s*논문|supporting papers?|references?|sources?)\s*[:：]?$/i.test(line)) continue;
+    if (/^(근거\s*논문|참고\s*논문|사용한\s*논문|supporting papers?|references?|sources?|relevant papers?)\s*[:：]?$/i.test(line)) continue;
 
-    // Remove explicit "논문 A에서는/논문 B는/Paper A shows" wording while preserving the scientific sentence if possible.
     line = line
-      .replace(/^(첫째|둘째|셋째|넷째|다섯째|여섯째|일곱째|여덟째|아홉째|열째)\s*,?\s*/i, "")
+      .replace(/^(첫째|둘째|셋째|넷째|다섯째|여섯째|일곱째|여덟째|아홉째|열째)\s*,?\s*(?:에서는|은|는)?\s*/i, match => {
+        // Keep ordinal only if it is not immediately tied to a paper label.
+        return match.replace(/(?:에서는|은|는)/g, "").trim() ? match : "";
+      })
       .replace(/^논문\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|은\/는)\s*/i, "")
-      .replace(/^Paper\s*[A-J]\s*(?:shows|suggests|indicates|reports|demonstrates|reveals|finds|에서는|은|는)?\s*/i, "")
-      .replace(/논문\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해)\s*/gi, "")
-      .replace(/Paper\s*[A-J]\s*(?:shows|suggests|indicates|reports|demonstrates|reveals|finds)\s*/gi, "");
+      .replace(/^Paper\s*[A-J]\s*(?:shows|suggests|indicates|reports|demonstrates|reveals|finds|에서는|은|는)?\s*/i, "");
 
     if (!line.trim()) continue;
     kept.push(line);
@@ -8594,16 +8606,19 @@ function hideAccidentalPaperListFromNormalAnswer(answer) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  // Remove dangling intros that only introduced hidden source lists.
+  // Remove dangling source-intro or literature-review sentences.
   cleaned = cleaned
     .replace(/(?:아래|다음|이)\s*(?:논문|문헌|Paper_Talk DB 논문|근거)\s*(?:들을|을)?\s*(?:기반으로|토대로|참고해서)?\s*(?:답변|종합)?(?:했습니다|합니다|드리겠습니다|얻을 수 있습니다)?\s*[:：]?\s*$/i, "")
-    .replace(/이\s*세\s*가지\s*논문을\s*통해[^\n.。]*[.。]?/gi, "")
+    .replace(/이\s*(?:세|여러|몇\s*가지)\s*(?:논문|연구)\s*을?\s*통해[^\n.。]*[.。]?/gi, "")
     .replace(/이\s*논문들을\s*통해[^\n.。]*[.。]?/gi, "")
     .replace(/이\s*연구들은[^\n.。]*기초를\s*제공하며[^\n.。]*[.。]?/gi, "")
+    .replace(/\s+\./g, ".")
+    .replace(/\s+,/g, ",")
     .trim();
 
-  return cleaned || text;
+  return cleaned || original;
 }
+
 function containsReportStyleHeadings(answer) {
   const text = String(answer || "");
 
@@ -8947,14 +8962,19 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   });
 
   const insightFirstInstruction = `
-INSIGHT-FIRST SYNTHESIS RULE
+READABLE INSIGHT-FIRST SYNTHESIS RULE
 
 For normal research answers:
 - Do not explain one paper at a time.
 - Do not use paper labels.
 - Do not say "논문 A/B/C" or "Paper A/B/C".
-- Extract common biological themes from all retrieved DB excerpts, then answer as a synthesized research interpretation.
-- Mention individual paper titles only when the user explicitly asks for the supporting papers.
+- Do not include paper titles in parentheses.
+- Do not include citations or references unless the user asks for sources.
+- Extract common biological themes from all retrieved DB excerpts.
+- Then write a clean synthesis that is easy to read:
+  short paragraphs, clear transitions, and 3 to 5 research directions at most.
+- Avoid dense literature-review wording.
+- The answer should feel like a senior cancer genomics mentor explaining what direction is promising, not a paper retrieval report.
   `.trim();
 
   const strictDbRule = hasContext
@@ -8982,25 +9002,27 @@ Important:
 The retrieval layer already removed metadata-only rows such as author=, journal=, year=, doi=, url=.
 Use the EXACT_DB_TITLE values above as the only paper names.
 
-v62 hidden-source, insight-first behavior:
-- Internally use the retrieved DB papers only as evidence.
-- The normal answer must be organized by biological insight, research direction, mechanism, data type, validation strategy, or knowledge gap.
-- Do NOT organize the answer paper-by-paper.
-- Do NOT write "논문 A에서는", "논문 B는", "논문 C에서는", "Paper A shows", "Paper B suggests", or any A/B/C/D source-label phrasing.
-- Do NOT list paper titles in the normal answer.
-- Do NOT write a section like "사용한 논문", "근거 논문", "참고 논문", "Relevant papers", or "Sources" unless the user explicitly asks for sources.
-- Good phrasing examples:
+v63 readable hidden-source behavior:
+- Internally use retrieved DB papers only as evidence.
+- The user-facing answer must NOT show paper titles, paper labels, or parenthetical paper references.
+- Never write these patterns in a normal answer:
+  "(논문 A: ...)", "(논문 B: ...)", "(Paper A: ...)"
+  "논문 A에서는", "논문 B는", "논문 C에 따르면"
+  "예를 들어 ... (논문 ...)"
+  "사용한 논문", "근거 논문", "참고 논문", "Relevant papers", "Sources"
+- Do NOT organize by paper. Organize by synthesized insight.
+- Write in readable Korean with short paragraphs.
+- Preferred structure:
+  1) Start with one concise synthesis sentence.
+  2) Explain 3 to 5 promising research directions.
+  3) For each direction, explain why it matters biologically.
+  4) End with a practical recommendation or candidate research angle.
+- Use phrases like:
   "검색된 Paper_Talk DB 근거들을 종합하면..."
-  "여러 연구에서 반복적으로 보이는 흐름은..."
-  "현재 근거를 연구 방향으로 바꾸면..."
-  "이 분야에서 유망한 축은 크게..."
-- Bad phrasing examples:
-  "첫째, 논문 A에서는..."
-  "둘째, 논문 B는..."
-  "논문 C에 따르면..."
-  "Paper A shows..."
-- The retrieved titles are stored separately by the Worker for later source follow-up, so you must not expose them now.
-- If the user later asks which papers were used, the Worker will answer from stored sources.
+  "여러 연구에서 공통적으로 보이는 흐름은..."
+  "연구 방향으로 바꾸면..."
+  "앞으로 특히 유망한 축은..."
+- Do not reveal individual paper titles now. The Worker stores the sources separately for later follow-up.
     `.trim()
     : `
 STRICT PAPER_TALK DB-ONLY RULES FOR RESEARCH ANSWERS
