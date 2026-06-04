@@ -1,10 +1,17 @@
 /*
-Paper_Talk v58 update - Paper A-D DB selection answer mode + safe DB-grounded research reasoning:
-- v58: For research-purpose GPT questions, infer the user intent with the uploaded thinking logic, select up to four most relevant Paper_Talk DB papers, label them as 논문 A/B/C/D, and answer the user question through those selected papers.
-- v58: The A-D labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
-- v58: Research answers now may use a compact 논문 A/B/C/D synthesis format when the user asks for research guidance, paper selection, or literature-based answers.
+v60 additions:
+- Research answers select up to 5 Paper_Talk DB papers and synthesize from those papers.
+- Each assistant answer stores the exact supporting paper titles/URLs/scores in gpt_message_sources.
+- Follow-up questions such as "어떤 논문 기반이야?", "근거 논문 보여줘", "논문 2 설명해줘" reuse the previous answer's stored sources.
+- User-facing answers can stay natural, but evidence is traceable later with exact paper titles.
+*/
+/*
+Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titles:
+- v59: For research-purpose GPT questions, infer the user intent with the uploaded thinking logic, select up to five most relevant Paper_Talk DB papers, label them as 논문 A/B/C/D/E/E, show each exact DB title, and answer the user question based on the synthesis of those papers.
+- v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
+- v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v27 update - forced removal of report-style GPT answers + calm research explanation style:
+Paper_Talk v60 update - persistent supporting-paper memory for follow-up evidence questions:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -4840,7 +4847,7 @@ function isSameKnowledgePaper(a, b) {
 
 const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 4;
 const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 0;
-const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 4;
+const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 5;
 const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 7000;
 const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 2200;
 const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 1200;
@@ -5247,6 +5254,207 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
   }
 }
 
+
+/* v60: persistent supporting-paper memory for follow-up evidence questions */
+async function ensureGptMessageSourcesTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS gpt_message_sources (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      rank_index INTEGER NOT NULL,
+      paper_label TEXT,
+      post_id TEXT,
+      title TEXT NOT NULL,
+      source_url TEXT,
+      pdf_link TEXT,
+      similarity_score REAL,
+      evidence_excerpt TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_gpt_message_sources_thread
+    ON gpt_message_sources(thread_id, created_at)
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_gpt_message_sources_message
+    ON gpt_message_sources(message_id)
+  `).run();
+}
+
+function selectTopSupportingPapersForAnswer(context, limit = 5) {
+  const seen = new Set();
+  const selected = [];
+
+  for (const item of Array.isArray(context) ? context : []) {
+    const title = cleanBibtexText(item?.title || "").trim();
+    if (!title) continue;
+
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    selected.push(item);
+    if (selected.length >= limit) break;
+  }
+
+  return selected;
+}
+
+function isSupportingPaperFollowUp(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  return (
+    /(어떤|무슨|기반|근거|출처|reference|source|paper|papers|논문|문헌|citation|cite)/i.test(text) &&
+    /(논문|문헌|paper|papers|reference|source|citation|근거|출처|기반)/i.test(text)
+  ) || /(논문\s*[a-e1-5]|paper\s*[a-e1-5]|[1-5]\s*번째\s*논문|첫\s*번째\s*논문|두\s*번째\s*논문|세\s*번째\s*논문|네\s*번째\s*논문|다섯\s*번째\s*논문)/i.test(text);
+}
+
+function getRequestedPaperOrdinal(message) {
+  const text = String(message || "").toLowerCase();
+
+  const letter = text.match(/(?:논문|paper)\s*([a-e])/i);
+  if (letter) return letter[1].toUpperCase().charCodeAt(0) - 65;
+
+  const digit = text.match(/(?:논문|paper)?\s*([1-5])\s*(?:번째|번|paper|논문)?/i);
+  if (digit) return Number(digit[1]) - 1;
+
+  if (/첫\s*번째/.test(text)) return 0;
+  if (/두\s*번째/.test(text)) return 1;
+  if (/세\s*번째/.test(text)) return 2;
+  if (/네\s*번째/.test(text)) return 3;
+  if (/다섯\s*번째/.test(text)) return 4;
+
+  return null;
+}
+
+async function getLastSupportingPapersForThread({ threadId, userId, env }) {
+  await ensureGptMessageSourcesTable(env);
+
+  const last = await env.DB.prepare(`
+    SELECT message_id
+    FROM gpt_message_sources
+    WHERE thread_id = ?
+      AND user_id = ?
+    ORDER BY datetime(created_at) DESC
+    LIMIT 1
+  `).bind(threadId, userId).first();
+
+  if (!last?.message_id) return [];
+
+  const rows = await env.DB.prepare(`
+    SELECT
+      rank_index,
+      paper_label,
+      post_id,
+      title,
+      source_url,
+      pdf_link,
+      similarity_score,
+      evidence_excerpt
+    FROM gpt_message_sources
+    WHERE message_id = ?
+      AND thread_id = ?
+      AND user_id = ?
+    ORDER BY rank_index ASC
+    LIMIT 5
+  `).bind(last.message_id, threadId, userId).all();
+
+  return rows.results || [];
+}
+
+function formatStoredSupportingPapersAnswer(rows, userMessage = "") {
+  const papers = Array.isArray(rows) ? rows : [];
+  if (!papers.length) {
+    return "직전 답변에 저장된 근거 논문 목록을 찾지 못했습니다. 같은 thread에서 먼저 연구 질문을 한 뒤 다시 물어보면, 그 답변에 사용된 Paper_Talk DB 논문을 보여드릴 수 있습니다.";
+  }
+
+  const requestedIndex = getRequestedPaperOrdinal(userMessage);
+  const target =
+    requestedIndex !== null && requestedIndex >= 0 && requestedIndex < papers.length
+      ? papers[requestedIndex]
+      : null;
+
+  if (target) {
+    const label = target.paper_label || `논문 ${String.fromCharCode(65 + Number(target.rank_index || requestedIndex))}`;
+    return [
+      `${label}: ${target.title}`,
+      target.source_url ? `Article URL: ${target.source_url}` : "",
+      target.pdf_link ? `PDF URL: ${target.pdf_link}` : "",
+      target.evidence_excerpt ? `이 답변에서 사용한 DB excerpt: ${String(target.evidence_excerpt).slice(0, 900)}` : "",
+      "",
+      "이 논문을 더 자세히 요약하거나, 이 논문만 기반으로 연구 가설을 다시 정리할 수 있습니다."
+    ].filter(Boolean).join("\n");
+  }
+
+  return [
+    "직전 답변은 아래 Paper_Talk DB 논문들을 기반으로 생성했습니다.",
+    "",
+    ...papers.map((paper, index) => {
+      const label = paper.paper_label || `논문 ${String.fromCharCode(65 + index)}`;
+      const score = paper.similarity_score !== null && paper.similarity_score !== undefined
+        ? ` / retrieval score: ${Number(paper.similarity_score).toFixed(3)}`
+        : "";
+      const links = [paper.source_url ? `Article: ${paper.source_url}` : "", paper.pdf_link ? `PDF: ${paper.pdf_link}` : ""]
+        .filter(Boolean)
+        .join(" | ");
+      return `${index + 1}. ${label}: ${paper.title}${score}${links ? "\n   " + links : ""}`;
+    })
+  ].join("\n");
+}
+
+async function saveSupportingPapersForAssistantMessage({ assistantMessageId, threadId, userId, context, env }) {
+  const selected = selectTopSupportingPapersForAnswer(context, 5);
+  if (!assistantMessageId || !threadId || !userId || !selected.length) return;
+
+  await ensureGptMessageSourcesTable(env);
+
+  const statements = selected.map((item, index) => {
+    const title = cleanBibtexText(item?.title || "").trim();
+    const excerpt = cleanBibtexText(item?.matched_chunk || makeBestEvidenceExcerpt(item?.content || "")).slice(0, 1200);
+
+    return env.DB.prepare(`
+      INSERT INTO gpt_message_sources (
+        id,
+        message_id,
+        thread_id,
+        user_id,
+        rank_index,
+        paper_label,
+        post_id,
+        title,
+        source_url,
+        pdf_link,
+        similarity_score,
+        evidence_excerpt,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).bind(
+      crypto.randomUUID(),
+      assistantMessageId,
+      threadId,
+      userId,
+      index,
+      `논문 ${String.fromCharCode(65 + index)}`,
+      item?.post_id || "",
+      title,
+      item?.source_url || "",
+      item?.pdf_link || "",
+      item?.similarity_score || null,
+      excerpt
+    );
+  });
+
+  if (statements.length) {
+    await env.DB.batch(statements);
+  }
+}
+
 async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent, env) {
   // v57 safe DB-grounded retrieval:
   // Research questions should always consult Paper_Talk DB, but the chat path must stay bounded.
@@ -5363,6 +5571,47 @@ async function gptChat(request, env) {
       threadId = "guest";
     }
 
+    if (!isGuest && isSupportingPaperFollowUp(message)) {
+      const rows = await getLastSupportingPapersForThread({ threadId, userId: user.id, env });
+      const sourceAnswer = formatStoredSupportingPapersAnswer(rows, message);
+      const assistantMessageId = crypto.randomUUID();
+
+      await env.DB.prepare(`
+        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, created_at)
+        VALUES (?, ?, ?, 'assistant', ?, CURRENT_TIMESTAMP)
+      `).bind(assistantMessageId, threadId, user.id, sourceAnswer).run();
+
+      await env.DB.prepare(`
+        UPDATE gpt_threads
+        SET updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).bind(threadId, user.id).run();
+
+      const quotaAfter = await incrementMonthlyGptUsage(user.id, env);
+
+      return json({
+        ok: true,
+        guest: false,
+        threadId,
+        answer: sourceAnswer,
+        quota: {
+          used: quotaAfter.used,
+          limit: quotaAfter.limit,
+          remaining: quotaAfter.remaining,
+          monthKey: quotaAfter.monthKey || null,
+          date: null,
+          resetsAt: quotaAfter.resetsAt
+        },
+        sources: rows.map((item, index) => ({
+          paper_label: item.paper_label || `논문 ${String.fromCharCode(65 + index)}`,
+          title: item.title,
+          source_url: item.source_url,
+          pdf_link: item.pdf_link,
+          similarity_score: item.similarity_score || null
+        }))
+      });
+    }
+
     const inferredIntent = await inferPaperTalkResearchIntentForChat(message, env);
     const generalOrBroad = isLikelyGeneralQuestionFast(message) && !inferredIntent.is_research_related;
     let context = [];
@@ -5392,6 +5641,8 @@ async function gptChat(request, env) {
         context = [];
       }
     }
+
+    context = selectTopSupportingPapersForAnswer(context, 5);
 
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
 
@@ -5441,10 +5692,20 @@ async function gptChat(request, env) {
     assistantText = enforceStrictUserOutputFormat(assistantText, message);
 
     if (!isGuest) {
+      const assistantMessageId = crypto.randomUUID();
+
       await env.DB.prepare(`
         INSERT INTO gpt_messages (id, thread_id, user_id, role, content, created_at)
         VALUES (?, ?, ?, 'assistant', ?, CURRENT_TIMESTAMP)
-      `).bind(crypto.randomUUID(), threadId, user.id, assistantText).run();
+      `).bind(assistantMessageId, threadId, user.id, assistantText).run();
+
+      await saveSupportingPapersForAssistantMessage({
+        assistantMessageId,
+        threadId,
+        userId: user.id,
+        context,
+        env
+      });
 
       await env.DB.prepare(`
         UPDATE gpt_threads
@@ -5472,7 +5733,7 @@ async function gptChat(request, env) {
         resetsAt: quotaAfter.resetsAt
       },
       sources: context.map((item, index) => ({
-        paper_label: index < 4 ? `논문 ${String.fromCharCode(65 + index)}` : null,
+        paper_label: index < 5 ? `논문 ${String.fromCharCode(65 + index)}` : null,
         title: item.title,
         source_url: item.source_url,
         pdf_link: item.pdf_link,
@@ -8638,6 +8899,12 @@ ${dbTitles.map((title, index) => `${index + 1}. ${title}`).join("\n")}
 Important:
 The retrieval layer already removed metadata-only rows such as author=, journal=, year=, doi=, url=.
 Use the EXACT_DB_TITLE values above as the only paper names.
+
+v60 answer-source behavior:
+- Internally synthesize from up to 5 retrieved DB papers.
+- When you mention individual sources, write the real title, e.g. "논문 A: EXACT_DB_TITLE", not just "논문 A".
+- The main answer may be a synthesized research interpretation, but it must be traceable to the retrieved titles.
+- Do not invent "논문 A/B/C" content without using the exact retrieved title.
     `.trim()
     : `
 STRICT PAPER_TALK DB-ONLY RULES FOR RESEARCH ANSWERS
@@ -8679,10 +8946,10 @@ You are a calm senior cancer genomics and bioinformatics research mentor. Your a
 
 Core behavior:
 - First understand the user's intent using the admin-uploaded scientific thinking logic and the automatic intent parser, then choose the answer flow automatically.
-- For research-purpose questions, first select the most relevant retrieved Paper_Talk DB papers and internally map them to 논문 A, 논문 B, 논문 C, and 논문 D.
-- When answering research guidance, literature, validation, or paper-selection questions, explicitly use the 논문 A/B/C/D labels so the user can see which selected DB papers support each part of the answer.
+- For research-purpose questions, first select the most relevant retrieved Paper_Talk DB papers and internally map them to 논문 A, 논문 B, 논문 C, 논문 D, and 논문 E.
+- When answering research guidance, literature, validation, or paper-selection questions, explicitly use the 논문 A/B/C/D/E labels so the user can see which selected DB papers support each part of the answer.
 - Do not force old report headings such as "Direct answer / Relevant papers / Findings / Gaps".
-- Do not dump all retrieved papers as a raw list. Select the useful papers, label them A-D, then synthesize them around the user's question.
+- Do not dump all retrieved papers as a raw list. Select the useful papers, label them A-E, then synthesize them around the user's question.
 - Explain the idea first, then use Paper_Talk DB papers only as supporting evidence inside the explanation.
 - Use natural paragraphs with a smooth logical flow.
 - Be detailed enough to help the user think about research design, but do not over-format.
@@ -8720,12 +8987,19 @@ Allowed research answer labels:
 - 논문 B
 - 논문 C
 - 논문 D
+- 논문 E
 These labels are allowed because they are not external citations; they are the selected Paper_Talk DB sources mapped from the retrieved context.
+
+Title visibility rule:
+- The first time each label appears, it must be written as: 논문 A: <EXACT_DB_TITLE>.
+- Do not answer with anonymous labels only, such as “논문 A에서는...” or “논문 B에서는...”, unless the title mapping has already appeared above in the same answer.
+- For broad research-direction questions, base the recommendation on around five DB papers when five are retrieved. The user is not asking for exactly five separate recommendations; they want one synthesized answer grounded in about five selected papers.
+- After the title mapping, synthesize across the selected papers rather than summarizing each paper one by one.
 
 Adaptive format rules:
 - If the user asks for research ideas, explain why a direction is promising, what the DB suggests, what research questions follow, and what validation would be useful.
-- For research-purpose answers, use this selection logic before writing: choose up to 4 DB sources that best match the user's biological question, methodological angle, feasibility, novelty, and validation value; assign them as 논문 A, 논문 B, 논문 C, 논문 D in retrieval order unless a later paper is clearly more central.
-- In the answer, briefly define what 논문 A/B/C/D are by title once, then answer the user question by synthesizing them.
+- For research-purpose answers, use this selection logic before writing: choose up to 5 DB sources that best match the user's biological question, methodological angle, feasibility, novelty, and validation value; assign them as 논문 A, 논문 B, 논문 C, 논문 D, 논문 E in retrieval order unless a later paper is clearly more central.
+- In the answer, briefly define what 논문 A/B/C/D/E are by title once, then answer the user question by synthesizing them.
 - Do not create paper labels for sources that were not retrieved. If only two papers were retrieved, use only 논문 A and 논문 B.
 - If the user asks for paper comparison, compare clearly, but do not create a long paper list. A compact table is allowed only if the user asks for comparison or if it truly improves clarity.
 - If the user asks for a concept, explain simply first, then connect it to cancer genomics, single-cell, spatial, or bioinformatics.
@@ -8750,7 +9024,7 @@ Do not use markdown symbols such as #, *, or **.
 Use readable paragraphs. Do not be too brief unless the user explicitly asks for one-line or short answer.
 For paper summaries, be generous and educational: explain the paper's motivation, biological question, dataset/method if visible in the excerpt, key result, interpretation, why it matters, and what follow-up validation would be useful.
 If the excerpt is thin, say that gently, but still explain what can be safely inferred from the retrieved text.
-Use bullets only for concrete research questions, candidate project ideas, or validation steps. Do not use bullets to list papers. If a retrieved paper is relevant, mention it naturally inside a paragraph.
+Use bullets only for concrete research questions, candidate project ideas, or validation steps. A compact selected-paper mapping is allowed for DB grounding, but each label must include the exact title. After that, avoid dumping paper-by-paper summaries; synthesize the papers around the question.
 Headings are optional. If used, make them natural Korean headings, not report labels.
 
 ${requestedFormatInstruction || ""}
@@ -8797,7 +9071,7 @@ ${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
     {
       role: "system",
       content: hasContext
-        ? "A DB context is present. For research-related answers, every named paper must come from the EXACT_DB_TITLE list above. Do not use external papers."
+        ? "A DB context is present. For research-related answers, every named paper must come from the EXACT_DB_TITLE list above. Do not use external papers. First provide a visible mapping like “논문 A: EXACT_DB_TITLE”, “논문 B: EXACT_DB_TITLE” for the selected papers, preferably five if five are available, then synthesize the answer from those papers."
         : "No DB context is present. For research-related answers, do not provide an outside-literature answer. State that DB retrieval failed."
     },
     ...recentMessages
@@ -8891,8 +9165,8 @@ You must not mix in outside/general literature as evidence.
 However, you should not sound like a rigid report. Answer like a helpful senior researcher discussing ideas with the user.
 
 If Paper_Talk DB context is available:
-Use the user's uploaded thinking logic silently to decide which DB papers are most relevant. Select up to four papers and label them 논문 A, 논문 B, 논문 C, 논문 D. Then answer the user's question through those selected papers.
-Do not force a cold report template. Use calm explanatory paragraphs, but make the A-D mapping visible so the user can check which paper supports each idea.
+Use the user's uploaded thinking logic silently to decide which DB papers are most relevant. Select up to five papers and label them 논문 A, 논문 B, 논문 C, 논문 D, 논문 E. Then answer the user's question through those selected papers.
+Do not force a cold report template. Use calm explanatory paragraphs, but make the A-E mapping visible so the user can check which paper supports each idea.
 
 For paper-reading or paper-summary requests such as "읽고 요약", "summarize", "explain this paper", or a pasted title:
 - Begin by explaining what the paper appears to be about and what question it is addressing.
@@ -8906,8 +9180,8 @@ For broad idea questions such as "뭐하면 좋을까", "연구 주제 추천", 
 - Start with a calm explanatory recommendation, not a report heading.
 - Use this style: "Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다."
 - Explain why that direction looks promising in 2~4 connected paragraphs.
-- Then show the selected DB evidence as 논문 A/B/C/D, each with the exact DB title and one short reason it was selected.
-- After the A-D mapping, synthesize what the selected papers collectively suggest for the user's research question.
+- Then show the selected DB evidence as 논문 A/B/C/D/E, each with the exact DB title and one short reason it was selected.
+- After the A-E mapping, synthesize what the selected papers collectively suggest for the user's research question.
 - Suggest concrete research questions as bullets only after the main explanation.
 - Explain novelty, feasibility, expected data, and validation in prose rather than as a rigid checklist.
 
@@ -8931,7 +9205,7 @@ For validation questions:
 
 For any research answer:
 - Use only the exact retrieved DB titles as paper names.
-- Map retrieved DB titles to 논문 A/B/C/D when the answer is research-purpose, literature-purpose, validation-purpose, or asks which papers are relevant.
+- Map retrieved DB titles to 논문 A/B/C/D/E/E when the answer is research-purpose, literature-purpose, validation-purpose, or asks which papers are relevant.
 - Do not include external paper titles.
 - Do not add methods, years, authors, datasets, biomarkers, or mechanisms unless present in the excerpt.
 - If a detail is not in the DB excerpt, say "현재 검색된 Paper_Talk DB excerpt에는 그 부분이 명확하지 않습니다."
