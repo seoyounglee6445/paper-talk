@@ -42,6 +42,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v40: Strict active-paper lock. When a URL/title exists in the current thread, follow-up turns use ONLY that exact paper context and block unrelated Vectorize/keyword retrieval from entering the answer.
 - v41: Related-paper exception + truthful full-text access. Active-paper follow-ups stay locked, but requests for similar/related/other papers search Paper_Talk DB using the active paper as the seed. GPT must explain that publisher full text is read only if it is stored in DB or openly fetchable by the Worker; the user browser/IP/institution access is not available to the Worker.
 - v42: Adds Admin Research Paper Full Text PDF/TXT import. Browser-extracted PDF/TXT text is attached to the matched research_knowledge paper as FULL_TEXT_PDF_UPLOAD evidence, reindexed into Vectorize, and preferred before abstracts/metadata in GPT excerpts.
+- v43: Full-text import stores a content hash and skips duplicate PDFs/TXTs already imported into Paper_Talk DB.
 */
 
 export default {
@@ -1349,6 +1350,27 @@ async function adminImportResearchFullText(request, env) {
 
   const existingContent = String(matched?.content || "").trim();
   const cleanedFullText = cleanUploadedFullText(rawText);
+  const fullTextHash = await sha256Hex(cleanedFullText.replace(/\s+/g, " "));
+
+  const duplicateRow = await env.DB.prepare(`
+    SELECT post_id, title, source_url, pdf_link
+    FROM research_knowledge
+    WHERE content LIKE ?
+    ORDER BY datetime(updated_at) DESC
+    LIMIT 1
+  `).bind(`%Full text content hash: ${fullTextHash}%`).first();
+
+  if (duplicateRow) {
+    return json({
+      ok: true,
+      duplicate: true,
+      duplicatePostId: duplicateRow.post_id || "",
+      duplicateTitle: duplicateRow.title || "",
+      title: duplicateRow.title || finalTitle,
+      fullTextCharacters: cleanedFullText.length,
+      message: "This exact PDF/TXT full text was already imported, so it was skipped."
+    });
+  }
 
   const fullTextBlock = [
     "Paper_Talk DB Research Paper",
@@ -1358,6 +1380,7 @@ async function adminImportResearchFullText(request, env) {
     `Full text source type: ${sourceType}`,
     `Full text extracted characters: ${rawText.length}`,
     `Full text stored characters: ${cleanedFullText.length}`,
+    `Full text content hash: ${fullTextHash}`,
     `Title: ${finalTitle}`,
     finalSourceUrl ? `Article link: ${finalSourceUrl}` : "",
     finalPdfLink ? `PDF link: ${finalPdfLink}` : "",
@@ -1410,6 +1433,8 @@ async function adminImportResearchFullText(request, env) {
     postId,
     title: finalTitle,
     fullTextCharacters: cleanedFullText.length,
+    fullTextHash,
+    duplicate: false,
     message: matched
       ? "Full text PDF/TXT was attached to the existing Paper_Talk research paper and re-indexed."
       : "Full text PDF/TXT was imported as a new Paper_Talk research knowledge record and indexed."
