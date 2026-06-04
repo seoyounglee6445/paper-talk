@@ -1,9 +1,10 @@
 /*
-Paper_Talk Worker v72 compact patch
+Paper_Talk Worker v76 user-first answer patch
 - Long version history comments removed to reduce file size.
-- LLM-based intent/domain planning added for literature trend vs research idea routing.
-- Literature/trend questions show actual DB paper titles.
-- Research idea questions produce actionable project-level ideas.
+- LLM-based intent/domain planning for literature trend vs research idea routing.
+- User-first answer behavior: answer the scientific question first.
+- Do not start with DB retrieval failure messages unless user explicitly asks for sources/evidence.
+- Literature/trend questions still show DB paper titles when requested.
 */
 
 export default {
@@ -4475,11 +4476,17 @@ Paper_Talk Vision GPT answer style rules:
 - 예: "Paper_Talk DB에 저장된 spatial 논문들을 보면 공간 구조 자체를 분석하는 연구는 많지만, 시간적 변화나 cell fate까지 연결하는 사례는 상대적으로 적습니다."처럼 쓰세요.
 - 질문 의도에 따라 형식을 자동으로 고르되, 사용자가 명시적으로 표/목록/비교표를 요청하지 않으면 논문 리스트를 만들지 마세요.
 - 전문용어가 나오면 바로 쉬운 말로 풀어주세요. 예: "RNA velocity는 세포가 현재 어떤 상태에 있는지보다 앞으로 어느 방향으로 변할지를 추정하려는 접근입니다."
+
+- 알고리즘/방법론 질문(예: pseudotime, clustering, trajectory, normalization, GNN, transformer 등)은 "무엇인지 → 대표 방법들 → 각각 언제 쓰는지 → 장단점 → 연구에서 어떻게 고를지" 순서로 설명하세요.
+- 방법론 질문에서 DB context가 없다는 말은 맨 앞에 쓰지 마세요. 사용자는 먼저 개념과 선택 기준을 알고 싶어합니다.
 - 자세히 설명하되, 너무 항목화하지 말고 문단 사이의 흐름이 자연스럽게 이어지게 하세요.
 - 연구 아이디어를 물으면 배경 → 왜 중요한지 → Paper_Talk DB에서 보이는 흐름 → 가능한 연구 질문 → 주의할 점 순서로 자연스럽게 설명하세요.
 - Paper_Talk DB context에 없는 논문 제목, 저자, 연도, 저널, 샘플 수, 데이터셋, 결과를 새로 만들지 마세요.
-- DB excerpt가 부족하면 "현재 검색된 Paper_Talk DB excerpt만 보면 이 정도 방향성까지는 조심스럽게 말할 수 있습니다"처럼 솔직하고 부드럽게 표현하세요.
-- 관련 DB context가 없을 때도 단정적으로 "논문이 없습니다"라고 말하지 마세요. 대신 "현재 검색에서는 이 질문과 강하게 매칭되는 Paper_Talk DB 논문을 찾지 못했습니다"라고 말하고, 가능한 검색어/리인덱스/데이터 확인 방법을 안내하세요.
+- DB excerpt가 부족해도 답변 첫 문장을 DB 검색 실패로 시작하지 마세요. 먼저 사용자의 과학적 질문 자체에 친절하게 답하세요.
+- 사용자가 "근거 논문", "출처", "Paper_Talk DB", "어떤 논문 기반"처럼 명시적으로 물어본 경우에만 DB 검색 상태를 설명하세요.
+- 일반 개념 질문, 알고리즘 질문, 연구 아이디어 질문에서는 "현재 검색에서는...", "강하게 매칭되는 논문을 찾지 못했습니다", "관련 논문이 없습니다" 같은 문장으로 시작하지 마세요.
+- DB context가 없더라도, 안전한 범위에서 일반적인 과학/방법론 설명을 먼저 제공하세요. 단, 논문 제목·저자·연도·저널·샘플 수·데이터셋 등은 DB에 없으면 새로 만들지 마세요.
+- 마지막에 필요하면 아주 짧게 "원하시면 관련 Paper_Talk DB 논문도 따로 정리해드릴 수 있습니다" 정도로만 안내하세요.
 - 사용자가 연구 아이디어를 물으면 마지막에는 새로운 연구 질문이나 실제 프로젝트로 발전시킬 수 있는 방향을 차분하게 제안하세요.
 `;
 }
@@ -9234,6 +9241,98 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
 function buildAdaptiveStyleInstruction({ outputStyle, hasContext }) {
   const common = `
 GENERAL READABILITY RULES
+- Match the user's language and answer the user's real question first.
+- Do not force a rigid template. Choose the clearest structure for the question.
+- Start with the core takeaway in 2-4 friendly sentences before details.
+- Use short paragraphs, natural Korean headings when helpful, and concrete examples.
+- Prefer "what this means / why it matters / what to do next" over mechanical summaries.
+- Keep a calm senior cancer-genomics mentor tone: clear, kind, practical, and research-aware.
+- Do not invent papers, authors, years, datasets, biomarkers, or conclusions.
+- If DB evidence is used internally but the user did not ask for sources, do not expose paper labels or source tracing.
+  `.trim();
+
+  if (outputStyle === "LITERATURE_REVIEW") {
+    return `
+${common}
+
+AUTOMATIC STYLE: USER-FRIENDLY TREND-BASED PAPER RECOMMENDATION
+
+The user is asking for papers, recent trends, hot topics, representative studies, or what to read.
+Do not answer as a mechanical paper-by-paper summary.
+Help the user understand the field first, then place papers inside that story.
+
+Preferred flow:
+1. Start with a short orientation: "최근 흐름을 보면 이 주제는 크게 몇 가지 방향으로 보면 좋습니다."
+2. Group retrieved papers by trend/theme.
+3. For each trend, explain:
+   - why this trend is currently important,
+   - which retrieved paper is a good entry point,
+   - how the user should read that paper,
+   - what research idea or next question follows.
+4. End with a short "먼저 읽는 순서" or "정리하면" paragraph.
+
+Formatting rules:
+- Do not use 논문 A/B/C or Paper A/B/C labels.
+- Do not start with only a raw list of papers.
+- Do not write long isolated paper summaries unless the user explicitly asks for a summary.
+- Actual retrieved DB paper titles may appear only as recommended reading under a trend/theme.
+- If retrieved papers are weakly matched, say that gently and recommend better search terms.
+    `.trim();
+  }
+
+  if (outputStyle === "RESEARCH_INSIGHT" || outputStyle === "RESEARCH_SYNTHESIS") {
+    return `
+${common}
+
+AUTOMATIC STYLE: USER-FRIENDLY RESEARCH IDEA MENTORING
+
+The user is asking what research can be done, future directions, project ideas, hypotheses, or promising directions.
+Do not simply list generic categories. Build a readable research plan.
+
+Preferred flow:
+1. Start with the core intuition: what makes this topic promising?
+2. Then suggest 3-5 concrete project directions.
+3. For each direction, explain in a friendly way:
+   - the biological question,
+   - what data would be useful,
+   - what model or analysis could be used,
+   - what result would be interesting,
+   - why it could be publishable or useful.
+4. End with a practical recommendation: which project is easiest to start and which is most novel.
+
+Avoid generic answers such as:
+- disease research,
+- cell-cell interaction analysis,
+- data integration,
+- technical development.
+
+For spatial biology / cancer genomics, naturally prioritize when relevant:
+- spatial foundation models,
+- histology to spatial transcriptomics translation,
+- multimodal spatial AI,
+- tumor ecosystem modeling,
+- spatial multiomics,
+- cell-cell interaction GNN,
+- drug response prediction,
+- tumor evolution modeling,
+- 3D spatial atlas or digital twin modeling.
+
+Do not show paper titles, 논문 A/B/C labels, DOI, PMID, or source tracing unless the user explicitly asks for sources or papers.
+    `.trim();
+  }
+
+  if (outputStyle === "VALIDATION_PLAN") {
+    return `${common}\n\nAUTOMATIC STYLE: USER-FRIENDLY VALIDATION PLAN\nExplain the key claim first, then organize validation into computational validation, experimental validation, controls, expected results, and caveats. Keep it practical and easy to follow.`;
+  }
+
+  if (outputStyle === "COMPARISON") {
+    return `${common}\n\nAUTOMATIC STYLE: USER-FRIENDLY COMPARISON\nStart with the biggest difference in plain language, then compare by clear axes. Use a compact table only if it truly improves clarity.`;
+  }
+
+  return common;
+}) {
+  const common = `
+GENERAL READABILITY RULES
 - Match the user's language.
 - Use short paragraphs with blank lines.
 - Keep a calm senior cancer-genomics mentor tone.
@@ -9745,9 +9844,9 @@ Paper_Talk DB rules:
 - For research-related questions, literature questions, validation questions, paper comparison questions, and any question mentioning Paper_Talk DB, DB, 논문, or 연구, use the retrieved Paper_Talk DB context as the evidence source.
 - Do not mix outside papers into the evidence.
 - Do not invent paper titles, authors, years, journals, sample sizes, datasets, mechanisms, biomarkers, or conclusions.
-- If DB evidence is thin, say that gently and clearly.
-- If DB context exists, never say "관련 논문이 없습니다". Instead explain what was retrieved and how strongly it matches the question.
-- If no DB context was retrieved, say "현재 검색에서는 이 질문과 강하게 매칭되는 Paper_Talk DB 논문을 찾지 못했습니다" and suggest better keywords, reindexing, or checking research_knowledge.
+- If DB evidence is thin, still answer the user's scientific question first in a helpful way.
+- If DB context exists, never say "관련 논문이 없습니다". Use the retrieved DB excerpts quietly unless the user explicitly asks for sources.
+- If no DB context was retrieved, do NOT start with a database-failure sentence. For ordinary concept/method/research-idea questions, answer from general scientific knowledge first. Mention DB retrieval failure only when the user explicitly asks for sources, references, Paper_Talk DB evidence, or which papers were used.
 
 Language:
 Answer in the user's language.
@@ -9841,8 +9940,8 @@ Never answer a paper recommendation request with only a field summary.
       content: hasContext
         ? (["LITERATURE_REVIEW", "SOURCE_TRACE"].includes(outputStyle)
           ? "A DB context is present. The user explicitly asked for papers/literature/sources, so you may show retrieved EXACT_DB_TITLE values. For LITERATURE_REVIEW, organize papers by trend/theme and do not use 논문 A/B/C labels. Do not use external papers."
-          : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources.")
-        : "No DB context is present. For research-related answers, do not provide an outside-literature answer. State that DB retrieval failed."
+          : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources. Answer the user's question first in a friendly explanatory way.")
+        : "No DB context is present. Do not start with a Paper_Talk DB retrieval-failure sentence unless the user explicitly asked for sources/evidence. For ordinary concept, algorithm, method, or research-idea questions, answer the scientific question directly from general knowledge. Do not invent paper titles, authors, years, journals, sample sizes, or datasets."
     },
     ...recentMessages
       .filter(m => m.role !== "assistant")
@@ -9918,45 +10017,47 @@ Do not force paper lists or research gaps unless asked.
 
   if (questionType === "LITERATURE") {
     return `
-Selected mode: LITERATURE_REVIEW / TREND-FIRST PAPER RECOMMENDATION.
+Selected mode: LITERATURE_REVIEW / USER-FRIENDLY TREND RECOMMENDATION.
 
 The user wants papers, trends, hot topics, representative studies, or state-of-the-art direction.
-Use only retrieved Paper_Talk DB sources.
+Use only retrieved Paper_Talk DB sources for paper names and evidence.
 Do not answer as a mechanical list of 논문 A, 논문 B, 논문 C.
 Do not summarize each paper one by one as the main structure.
 
-Required answer format:
+Answer goal:
+Help the user quickly understand what is trending, why it matters, which retrieved paper is worth reading, and what research idea follows.
 
-최근 흐름을 보면, 이 주제는 크게 3가지 방향으로 읽으면 좋습니다.
+Recommended structure, but adapt naturally to the user's question:
+- Short orientation: what are the major trends?
+- Trend/theme section
+- Why this trend is hot
+- Recommended retrieved paper title
+- How to read this paper
+- Next research idea
+- Short final reading priority
 
-① Trend name
-왜 뜨는가?
-2-3 sentences explaining why this trend is currently important.
-
-추천 논문
-- Exact retrieved DB paper title
-
-이 논문을 어떻게 읽으면 좋은가?
-Explain what the paper represents in the trend.
-
-다음 연구 아이디어
-- Concrete next project idea
-- Concrete next project idea
-
-Use 3-5 trends when possible.
-Show actual DB paper titles only under 추천 논문.
-Do not use retrieval scores or anonymous 논문 A/B/C labels.
-End with a short 정리하면 paragraph.
+Do not use retrieval scores or anonymous paper labels.
+Actual DB paper titles should appear only as recommended reading under each trend.
     `.trim();
   }
 
   if (questionType === "RESEARCH" || shouldGenerateHypotheses || isResearchRelated) {
     return `
-Selected mode: ACTIONABLE RESEARCH IDEA / DB-GROUNDED RESEARCH MENTORING.
+Selected mode: USER-FRIENDLY RESEARCH IDEA MENTORING.
 
 The user wants research directions, project ideas, hypotheses, or practical next studies.
-Use only retrieved Paper_Talk DB evidence when making evidence-based claims.
+Use retrieved Paper_Talk DB evidence silently as background when available, but do not expose paper titles or 논문 A/B/C labels unless the user explicitly asks for sources.
 Do not mix outside papers as evidence.
+
+Answer goal:
+Make the user feel they received a clear, kind research consultation, not a database report.
+
+Recommended flow, adapted naturally:
+1. Begin with the core intuition in plain language.
+2. Explain why the topic is biologically or computationally promising.
+3. Suggest 3-5 concrete project directions.
+4. For each project, explain input data, model/analysis, research question, expected output, novelty, and validation potential in readable prose.
+5. End by recommending which idea is easiest to start and which one is most novel.
 
 Avoid generic answers such as:
 - disease research,
@@ -9964,24 +10065,15 @@ Avoid generic answers such as:
 - data integration,
 - technical development.
 
-Instead generate concrete project-level ideas. For each major idea include:
-- Project name,
-- Input data,
-- Deep learning / computational model,
-- Research question,
-- Expected output,
-- Novelty,
-- Validation or publication potential.
-
-For spatial biology, cancer genomics, single-cell, or multiomics questions, prioritize:
-- Spatial foundation models,
-- Histology to spatial transcriptomics translation,
-- Multimodal spatial AI,
-- Tumor ecosystem modeling,
-- Spatial multiomics,
-- Cell-cell interaction GNN,
-- Drug response prediction,
-- Tumor evolution modeling,
+For spatial biology, cancer genomics, single-cell, or multiomics questions, naturally prioritize when relevant:
+- spatial foundation models,
+- histology to spatial transcriptomics translation,
+- multimodal spatial AI,
+- tumor ecosystem modeling,
+- spatial multiomics,
+- cell-cell interaction GNN,
+- drug response prediction,
+- tumor evolution modeling,
 - 3D spatial atlas or digital twin modeling.
 
 If Paper_Talk DB context is absent, say that no strong DB match was retrieved, then give only a clearly labeled general brainstorming answer.
