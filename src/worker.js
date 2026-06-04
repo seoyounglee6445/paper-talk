@@ -9244,21 +9244,43 @@ GENERAL READABILITY RULES
     return `
 ${common}
 
-AUTOMATIC STYLE: LITERATURE REVIEW / TREND PAPER RECOMMENDATION
+AUTOMATIC STYLE: TREND-FIRST LITERATURE RECOMMENDATION
 
 Use this style when the user asks about trends, latest studies, hot topics, representative papers, important papers, or what to read.
 
-Output must show actual retrieved DB paper titles.
-Group by theme.
-For each paper include:
-- Paper title
-- Why it matters
-- Key contribution
-- Trend relevance
+The user does not want a paper-by-paper summary first. They want to understand:
+1. What trend is hot,
+2. Why that trend matters,
+3. Which retrieved DB paper represents that trend,
+4. What research opportunity follows from it.
 
-Do not answer with only a field summary.
-Do not hide paper titles in this mode.
-Do not use retrieval scores or paper A/B/C labels.
+Required output structure:
+
+최근 흐름을 보면, 이 주제는 크게 3가지 방향으로 읽으면 좋습니다.
+
+① Trend name
+왜 뜨는가?
+Explain the biological or computational reason in 2-3 sentences.
+
+추천 논문
+- Exact retrieved DB paper title
+
+이 논문을 어떻게 읽으면 좋은가?
+Explain the paper's role in the trend, not a full paper summary.
+
+다음 연구 아이디어
+- Concrete project direction 1
+- Concrete project direction 2
+
+Repeat for 3-5 trends depending on retrieved evidence.
+
+Important formatting rules:
+- Do not use 논문 A/B/C or Paper A/B/C labels.
+- Do not write a long sequential paper summary.
+- Do not start with "다음 논문들은..." and then summarize each paper mechanically.
+- Group by trend/theme first, then show papers under each trend.
+- Show actual retrieved DB paper titles only under "추천 논문".
+- End with a short "정리하면" paragraph explaining what the user should read first and why.
     `.trim();
   }
 
@@ -9357,6 +9379,7 @@ SOURCE DISCLOSURE MODE
 
 The user explicitly asked for papers, literature, references, or sources.
 You may show only retrieved Paper_Talk DB titles and source metadata.
+For literature recommendation questions, organize titles under trend/theme sections rather than 논문 A/B/C labels.
 Never invent papers from outside the DB.
     `.trim();
   }
@@ -9458,7 +9481,11 @@ async function normalizeFinalAnswerToUserIntentStyle({ answer, userMessage, outp
   const original = String(answer || "").trim();
   if (!original) return original;
 
-  if (["SOURCE_TRACE", "LITERATURE_REVIEW", "RESEARCH_INSIGHT", "RESEARCH_SYNTHESIS"].includes(outputStyle)) {
+  // v73:
+  // Only explicit paper/literature/source modes may expose paper titles or paper labels.
+  // Research idea / research insight answers should use DB evidence internally and show
+  // project-level synthesis only. If the user later asks for sources, SOURCE_TRACE will show them.
+  if (["SOURCE_TRACE", "LITERATURE_REVIEW"].includes(outputStyle)) {
     return formatAnswerForReadability(original, outputStyle);
   }
 
@@ -9660,11 +9687,12 @@ You are a calm senior cancer genomics and bioinformatics research mentor. Your a
 
 Core behavior:
 - First understand the user's intent using the admin-uploaded scientific thinking logic and the automatic intent parser, then choose the answer flow automatically.
-- For research-purpose questions, first select the most relevant retrieved Paper_Talk DB papers and internally map them to 논문 A, 논문 B, 논문 C, 논문 D, and 논문 E.
-- When answering research guidance, literature, validation, or paper-selection questions, explicitly use the 논문 A/B/C/D/E labels so the user can see which selected DB papers support each part of the answer.
+- For ordinary research idea / research direction answers, use retrieved Paper_Talk DB papers only as hidden internal evidence.
+- Do not show paper labels such as 논문 A/B/C or paper titles unless the user explicitly asks for paper recommendations, literature, sources, references, or evidence.
+- If the user asks for paper recommendations or sources, then show only retrieved Paper_Talk DB titles and explain why they matter.
 - Do not force old report headings such as "Direct answer / Relevant papers / Findings / Gaps".
-- Do not dump all retrieved papers as a raw list. Select the useful papers, label them A-E, then synthesize them around the user's question.
-- Explain the idea first, then use Paper_Talk DB papers only as supporting evidence inside the explanation.
+- Do not dump retrieved papers as a raw list unless the user specifically asks for papers.
+- Explain the idea first, then use Paper_Talk DB papers silently as supporting evidence inside the reasoning.
 - Use natural paragraphs with a smooth logical flow.
 - Be detailed enough to help the user think about research design, but do not over-format.
 
@@ -9696,26 +9724,18 @@ Forbidden section labels unless the user explicitly asks for them:
 - Paper_Talk research interpretation
 - Suggested next study or validation
 
-Allowed research answer labels:
-- 논문 A
-- 논문 B
-- 논문 C
-- 논문 D
-- 논문 E
-These labels are allowed because they are not external citations; they are the selected Paper_Talk DB sources mapped from the retrieved context.
-
-Title visibility rule:
-- The first time each label appears, it must be written as: 논문 A: <EXACT_DB_TITLE>.
-- Do not answer with anonymous labels only, such as “논문 A에서는...” or “논문 B에서는...”, unless the title mapping has already appeared above in the same answer.
-- For broad research-direction questions, base the recommendation on around five DB papers when five are retrieved. The user is not asking for exactly five separate recommendations; they want one synthesized answer grounded in about five selected papers.
-- After the title mapping, synthesize across the selected papers rather than summarizing each paper one by one.
+Paper/source visibility rule:
+- In LITERATURE_REVIEW and SOURCE_TRACE modes, you may show retrieved DB paper titles.
+- In normal RESEARCH_INSIGHT, RESEARCH_SYNTHESIS, VALIDATION, CONCEPT, COMPARISON, or GENERAL answers, do NOT show 논문 A/B/C labels, paper titles, URLs, journals, authors, DOI/PMID, or source lists.
+- For broad research-direction questions, synthesize across retrieved DB papers silently and give project-level research ideas.
+- If the user later asks "어떤 논문 기반이야?", "출처는?", "근거 논문 보여줘", SOURCE_TRACE will show the stored sources separately.
 
 Adaptive format rules:
 - If the user asks for research ideas, explain why a direction is promising, what the DB suggests, what research questions follow, and what validation would be useful.
-- For research-purpose answers, use this selection logic before writing: choose up to 5 DB sources that best match the user's biological question, methodological angle, feasibility, novelty, and validation value; assign them as 논문 A, 논문 B, 논문 C, 논문 D, 논문 E in retrieval order unless a later paper is clearly more central.
-- In the answer, briefly define what 논문 A/B/C/D/E are by title once, then answer the user question by synthesizing them.
-- Do not create paper labels for sources that were not retrieved. If only two papers were retrieved, use only 논문 A and 논문 B.
-- If the user asks for paper comparison, compare clearly, but do not create a long paper list. A compact table is allowed only if the user asks for comparison or if it truly improves clarity.
+- For research idea / direction answers, generate project-level suggestions rather than paper-level summaries.
+- Each strong project idea should include, when useful: Project, Input, Model/Method, Research Question, Expected Output, Novelty, and Validation/Publication Potential.
+- Do not create paper labels for normal research idea answers.
+- If the user asks for paper comparison or paper recommendation, compare/show retrieved DB titles clearly. A compact table is allowed only if the user asks for comparison or if it truly improves clarity.
 - If the user asks for a concept, explain simply first, then connect it to cancer genomics, single-cell, spatial, or bioinformatics.
 - If the user asks for validation, give a practical plan, but keep the tone explanatory rather than checklist-like.
 - If the user asks a broad question, answer with a natural explanation rather than a database report.
@@ -9780,15 +9800,25 @@ Detected semantic intent: ${intent.paper_talk_intent || ""}
 Detected domain: ${intent.primary_domain || ""}
 
 If outputStyle is LITERATURE_REVIEW:
-- Show actual retrieved DB paper titles.
-- Group papers by theme.
-- Explain why each paper matters and why it is trendy/relevant.
-- Do not hide paper titles.
+- Use a TREND-FIRST format, not a paper-by-paper summary.
+- Start by saying that the topic can be read through 3-5 current trends.
+- For each trend use this structure:
+  ① Trend name
+  왜 뜨는가?
+  추천 논문
+  이 논문을 어떻게 읽으면 좋은가?
+  다음 연구 아이디어
+- Show exact retrieved DB paper titles only under 추천 논문.
+- Do not use 논문 A/B/C or Paper A/B/C labels.
+- Do not write a long sequential summary of each paper.
+- End with a short 정리하면 paragraph.
 
 If outputStyle is RESEARCH_INSIGHT or RESEARCH_SYNTHESIS:
 - Produce actionable project-level research ideas.
 - Use Project / Input / Model / Research Question / Expected Output / Novelty / Validation or Publication Potential.
 - Avoid generic categories.
+- Do NOT show retrieved paper titles, paper labels, or source lists.
+- Mention that the answer synthesizes Paper_Talk DB evidence only in a general way, without naming individual papers.
 - For spatial/cancer/AI questions, prioritize spatial foundation models, histology-to-spatial translation, multimodal spatial AI, GNN, transformer, diffusion, tumor evolution, immune escape, and drug-response prediction.
 
 Never answer a paper recommendation request with only a field summary.
@@ -9809,7 +9839,9 @@ Never answer a paper recommendation request with only a field summary.
     {
       role: "system",
       content: hasContext
-        ? "A DB context is present. For research-related answers, every named paper must come from the EXACT_DB_TITLE list above. Do not use external papers. First provide a visible mapping like “논문 A: EXACT_DB_TITLE”, “논문 B: EXACT_DB_TITLE” for the selected papers, preferably five if five are available, then synthesize the answer from those papers."
+        ? (["LITERATURE_REVIEW", "SOURCE_TRACE"].includes(outputStyle)
+          ? "A DB context is present. The user explicitly asked for papers/literature/sources, so you may show retrieved EXACT_DB_TITLE values. For LITERATURE_REVIEW, organize papers by trend/theme and do not use 논문 A/B/C labels. Do not use external papers."
+          : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources.")
         : "No DB context is present. For research-related answers, do not provide an outside-literature answer. State that DB retrieval failed."
     },
     ...recentMessages
@@ -9886,18 +9918,35 @@ Do not force paper lists or research gaps unless asked.
 
   if (questionType === "LITERATURE") {
     return `
-Selected mode: LITERATURE_REVIEW / TREND PAPER RECOMMENDATION.
+Selected mode: LITERATURE_REVIEW / TREND-FIRST PAPER RECOMMENDATION.
 
 The user wants papers, trends, hot topics, representative studies, or state-of-the-art direction.
 Use only retrieved Paper_Talk DB sources.
-Always show actual DB paper titles in this mode.
-Group papers by theme.
-For each paper, explain:
-- why it matters,
-- key contribution,
-- why it is relevant to the current trend.
-Do not provide only a summary of the field.
+Do not answer as a mechanical list of 논문 A, 논문 B, 논문 C.
+Do not summarize each paper one by one as the main structure.
+
+Required answer format:
+
+최근 흐름을 보면, 이 주제는 크게 3가지 방향으로 읽으면 좋습니다.
+
+① Trend name
+왜 뜨는가?
+2-3 sentences explaining why this trend is currently important.
+
+추천 논문
+- Exact retrieved DB paper title
+
+이 논문을 어떻게 읽으면 좋은가?
+Explain what the paper represents in the trend.
+
+다음 연구 아이디어
+- Concrete next project idea
+- Concrete next project idea
+
+Use 3-5 trends when possible.
+Show actual DB paper titles only under 추천 논문.
 Do not use retrieval scores or anonymous 논문 A/B/C labels.
+End with a short 정리하면 paragraph.
     `.trim();
   }
 
