@@ -271,7 +271,29 @@ let chatController = null;
 let isSending = false;
 let isGuestMode = true;
 
+const urlParams = new URLSearchParams(window.location.search);
+const GPT_KEY = (urlParams.get("gpt") || urlParams.get("gptKey") || "paper_talk").toLowerCase();
+const GPT_TITLE = GPT_KEY === "neuroscience" ? "Neuroscience GPT" : "Paper_Talk Vision GPT";
+
 const GUEST_LIMIT = 3;
+
+
+function applySpecialistGptBranding() {
+  document.title = `${GPT_TITLE} - Paper_Talk`;
+
+  const h1 = document.querySelector("main h1");
+  if (h1) h1.textContent = GPT_TITLE;
+
+  const intro = document.querySelector("main > p");
+  if (intro && GPT_KEY === "neuroscience") {
+    intro.innerHTML = `
+      Specialized GPT workspace built on curated neuroscience literature.<br><br>
+      Ask about neurodegeneration, Alzheimer's disease, Parkinson's disease, brain aging, synaptic biology, neural circuits, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 20 questions per user per month.
+    `;
+  }
+}
 
 async function readJsonSafely(response, label = "API request") {
   const contentType = response.headers.get("Content-Type") || "";
@@ -335,6 +357,7 @@ document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
   setupEventListeners();
+  applySpecialistGptBranding();
 
   const meRes = await fetch("/api/me");
   const me = await readJsonSafely(meRes, "/api/me");
@@ -356,7 +379,7 @@ async function init() {
     const box = document.getElementById("chatBox");
     box.innerHTML = `
   <p class="empty-posts">
-    Start a free preview conversation with Paper_Talk Vision GPT.<br><br>
+    Start a free preview conversation with ${GPT_TITLE}.<br><br>
     You can ask 3 questions without signing in.
   </p>
 `;
@@ -383,7 +406,7 @@ async function init() {
 async function loadThreads() {
   if (isGuestMode) return;
 
-  const res = await fetch("/api/gpt/threads");
+  const res = await fetch(`/api/gpt/threads?gptKey=${encodeURIComponent(GPT_KEY)}`);
   const data = await readJsonSafely(res, "API request");
 
   const list = document.getElementById("threadList");
@@ -429,7 +452,7 @@ async function createThread() {
   const res = await fetch("/api/gpt/threads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: "New chat" })
+    body: JSON.stringify({ title: "New chat", gptKey: GPT_KEY })
   });
 
   const data = await readJsonSafely(res, "API request");
@@ -457,7 +480,7 @@ async function deleteThread(threadId) {
 
   if (!confirm("Delete this chat?")) return;
 
-  const res = await fetch(`/api/gpt/threads/${encodeURIComponent(threadId)}`, {
+  const res = await fetch(`/api/gpt/threads/${encodeURIComponent(threadId)}?gptKey=${encodeURIComponent(GPT_KEY)}`, {
     method: "DELETE"
   });
 
@@ -483,7 +506,7 @@ async function loadMessages() {
 
   if (!currentThreadId) return;
 
-  const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}`);
+  const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}&gptKey=${encodeURIComponent(GPT_KEY)}`);
   const data = await readJsonSafely(res, "API request");
 
   if (!data.ok) {
@@ -492,7 +515,7 @@ async function loadMessages() {
   }
 
   if (!data.messages || data.messages.length === 0) {
-    box.innerHTML = `<p class="empty-posts">Start a new conversation with Paper_Talk Vision GPT.</p>`;
+    box.innerHTML = `<p class="empty-posts">Start a new conversation with ${GPT_TITLE}.</p>`;
     return;
   }
 
@@ -516,7 +539,7 @@ async function sendMessage() {
   if (isGuestMode) {
     const localUsed = getLocalGuestUsedToday();
     if (localUsed >= GUEST_LIMIT) {
-      addSignupMessage("You have used all 3 free guest questions for today. Please sign in with Google for free to continue using Paper_Talk Vision GPT.", "/auth/google");
+      addSignupMessage("You have used all 3 free guest questions for today. Please sign in with Google for free to continue using ${GPT_TITLE}.", "/auth/google");
       updateQuotaText(0, GUEST_LIMIT, true);
       return;
     }
@@ -547,7 +570,8 @@ async function sendMessage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         threadId: isGuestMode ? null : currentThreadId,
-        message: text
+        message: text,
+        gptKey: GPT_KEY
       })
     });
 
