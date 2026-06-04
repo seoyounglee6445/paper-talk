@@ -131,6 +131,14 @@ export default {
         return env.ASSETS.fetch(new Request(new URL("/visium-gpt.html", request.url)));
       }
 
+      if (pathname === "/specialist-gpts") {
+        return env.ASSETS.fetch(new Request(new URL("/specialist-gpts.html", request.url)));
+      }
+
+      if (pathname === "/neuroscience-gpt") {
+        return env.ASSETS.fetch(new Request(new URL("/visium-gpt.html?gpt=neuroscience", request.url)));
+      }
+
       if (pathname === "/community") {
         return env.ASSETS.fetch(new Request(new URL("/community.html", request.url)));
       }
@@ -181,6 +189,134 @@ function json(data, status = 200, headers = {}) {
       ...headers
     }
   });
+}
+
+
+// ======================================
+// Specialist GPT data isolation
+// ======================================
+const DEFAULT_GPT_KEY = "paper_talk";
+
+const ALLOWED_GPT_KEYS = new Set([
+  "paper_talk",
+  "neuroscience",
+  "mitochondria",
+  "single_cell",
+  "spatial_biology",
+  "cancer_genomics"
+]);
+
+function normalizeGptKey(value) {
+  const raw = String(value || DEFAULT_GPT_KEY)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
+
+  const aliases = {
+    paper: "paper_talk",
+    paper_talk: "paper_talk",
+    vision: "paper_talk",
+    vision_gpt: "paper_talk",
+    neuroscience: "neuroscience",
+    neuro: "neuroscience",
+    brain: "neuroscience",
+    mitochondria: "mitochondria",
+    mitochondrial: "mitochondria",
+    singlecell: "single_cell",
+    single_cell: "single_cell",
+    single_cell_gpt: "single_cell",
+    spatial: "spatial_biology",
+    spatial_biology: "spatial_biology",
+    cancer: "cancer_genomics",
+    cancer_genomics: "cancer_genomics"
+  };
+
+  const key = aliases[raw] || raw;
+  return ALLOWED_GPT_KEYS.has(key) ? key : DEFAULT_GPT_KEY;
+}
+
+function getGptProfile(gptKey) {
+  const key = normalizeGptKey(gptKey);
+
+  const profiles = {
+    paper_talk: {
+      key,
+      title: "Paper_Talk Vision GPT",
+      knowledgeLabel: "Paper_Talk general research knowledge"
+    },
+    neuroscience: {
+      key,
+      title: "Neuroscience GPT",
+      knowledgeLabel: "curated neuroscience knowledge"
+    },
+    mitochondria: {
+      key,
+      title: "Mitochondria GPT",
+      knowledgeLabel: "curated mitochondria knowledge"
+    },
+    single_cell: {
+      key,
+      title: "Single-cell GPT",
+      knowledgeLabel: "curated single-cell knowledge"
+    },
+    spatial_biology: {
+      key,
+      title: "Spatial Biology GPT",
+      knowledgeLabel: "curated spatial biology knowledge"
+    },
+    cancer_genomics: {
+      key,
+      title: "Cancer Genomics GPT",
+      knowledgeLabel: "curated cancer genomics knowledge"
+    }
+  };
+
+  return profiles[key] || profiles.paper_talk;
+}
+
+function getGptKeyFromRequestData(data) {
+  return normalizeGptKey(
+    data?.gptKey ||
+    data?.gpt ||
+    data?.domain ||
+    data?.category ||
+    data?.specialist ||
+    DEFAULT_GPT_KEY
+  );
+}
+
+async function ensureSpecialistGptTables(env) {
+  // These ALTER statements are intentionally safe to run repeatedly.
+  // Existing rows without gpt_key are treated as Paper_Talk Vision GPT data.
+  const statements = [
+    "ALTER TABLE research_knowledge ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'",
+    "ALTER TABLE paper_fulltext_chunks ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'",
+    "ALTER TABLE gpt_threads ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'",
+    "ALTER TABLE gpt_messages ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'",
+    "ALTER TABLE gpt_supporting_papers ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'"
+  ];
+
+  for (const sql of statements) {
+    try {
+      await env.DB.prepare(sql).run();
+    } catch {
+      // Column/table may already exist or optional table may not exist yet.
+    }
+  }
+
+  const indexStatements = [
+    "CREATE INDEX IF NOT EXISTS idx_research_knowledge_gpt_key ON research_knowledge(gpt_key)",
+    "CREATE INDEX IF NOT EXISTS idx_fulltext_chunks_gpt_key ON paper_fulltext_chunks(gpt_key)",
+    "CREATE INDEX IF NOT EXISTS idx_gpt_threads_user_gpt_key ON gpt_threads(user_id, gpt_key)",
+    "CREATE INDEX IF NOT EXISTS idx_gpt_messages_thread_gpt_key ON gpt_messages(thread_id, gpt_key)"
+  ];
+
+  for (const sql of indexStatements) {
+    try {
+      await env.DB.prepare(sql).run();
+    } catch {}
+  }
 }
 
 async function readJsonResponseSafely(response, label = "HTTP request") {
@@ -1047,6 +1183,7 @@ async function adminDeletePost(request, env) {
   // Delete chunked full-text evidence first.
   try {
     await ensurePaperFullTextTables(env);
+    await ensureSpecialistGptTables(env);
 
     const fullTextRows = await env.DB.prepare(`
       SELECT vector_id, chunk_index, content_hash
@@ -1245,6 +1382,7 @@ async function ensurePaperFullTextTables(env) {
       pdf_link TEXT,
       file_name TEXT,
       source_type TEXT,
+      gpt_key TEXT DEFAULT 'paper_talk',
       content_hash TEXT NOT NULL,
       chunk_index INTEGER NOT NULL,
       vector_id TEXT,
@@ -1276,6 +1414,21 @@ async function ensurePaperFullTextTables(env) {
   } catch {
     // Column already exists.
   }
+
+  try {
+    await env.DB.prepare(`
+      ALTER TABLE paper_fulltext_chunks ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  try {
+    await env.DB.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_paper_fulltext_chunks_gpt_key
+      ON paper_fulltext_chunks(gpt_key)
+    `).run();
+  } catch {}
 }
 
 function chunkFullTextForStorage(text, chunkSize = 3500, overlap = 250) {
@@ -1396,7 +1549,9 @@ async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInpu
   return null;
 }
 
-async function ensureMinimalResearchKnowledgeForFullText({ postId, title, sourceUrl, pdfLink, fileName, contentHash, env }) {
+async function ensureMinimalResearchKnowledgeForFullText({ postId, title, sourceUrl, pdfLink, fileName, contentHash, gptKey = DEFAULT_GPT_KEY, env }) {
+  gptKey = normalizeGptKey(gptKey);
+  await ensureSpecialistGptTables(env);
   const existing = await env.DB.prepare(`
     SELECT post_id
     FROM research_knowledge
@@ -1425,15 +1580,17 @@ async function ensureMinimalResearchKnowledgeForFullText({ postId, title, source
       source_url,
       pdf_link,
       content,
+      gpt_key,
       status,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP)
     ON CONFLICT(post_id) DO UPDATE SET
       title = excluded.title,
       source_url = excluded.source_url,
       pdf_link = excluded.pdf_link,
       content = excluded.content,
+      gpt_key = excluded.gpt_key,
       status = 'indexed',
       updated_at = CURRENT_TIMESTAMP
   `).bind(
@@ -1442,7 +1599,8 @@ async function ensureMinimalResearchKnowledgeForFullText({ postId, title, source
     title,
     sourceUrl || "",
     pdfLink || "",
-    content
+    content,
+    gptKey
   ).run();
 }
 
@@ -1452,8 +1610,10 @@ async function adminImportResearchFullText(request, env) {
   }
 
   await ensurePaperFullTextTables(env);
+  await ensureSpecialistGptTables(env);
 
   const data = await request.json().catch(() => ({}));
+  const gptKey = getGptKeyFromRequestData(data);
 
   const titleInput = String(data.title || "").trim();
   const sourceUrlInput = String(data.sourceUrl || data.articleLink || "").trim();
@@ -1486,7 +1646,7 @@ async function adminImportResearchFullText(request, env) {
   const finalTitle = titleInput || fileName.replace(/\.[^.]+$/, "");
   const finalSourceUrl = matched?.source_url || sourceUrlInput || "";
   const finalPdfLink = matched?.pdf_link || pdfLinkInput || "";
-  const postId = matched?.post_id || "fulltext_" + await sha256Hex(`${finalTitle}:${finalSourceUrl}:${fileName}`);
+  const postId = matched?.post_id || `${gptKey}_fulltext_` + await sha256Hex(`${finalTitle}:${finalSourceUrl}:${fileName}`);
 
   const cleanedFullText = cleanUploadedFullText(rawText);
   const fullTextHash = await sha256Hex(cleanedFullText.replace(/\s+/g, " "));
@@ -1534,6 +1694,7 @@ async function adminImportResearchFullText(request, env) {
     pdfLink: finalPdfLink,
     fileName,
     contentHash: fullTextHash,
+    gptKey,
     env
   });
 
@@ -1548,13 +1709,14 @@ async function adminImportResearchFullText(request, env) {
       pdf_link,
       file_name,
       source_type,
+      gpt_key,
       content_hash,
       chunk_index,
       vector_id,
       text,
       text_length
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     `${postId}:fulltext:${fullTextHash.slice(0, 16)}:${i}`,
     postId,
@@ -1563,6 +1725,7 @@ async function adminImportResearchFullText(request, env) {
     finalPdfLink,
     fileName,
     cleanedFullText.length < 500 ? `${sourceType}_low_text` : sourceType,
+    gptKey,
     fullTextHash,
     i,
     vectorIds[i],
@@ -4376,12 +4539,18 @@ async function listGptThreads(request, env) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
 
+  await ensureSpecialistGptTables(env);
+
+  const url = new URL(request.url);
+  const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || url.searchParams.get("domain"));
+
   const threads = await env.DB.prepare(`
     SELECT *
     FROM gpt_threads
     WHERE user_id = ?
+      AND COALESCE(gpt_key, 'paper_talk') = ?
     ORDER BY datetime(updated_at) DESC
-  `).bind(user.id).all();
+  `).bind(user.id, gptKey).all();
 
   return json({
     ok: true,
@@ -4396,8 +4565,11 @@ async function createGptThread(request, env) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
 
+  await ensureSpecialistGptTables(env);
+
   const data = await request.json().catch(() => ({}));
   const title = String(data.title || "New chat").trim() || "New chat";
+  const gptKey = getGptKeyFromRequestData(data);
   const threadId = crypto.randomUUID();
 
   await env.DB.prepare(`
@@ -4405,18 +4577,20 @@ async function createGptThread(request, env) {
       id,
       user_id,
       title,
+      gpt_key,
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `).bind(threadId, user.id, title).run();
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).bind(threadId, user.id, title, gptKey).run();
 
   return json({
     ok: true,
     thread: {
       id: threadId,
       user_id: user.id,
-      title
+      title,
+      gpt_key: gptKey
     }
   });
 }
@@ -4428,8 +4602,11 @@ async function listGptMessages(request, env) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
 
+  await ensureSpecialistGptTables(env);
+
   const url = new URL(request.url);
   const threadId = url.searchParams.get("threadId");
+  const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || url.searchParams.get("domain"));
 
   if (!threadId) {
     return json({ ok: false, error: "threadId is required." }, 400);
@@ -4440,7 +4617,8 @@ async function listGptMessages(request, env) {
     FROM gpt_threads
     WHERE id = ?
       AND user_id = ?
-  `).bind(threadId, user.id).first();
+      AND COALESCE(gpt_key, 'paper_talk') = ?
+  `).bind(threadId, user.id, gptKey).first();
 
   if (!thread) {
     return json({ ok: false, error: "Thread not found." }, 404);
@@ -4451,8 +4629,9 @@ async function listGptMessages(request, env) {
     FROM gpt_messages
     WHERE thread_id = ?
       AND user_id = ?
+      AND COALESCE(gpt_key, 'paper_talk') = ?
     ORDER BY datetime(created_at) ASC
-  `).bind(threadId, user.id).all();
+  `).bind(threadId, user.id, gptKey).all();
 
   return json({
     ok: true,
@@ -4944,7 +5123,9 @@ function makeSafeLikePattern(value, maxLen = 70) {
 }
 
 
-async function safeRetrievePaperContextForChat(message, env) {
+async function safeRetrievePaperContextForChat(message, env, gptKey = DEFAULT_GPT_KEY) {
+  gptKey = normalizeGptKey(gptKey);
+  await ensureSpecialistGptTables(env);
   // v52 robust bounded D1 retrieval:
   // - title, file name, keyword, and pasted full-text snippets should all retrieve papers.
   // - no broad full-table scan
@@ -4956,7 +5137,7 @@ async function safeRetrievePaperContextForChat(message, env) {
   const allItems = [];
 
   try {
-    allItems.push(...await searchPaperFullTextChunks(userQuery, env, 6));
+    allItems.push(...await searchPaperFullTextChunks(userQuery, env, 6, gptKey));
   } catch {
     // Continue to metadata fallback.
   }
@@ -4986,10 +5167,11 @@ async function safeRetrievePaperContextForChat(message, env) {
           AND post_id NOT LIKE 'thinking_logic_%'
           AND title NOT LIKE '[Thinking Logic]%'
           AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+          AND COALESCE(gpt_key, 'paper_talk') = ?
           AND (${clauses.join(" OR ")})
         ORDER BY datetime(updated_at) DESC
         LIMIT 20
-      `).bind(...params).all();
+      `).bind(gptKey, ...params).all();
 
       const scored = (rows.results || [])
         .map(row => {
@@ -5625,7 +5807,8 @@ async function saveSupportingPapersForAssistantMessage({ assistantMessageId, thr
   }
 }
 
-async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent, env) {
+async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent, env, gptKey = DEFAULT_GPT_KEY) {
+  gptKey = normalizeGptKey(gptKey);
   // v57 safe DB-grounded retrieval:
   // Research questions should always consult Paper_Talk DB, but the chat path must stay bounded.
   // Do NOT call the older broad retrieval stack here, because it can trigger many D1/Vectorize/OpenAI
@@ -5652,7 +5835,7 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
 
   for (const query of uniqueQueries) {
     try {
-      const items = await safeRetrievePaperContextForChat(query, env);
+      const items = await safeRetrievePaperContextForChat(query, env, gptKey);
       if (Array.isArray(items) && items.length) all.push(...items);
     } catch {
       // Keep the route alive. Retrieval failure should not turn into an HTML 503 response.
@@ -5670,7 +5853,7 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
     try {
       const titleCandidate = extractLikelyPaperTitleForSafeLookup(text);
       if (titleCandidate && titleCandidate !== text) {
-        return trimContextForChat(await safeRetrievePaperContextForChat(titleCandidate, env));
+        return trimContextForChat(await safeRetrievePaperContextForChat(titleCandidate, env, gptKey));
       }
     } catch {}
   }
@@ -5687,8 +5870,12 @@ async function gptChat(request, env) {
       return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
     }
 
+    await ensureSpecialistGptTables(env);
+
     const data = await request.json().catch(() => ({}));
     const message = String(data.message || "").trim();
+    const gptKey = getGptKeyFromRequestData(data);
+    const gptProfile = getGptProfile(gptKey);
     let threadId = String(data.threadId || "").trim();
 
     if (!message) {
@@ -5723,20 +5910,20 @@ async function gptChat(request, env) {
       if (!threadId) {
         threadId = crypto.randomUUID();
         await env.DB.prepare(`
-          INSERT INTO gpt_threads (id, user_id, title, created_at, updated_at)
-          VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        `).bind(threadId, user.id, message.slice(0, 60) || 'New chat').run();
+          INSERT INTO gpt_threads (id, user_id, title, gpt_key, created_at, updated_at)
+          VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `).bind(threadId, user.id, message.slice(0, 60) || 'New chat', gptKey).run();
       } else {
         const thread = await env.DB.prepare(`
-          SELECT id FROM gpt_threads WHERE id = ? AND user_id = ?
-        `).bind(threadId, user.id).first();
+          SELECT id FROM gpt_threads WHERE id = ? AND user_id = ? AND COALESCE(gpt_key, 'paper_talk') = ?
+        `).bind(threadId, user.id, gptKey).first();
         if (!thread) return json({ ok: false, error: "Thread not found." }, 404);
       }
 
       await env.DB.prepare(`
-        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, created_at)
-        VALUES (?, ?, ?, 'user', ?, CURRENT_TIMESTAMP)
-      `).bind(crypto.randomUUID(), threadId, user.id, message).run();
+        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
+        VALUES (?, ?, ?, 'user', ?, ?, CURRENT_TIMESTAMP)
+      `).bind(crypto.randomUUID(), threadId, user.id, message, gptKey).run();
     } else {
       threadId = "guest";
     }
@@ -5783,9 +5970,9 @@ async function gptChat(request, env) {
       const assistantMessageId = crypto.randomUUID();
 
       await env.DB.prepare(`
-        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, created_at)
-        VALUES (?, ?, ?, 'assistant', ?, CURRENT_TIMESTAMP)
-      `).bind(assistantMessageId, threadId, user.id, sourceAnswer).run();
+        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
+        VALUES (?, ?, ?, 'assistant', ?, ?, CURRENT_TIMESTAMP)
+      `).bind(assistantMessageId, threadId, user.id, sourceAnswer, gptKey).run();
 
       await env.DB.prepare(`
         UPDATE gpt_threads
@@ -5830,7 +6017,7 @@ async function gptChat(request, env) {
     // was retrieved instead of answering from outside literature.
     if (!generalOrBroad || inferredIntent.should_use_db_evidence) {
       try {
-        context = await retrievePaperTalkDbForResearchIntent(effectiveMessage, inferredIntent, env);
+        context = await retrievePaperTalkDbForResearchIntent(effectiveMessage, inferredIntent, env, gptKey);
       } catch {
         context = [];
       }
@@ -5841,7 +6028,7 @@ async function gptChat(request, env) {
       try {
         const titleCandidate = extractLikelyPaperTitleForSafeLookup(effectiveMessage);
         if (titleCandidate && titleCandidate !== message) {
-          context = await retrievePaperTalkDbForResearchIntent(titleCandidate, inferredIntent, env);
+          context = await retrievePaperTalkDbForResearchIntent(titleCandidate, inferredIntent, env, gptKey);
         }
       } catch {
         context = [];
@@ -5856,7 +6043,7 @@ async function gptChat(request, env) {
     let assistantText = (generalOrBroad && !context.length)
       ? await callOpenAIGeneralNoRetrieval(message, env)
       : await callOpenAIForPaperTalk({
-          userMessage: effectiveMessage,
+          userMessage: `${gptProfile.title} context. User question: ${effectiveMessage}`,
           context,
           thinkingLogicFrameworks: [],
           pastFrameworks: [],
@@ -5921,9 +6108,9 @@ async function gptChat(request, env) {
       const assistantMessageId = crypto.randomUUID();
 
       await env.DB.prepare(`
-        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, created_at)
-        VALUES (?, ?, ?, 'assistant', ?, CURRENT_TIMESTAMP)
-      `).bind(assistantMessageId, threadId, user.id, assistantText).run();
+        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
+        VALUES (?, ?, ?, 'assistant', ?, ?, CURRENT_TIMESTAMP)
+      `).bind(assistantMessageId, threadId, user.id, assistantText, gptKey).run();
 
       await saveSupportingPapersForAssistantMessage({
         assistantMessageId,
@@ -5937,8 +6124,8 @@ async function gptChat(request, env) {
         UPDATE gpt_threads
         SET updated_at = CURRENT_TIMESTAMP,
             title = CASE WHEN title = 'New chat' THEN ? ELSE title END
-        WHERE id = ? AND user_id = ?
-      `).bind(message.slice(0, 60), threadId, user.id).run();
+        WHERE id = ? AND user_id = ? AND COALESCE(gpt_key, 'paper_talk') = ?
+      `).bind(message.slice(0, 60), threadId, user.id, gptKey).run();
     }
 
     const quotaAfter = isGuest
@@ -5958,6 +6145,8 @@ async function gptChat(request, env) {
         date: quotaAfter.todayKey || null,
         resetsAt: quotaAfter.resetsAt
       },
+      gptKey,
+      gptTitle: gptProfile.title,
       sources: context.map((item, index) => ({
         paper_label: index < 10 ? `논문 ${String.fromCharCode(65 + index)}` : null,
         title: item.title,
@@ -6148,12 +6337,17 @@ async function deleteGptThread(request, env) {
     return json({ ok: false, error: "threadId is required." }, 400);
   }
 
+  await ensureSpecialistGptTables(env);
+
+  const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || url.searchParams.get("domain"));
+
   const thread = await env.DB.prepare(`
     SELECT *
     FROM gpt_threads
     WHERE id = ?
       AND user_id = ?
-  `).bind(threadId, user.id).first();
+      AND COALESCE(gpt_key, 'paper_talk') = ?
+  `).bind(threadId, user.id, gptKey).first();
 
   if (!thread) {
     return json({ ok: false, error: "Thread not found." }, 404);
@@ -6308,7 +6502,8 @@ function scoreFullTextChunkRow(row, terms) {
   return score;
 }
 
-async function searchPaperFullTextChunks(query, env, limit = 6) {
+async function searchPaperFullTextChunks(query, env, limit = 6, gptKey = DEFAULT_GPT_KEY) {
+  gptKey = normalizeGptKey(gptKey);
   const userQuery = String(query || "").trim();
   if (!userQuery) return [];
 
@@ -6374,8 +6569,11 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
           text_length,
           created_at
         FROM paper_fulltext_chunks
-        WHERE LOWER(title) LIKE ?
-           OR LOWER(file_name) LIKE ?
+        WHERE COALESCE(gpt_key, 'paper_talk') = ?
+          AND (
+            LOWER(title) LIKE ?
+            OR LOWER(file_name) LIKE ?
+          )
         ORDER BY
           CASE
             WHEN LOWER(title) LIKE ? THEN 0
@@ -6384,7 +6582,7 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
           END,
           chunk_index ASC
         LIMIT 40
-      `).bind(like, like, like, like).all();
+      `).bind(gptKey, like, like, like, like).all();
       await addRowsFromResult(result);
     } catch {
       // Continue to token search.
@@ -6421,10 +6619,11 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
           text_length,
           created_at
         FROM paper_fulltext_chunks
-        WHERE ${clauses.join(" OR ")}
+        WHERE COALESCE(gpt_key, 'paper_talk') = ?
+          AND (${clauses.join(" OR ")})
         ORDER BY datetime(created_at) DESC, chunk_index ASC
         LIMIT 120
-      `).bind(...params).all();
+      `).bind(gptKey, ...params).all();
       await addRowsFromResult(result);
     } catch {
       // Continue with whatever exact title retrieval found.
