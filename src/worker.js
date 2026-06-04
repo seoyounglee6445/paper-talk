@@ -1,4 +1,9 @@
 /*
+Paper_Talk v58 update - Paper A-D DB selection answer mode + safe DB-grounded research reasoning:
+- v58: For research-purpose GPT questions, infer the user intent with the uploaded thinking logic, select up to four most relevant Paper_Talk DB papers, label them as 논문 A/B/C/D, and answer the user question through those selected papers.
+- v58: The A-D labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
+- v58: Research answers now may use a compact 논문 A/B/C/D synthesis format when the user asks for research guidance, paper selection, or literature-based answers.
+
 Paper_Talk v27 update - forced removal of report-style GPT answers + calm research explanation style:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
@@ -5466,7 +5471,8 @@ async function gptChat(request, env) {
         date: quotaAfter.todayKey || null,
         resetsAt: quotaAfter.resetsAt
       },
-      sources: context.map(item => ({
+      sources: context.map((item, index) => ({
+        paper_label: index < 4 ? `논문 ${String.fromCharCode(65 + index)}` : null,
         title: item.title,
         source_url: item.source_url,
         pdf_link: item.pdf_link,
@@ -8569,11 +8575,13 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
 
   const contextText = hasContext
     ? context.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS).map((item, index) => {
+        const paperLabel = String.fromCharCode(65 + index);
         const title = cleanBibtexText(item.title || "");
         const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM);
 
         return [
           `DB_SOURCE_${index + 1}`,
+          `PAPER_LABEL: 논문 ${paperLabel}`,
           `EXACT_DB_TITLE: ${title}`,
           item.source_url ? `ARTICLE_URL: ${item.source_url}` : "",
           item.pdf_link ? `PDF_URL: ${item.pdf_link}` : "",
@@ -8670,9 +8678,11 @@ Your role:
 You are a calm senior cancer genomics and bioinformatics research mentor. Your answer should feel like a clear research explanation from an experienced colleague: not a rigid report, and not casual small talk.
 
 Core behavior:
-- First understand the user's intent, then choose the answer flow automatically.
-- Do not force a template such as "Direct answer / Relevant papers / Findings / Gaps".
-- Do not dump retrieved papers as a list. Never create a section titled Relevant papers.
+- First understand the user's intent using the admin-uploaded scientific thinking logic and the automatic intent parser, then choose the answer flow automatically.
+- For research-purpose questions, first select the most relevant retrieved Paper_Talk DB papers and internally map them to 논문 A, 논문 B, 논문 C, and 논문 D.
+- When answering research guidance, literature, validation, or paper-selection questions, explicitly use the 논문 A/B/C/D labels so the user can see which selected DB papers support each part of the answer.
+- Do not force old report headings such as "Direct answer / Relevant papers / Findings / Gaps".
+- Do not dump all retrieved papers as a raw list. Select the useful papers, label them A-D, then synthesize them around the user's question.
 - Explain the idea first, then use Paper_Talk DB papers only as supporting evidence inside the explanation.
 - Use natural paragraphs with a smooth logical flow.
 - Be detailed enough to help the user think about research design, but do not over-format.
@@ -8705,8 +8715,18 @@ Forbidden section labels unless the user explicitly asks for them:
 - Paper_Talk research interpretation
 - Suggested next study or validation
 
+Allowed research answer labels:
+- 논문 A
+- 논문 B
+- 논문 C
+- 논문 D
+These labels are allowed because they are not external citations; they are the selected Paper_Talk DB sources mapped from the retrieved context.
+
 Adaptive format rules:
 - If the user asks for research ideas, explain why a direction is promising, what the DB suggests, what research questions follow, and what validation would be useful.
+- For research-purpose answers, use this selection logic before writing: choose up to 4 DB sources that best match the user's biological question, methodological angle, feasibility, novelty, and validation value; assign them as 논문 A, 논문 B, 논문 C, 논문 D in retrieval order unless a later paper is clearly more central.
+- In the answer, briefly define what 논문 A/B/C/D are by title once, then answer the user question by synthesizing them.
+- Do not create paper labels for sources that were not retrieved. If only two papers were retrieved, use only 논문 A and 논문 B.
 - If the user asks for paper comparison, compare clearly, but do not create a long paper list. A compact table is allowed only if the user asks for comparison or if it truly improves clarity.
 - If the user asks for a concept, explain simply first, then connect it to cancer genomics, single-cell, spatial, or bioinformatics.
 - If the user asks for validation, give a practical plan, but keep the tone explanatory rather than checklist-like.
@@ -8871,7 +8891,8 @@ You must not mix in outside/general literature as evidence.
 However, you should not sound like a rigid report. Answer like a helpful senior researcher discussing ideas with the user.
 
 If Paper_Talk DB context is available:
-Do not force a fixed template. Use calm explanatory paragraphs unless the user explicitly asks for a table or list.
+Use the user's uploaded thinking logic silently to decide which DB papers are most relevant. Select up to four papers and label them 논문 A, 논문 B, 논문 C, 논문 D. Then answer the user's question through those selected papers.
+Do not force a cold report template. Use calm explanatory paragraphs, but make the A-D mapping visible so the user can check which paper supports each idea.
 
 For paper-reading or paper-summary requests such as "읽고 요약", "summarize", "explain this paper", or a pasted title:
 - Begin by explaining what the paper appears to be about and what question it is addressing.
@@ -8885,8 +8906,8 @@ For broad idea questions such as "뭐하면 좋을까", "연구 주제 추천", 
 - Start with a calm explanatory recommendation, not a report heading.
 - Use this style: "Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다."
 - Explain why that direction looks promising in 2~4 connected paragraphs.
-- Naturally connect the retrieved Paper_Talk DB context to the idea without creating a "Relevant papers" section.
-- Do not list paper titles as bullets. Mention a title only when it is directly useful as evidence.
+- Then show the selected DB evidence as 논문 A/B/C/D, each with the exact DB title and one short reason it was selected.
+- After the A-D mapping, synthesize what the selected papers collectively suggest for the user's research question.
 - Suggest concrete research questions as bullets only after the main explanation.
 - Explain novelty, feasibility, expected data, and validation in prose rather than as a rigid checklist.
 
@@ -8910,6 +8931,7 @@ For validation questions:
 
 For any research answer:
 - Use only the exact retrieved DB titles as paper names.
+- Map retrieved DB titles to 논문 A/B/C/D when the answer is research-purpose, literature-purpose, validation-purpose, or asks which papers are relevant.
 - Do not include external paper titles.
 - Do not add methods, years, authors, datasets, biomarkers, or mechanisms unless present in the excerpt.
 - If a detail is not in the DB excerpt, say "현재 검색된 Paper_Talk DB excerpt에는 그 부분이 명확하지 않습니다."
