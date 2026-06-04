@@ -3,159 +3,214 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-WWSD3F58L6"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-WWSD3F58L6');
+</script>
+
 <title>Research GPTs - Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
 
 <style>
-body{
-    margin:0;
-    font-family:Arial,sans-serif;
-    background:#eef2ff;
+.research-gpts-hero {
+  margin-top: 32px;
+  margin-bottom: 30px;
 }
 
-.navbar{
-    background:#1f2ea8;
-    color:white;
-    padding:18px 40px;
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
+.research-gpts-hero h1 {
+  margin-bottom: 12px;
 }
 
-.logo{
-    font-size:24px;
-    font-weight:bold;
+.research-gpts-hero p {
+  max-width: 760px;
+  line-height: 1.7;
 }
 
-.nav-links a{
-    color:white;
-    text-decoration:none;
-    margin-left:24px;
-    font-weight:600;
+.gpt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 22px;
+  margin-top: 24px;
 }
 
-.container{
-    max-width:1200px;
-    margin:auto;
-    padding:40px;
+.gpt-card {
+  background: white;
+  border: 1px solid #b9c7ff;
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
 }
 
-h1{
-    color:#1f2ea8;
+.gpt-card h2 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #1428a0;
 }
 
-.subtitle{
-    color:#555;
-    margin-bottom:40px;
+.gpt-card p {
+  line-height: 1.6;
 }
 
-.grid{
-    display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
-    gap:24px;
+.gpt-card ul {
+  padding-left: 20px;
+  line-height: 1.7;
 }
 
-.card{
-    background:white;
-    border-radius:16px;
-    padding:24px;
-    box-shadow:0 2px 10px rgba(0,0,0,0.08);
+.gpt-card .tag {
+  display: inline-block;
+  margin-bottom: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #e8f0ff;
+  color: #1428a0;
+  font-size: 13px;
+  font-weight: 700;
 }
 
-.card h2{
-    color:#1f2ea8;
-    margin-top:0;
+.gpt-card .coming-tag {
+  background: #f1f5f9;
+  color: #64748b;
 }
 
-.card p{
-    line-height:1.6;
+.gpt-card .btn {
+  margin-top: 12px;
 }
 
-.btn{
-    display:inline-block;
-    margin-top:15px;
-    padding:10px 18px;
-    background:#1f2ea8;
-    color:white;
-    border-radius:8px;
-    text-decoration:none;
-    font-weight:bold;
+.sample-box {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 16px;
+  background: #f8faff;
+  border: 1px solid #dbe4ff;
 }
 
-.coming{
-    color:#888;
-    font-weight:bold;
+.sample-box strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #1428a0;
+}
+
+.sample-box div {
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.disabled-btn {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  color: #64748b;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .gpt-card {
+    padding: 22px;
+  }
 }
 </style>
 </head>
 
 <body>
+<header class="header">
+ <nav class="nav">
+  <a href="/" class="logo">Paper_Talk</a>
+  <a href="/">Home</a>
+  <a href="/research.html">Research Paper</a>
+  <a href="/study.html">Study Materials</a>
+  <a href="/research-gpts.html">Research GPTs</a>
+  <a href="/community.html">Community</a>
+  <a href="/career.html">Career</a>
+ </nav>
+</header>
 
-<div class="navbar">
-    <div class="logo">Paper_Talk</div>
+<main class="container">
 
-    <div class="nav-links">
-        <a href="/index.html">Home</a>
-        <a href="/research.html">Research Paper</a>
-        <a href="/study.html">Study Materials</a>
-        <a href="/research-gpts.html">Research GPTs</a>
-        <a href="/community.html">Community</a>
-        <a href="/career.html">Career</a>
-    </div>
-</div>
+  <section class="research-gpts-hero">
+    <h1>Research GPTs</h1>
+    <p>
+      Specialized GPT workspaces built on curated scientific knowledge.
+      Each GPT is designed around a specific research theme so researchers can ask focused scientific questions,
+      explore literature-based directions, and generate testable ideas.
+    </p>
+  </section>
 
-<div class="container">
+  <section>
+    <h2>Available GPT</h2>
 
-<h1>Research GPTs</h1>
-
-<p class="subtitle">
-Specialized GPTs built on curated scientific knowledge.
-</p>
-
-<div class="grid">
-
-    <div class="card">
+    <div class="gpt-grid">
+      <article class="gpt-card">
+        <span class="tag">Available</span>
         <h2>🧠 Neuroscience GPT</h2>
-
         <p>
-        Built on curated neuroscience literature.
+          Built on curated neuroscience literature for exploring questions in brain research,
+          neurodegeneration, synaptic biology, and brain aging.
         </p>
 
         <ul>
-            <li>Alzheimer's disease</li>
-            <li>Parkinson's disease</li>
-            <li>Brain aging</li>
-            <li>Neurodegeneration</li>
-            <li>Microglia biology</li>
+          <li>Neurodegeneration</li>
+          <li>Alzheimer's disease</li>
+          <li>Parkinson's disease</li>
+          <li>Synaptic biology</li>
+          <li>Microglia biology</li>
+          <li>Brain aging</li>
         </ul>
 
-        <a class="btn" href="/visium-gpt.html">
-            Open GPT
-        </a>
-    </div>
+        <div class="sample-box">
+          <strong>Sample questions</strong>
+          <div>What are the hottest trends in Alzheimer's disease research?</div>
+          <div>How does microglia contribute to neurodegeneration?</div>
+          <div>What research directions connect aging and neuroscience?</div>
+        </div>
 
-    <div class="card">
+        <a class="btn" href="/visium-gpt.html?gpt=neuroscience">Open GPT</a>
+      </article>
+    </div>
+  </section>
+
+  <section style="margin-top:40px;">
+    <h2>Coming Soon</h2>
+
+    <div class="gpt-grid">
+      <article class="gpt-card">
+        <span class="tag coming-tag">Coming Soon</span>
         <h2>🧬 Mitochondria GPT</h2>
-        <p class="coming">Coming Soon</p>
-    </div>
+        <p>For questions about mitochondrial biology, metabolism, aging, and disease.</p>
+        <span class="disabled-btn">Coming Soon</span>
+      </article>
 
-    <div class="card">
+      <article class="gpt-card">
+        <span class="tag coming-tag">Coming Soon</span>
         <h2>🔬 Single-cell GPT</h2>
-        <p class="coming">Coming Soon</p>
-    </div>
+        <p>For single-cell RNA-seq, cell states, trajectories, annotation, and omics interpretation.</p>
+        <span class="disabled-btn">Coming Soon</span>
+      </article>
 
-    <div class="card">
+      <article class="gpt-card">
+        <span class="tag coming-tag">Coming Soon</span>
         <h2>🗺️ Spatial Biology GPT</h2>
-        <p class="coming">Coming Soon</p>
-    </div>
+        <p>For spatial transcriptomics, cell neighborhoods, tissue architecture, and spatial AI.</p>
+        <span class="disabled-btn">Coming Soon</span>
+      </article>
 
-    <div class="card">
+      <article class="gpt-card">
+        <span class="tag coming-tag">Coming Soon</span>
         <h2>🧪 Cancer Genomics GPT</h2>
-        <p class="coming">Coming Soon</p>
+        <p>For cancer genomics, tumor evolution, biomarkers, and translational research ideas.</p>
+        <span class="disabled-btn">Coming Soon</span>
+      </article>
     </div>
+  </section>
 
-</div>
-
-</div>
-
+</main>
 </body>
 </html>
