@@ -46,6 +46,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v44: Full-text PDF/TXT import is chunked into paper_fulltext_chunks for 1000+ PDF scaling; Admin can list/delete stored full text files.
 - v45: GPT retrieval now enriches explicit paper/title matches with paper_fulltext_chunks so uploaded PDFs are used immediately in answers.
 - v46: Large-PDF safe mode. Full-text import stores a smaller bounded chunk set, indexes only a safe subset into Vectorize, and GPT chat skips expensive DB retrieval for ordinary/general questions to prevent Cloudflare 503 HTML responses.
+- v49: Ultra-safe import/chat mode. PDF import skips Vectorize during upload, caps full-text storage to a small D1 chunk set, removes expensive fuzzy DB scans during batch import, and broad research-advice questions bypass retrieval to avoid Worker 500/503 HTML responses.
 */
 
 export default {
@@ -1322,7 +1323,7 @@ async function ensurePaperFullTextTables(env) {
   }
 }
 
-function chunkFullTextForStorage(text, chunkSize = 3500, overlap = 300) {
+function chunkFullTextForStorage(text, chunkSize = 3500, overlap = 250) {
   const clean = String(text || "")
     .replace(/\r/g, "\n")
     .replace(/[ \t]+/g, " ")
@@ -1362,68 +1363,24 @@ function chunkFullTextForStorage(text, chunkSize = 3500, overlap = 300) {
 }
 
 async function upsertFullTextChunkVectors({ postId, title, sourceUrl, pdfLink, fileName, contentHash, chunks }, env) {
-  if (!env.AI || !env.VECTORIZE) {
-    return false;
-  }
-
-  const pending = [];
-  const chunksForVector = (chunks || []).slice(0, PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT);
-  let indexedAny = false;
-
-  if (!chunksForVector.length) return false;
-
-  for (let i = 0; i < chunksForVector.length; i++) {
-    const text = chunksForVector[i];
-    const vectorId = `${postId}:fulltext:${String(contentHash || "").slice(0, 16)}:${i}`;
-
-    let embedding = null;
-    try {
-      embedding = await createEmbedding(text, env);
-    } catch {
-      continue;
-    }
-
-    indexedAny = true;
-
-    pending.push({
-      id: vectorId,
-      values: embedding,
-      metadata: {
-        post_id: postId,
-        chunk_index: i,
-        title,
-        source_url: sourceUrl || "",
-        pdf_link: pdfLink || "",
-        file_name: fileName || "",
-        content_hash: contentHash || "",
-        source_type: "full_text_chunk",
-        text
-      }
-    });
-
-    if (pending.length >= 24) {
-      await env.VECTORIZE.upsert(pending.splice(0, pending.length));
-    }
-
-    // Avoid burst limits during large batch imports.
-    await sleep(20);
-  }
-
-  if (pending.length) {
-    await env.VECTORIZE.upsert(pending);
-  }
-
-  return indexedAny;
+  // v49 ultra-safe mode:
+  // Do not create embeddings during admin PDF batch upload. Large batches of PDFs can easily
+  // exceed Cloudflare CPU/subrequest limits and return HTML 500/503 pages. The text is still
+  // stored in D1 chunks and can be retrieved by title/keyword. Reindex/repair can be used later
+  // if you want to build vectors in a controlled small batch.
+  return false;
 }
 
 async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInput, pdfLinkInput, env }) {
   const normalizedSourceUrl = normalizeUrlForMatch(sourceUrlInput);
   const normalizedPdfLink = normalizeUrlForMatch(pdfLinkInput);
 
-  let matched = null;
-
+  // v49 ultra-safe mode:
+  // During large PDF batch import, do only cheap exact/LIKE matching. Avoid scanning 500
+  // research_knowledge rows and scoring every row for every PDF; that caused Worker 500/503
+  // HTML responses when importing dozens of PDFs.
   if (sourceUrlInput || pdfLinkInput) {
-    matched = await env.DB.prepare(`
+    const matchedByUrl = await env.DB.prepare(`
       SELECT id, post_id, title, source_url, pdf_link, content
       FROM research_knowledge
       WHERE status = 'indexed'
@@ -1435,8 +1392,6 @@ async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInpu
           OR pdf_link = ?
           OR source_url = ?
           OR pdf_link = ?
-          OR REPLACE(source_url, '/', '') = REPLACE(?, '/', '')
-          OR REPLACE(pdf_link, '/', '') = REPLACE(?, '/', '')
         )
       ORDER BY datetime(updated_at) DESC
       LIMIT 1
@@ -1444,14 +1399,14 @@ async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInpu
       sourceUrlInput,
       pdfLinkInput,
       normalizedSourceUrl,
-      normalizedPdfLink,
-      normalizedSourceUrl,
       normalizedPdfLink
     ).first();
+
+    if (matchedByUrl) return matchedByUrl;
   }
 
-  if (!matched && titleInput) {
-    matched = await env.DB.prepare(`
+  if (titleInput) {
+    const exact = await env.DB.prepare(`
       SELECT id, post_id, title, source_url, pdf_link, content
       FROM research_knowledge
       WHERE status = 'indexed'
@@ -1462,58 +1417,28 @@ async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInpu
       ORDER BY datetime(updated_at) DESC
       LIMIT 1
     `).bind(titleInput).first();
-  }
 
-  if (!matched && titleInput) {
-    const safeLikeTitle = titleInput.slice(0, 120).replace(/[%_]/g, " ").trim();
+    if (exact) return exact;
 
-    if (safeLikeTitle.length >= 12) {
-      matched = await env.DB.prepare(`
+    const safeLikeTitle = titleInput.slice(0, 90).replace(/[%_]/g, ' ').trim();
+    if (safeLikeTitle.length >= 18) {
+      const like = await env.DB.prepare(`
         SELECT id, post_id, title, source_url, pdf_link, content
         FROM research_knowledge
         WHERE status = 'indexed'
-        AND post_id NOT LIKE 'thinking_logic_%'
-        AND title NOT LIKE '[Thinking Logic]%'
-        AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+          AND post_id NOT LIKE 'thinking_logic_%'
+          AND title NOT LIKE '[Thinking Logic]%'
+          AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
           AND title LIKE ?
         ORDER BY datetime(updated_at) DESC
         LIMIT 1
       `).bind(`%${safeLikeTitle}%`).first();
+
+      if (like) return like;
     }
   }
 
-  if (!matched && titleInput) {
-    const tokens = normalizeTextForSearch(titleInput)
-      .split(/\s+/)
-      .filter(token => token.length >= 5)
-      .slice(0, 8);
-
-    if (tokens.length) {
-      const rows = await env.DB.prepare(`
-        SELECT id, post_id, title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-        AND post_id NOT LIKE 'thinking_logic_%'
-        AND title NOT LIKE '[Thinking Logic]%'
-        AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 500
-      `).all();
-
-      const scored = (rows.results || [])
-        .map(row => {
-          const haystack = normalizeTextForSearch(`${row.title || ""} ${row.content || ""}`);
-          const score = tokens.reduce((sum, token) => sum + (haystack.includes(token) ? 1 : 0), 0);
-          return { row, score };
-        })
-        .filter(item => item.score >= Math.min(4, Math.max(2, Math.ceil(tokens.length * 0.45))))
-        .sort((a, b) => b.score - a.score);
-
-      if (scored.length) matched = scored[0].row;
-    }
-  }
-
-  return matched;
+  return null;
 }
 
 async function ensureMinimalResearchKnowledgeForFullText({ postId, title, sourceUrl, pdfLink, fileName, contentHash, env }) {
@@ -1660,7 +1585,7 @@ async function adminImportResearchFullText(request, env) {
   const vectorIds = chunks.map((_, index) => `${postId}:fulltext:${fullTextHash.slice(0, 16)}:${index}`);
 
   const insertStatements = chunks.map((chunk, i) => env.DB.prepare(`
-    INSERT INTO paper_fulltext_chunks (
+    INSERT OR REPLACE INTO paper_fulltext_chunks (
       id,
       post_id,
       title,
@@ -1723,7 +1648,7 @@ async function adminImportResearchFullText(request, env) {
     vectorIndexed,
     message: vectorIndexed
       ? "Full text PDF/TXT was stored as searchable chunks and indexed in Vectorize."
-      : "Full text PDF/TXT was stored as searchable chunks. Vectorize indexing was skipped or failed, but D1 keyword retrieval can still use it."
+      : "Full text PDF/TXT was stored as safe D1 chunks. Vectorize indexing is intentionally skipped during batch upload to prevent Worker 500/503 errors."
   });
 }
 
@@ -1872,7 +1797,7 @@ function cleanUploadedFullText(text) {
   // Keep enough full text for retrieval while avoiding D1/Worker prompt and CPU failures.
   // For very large PDFs, the first 350k characters usually preserves abstract, intro,
   // methods, results, discussion, figure legends, and references.
-  return cleaned.slice(0, 210000);
+  return cleaned.slice(0, PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS);
 }
 
 function makeFullTextPreferredExcerpt(content) {
@@ -4902,13 +4827,15 @@ function isSameKnowledgePaper(a, b) {
 }
 
 
-const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 24;
-const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 6;
-const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 4;
-const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 5000;
-const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 1200;
-const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 900;
+const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 8;
+const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 0;
+const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 2;
+const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 2500;
+const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 800;
+const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 400;
 const PAPER_TALK_MIN_FULLTEXT_CHARS = 20;
+const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS = 28000;
+const PAPER_TALK_SKIP_VECTORIZE_DURING_IMPORT = true;
 
 function isLikelyGeneralQuestionFast(message) {
   const text = String(message || '').trim();
@@ -4925,6 +4852,23 @@ function isLikelyGeneralQuestionFast(message) {
   if (text.length <= 80 && !/[?？].*(논문|연구|paper|cancer|omics)/i.test(text)) {
     return true;
   }
+
+  return false;
+}
+
+
+function isBroadResearchAdviceQuestionFast(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  const lower = text.toLowerCase();
+
+  // These are broad brainstorming / career / direction questions. Searching hundreds of
+  // PDF chunks for them is expensive and caused Cloudflare 500/503 HTML responses after
+  // many full-text uploads. Answer them directly, without DB/Vectorize retrieval.
+  if (/(뭘|뭐|무엇|어떤|어떻게).{0,20}(하면|할까|좋을까|좋을지|추천|아이디어|방향|주제)/.test(text)) return true;
+  if (/(연구|spatial|single.?cell|genomics|cancer).{0,30}(아이디어|방향|추천|주제|하면 좋|할까)/i.test(text)) return true;
+  if (/research\s+(idea|ideas|direction|topic|proposal|plan|recommend)/i.test(lower)) return true;
+  if (/what\s+(spatial|single[-\s]?cell|genomics|cancer).{0,40}(study|project|research)/i.test(lower)) return true;
 
   return false;
 }
@@ -5054,7 +4998,7 @@ async function gptChat(request, env) {
   // must stay attached to the paper URL/title the user mentioned earlier in the same chat.
   // We therefore use recent user messages only for retrieval anchoring.
   // The final answer still focuses on the current user message and requested output format.
-  const fastGeneralMode = isLikelyGeneralQuestionFast(message);
+  const fastGeneralMode = isLikelyGeneralQuestionFast(message) || isBroadResearchAdviceQuestionFast(message);
 
   const recentMessages = fastGeneralMode || isGuest
     ? []
