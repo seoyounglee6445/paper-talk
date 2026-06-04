@@ -4525,7 +4525,19 @@ async function searchResearchKnowledge(query, env) {
   }
 
   const merged = mergeKnowledgeResults(allResults).slice(0, 12);
-  if (merged.length > 0) return merged;
+  if (merged.length > 0) {
+    // v36:
+    // For broad research-idea questions such as "요즘 싱글셀 연구를 뭘 하면 좋을까?",
+    // first select relevant Paper_Talk DB papers, then try to read each stored source_url/pdf_link.
+    // Publisher pages can block Workers, so this live fetch only augments the stored DB abstract/content.
+    // If live fetch fails, GPT still answers from the saved Paper_Talk DB evidence.
+    if (shouldLiveEnrichSelectedDbPapers(userQuery)) {
+      const enriched = await enrichSelectedResearchPapersWithStoredUrls(merged, env);
+      return mergeKnowledgeResults(enriched).slice(0, 12);
+    }
+
+    return merged;
+  }
 
   return [];
 }
@@ -4805,6 +4817,65 @@ async function enrichExplicitPaperMatchesWithStoredUrls(items, env) {
   return output.length ? output : items;
 }
 
+
+function shouldLiveEnrichSelectedDbPapers(query) {
+  const value = String(query || "").toLowerCase();
+
+  // Direct title/URL matching is already handled earlier, but broad research-idea
+  // questions should also enrich selected DB papers using their stored URLs.
+  return (
+    /https?:\/\//i.test(value) ||
+    /doi\s*:|10\.\d{4,9}\//i.test(value) ||
+    /요즘|최근|최신|트렌드|뭘 하면 좋|무엇을 하면|연구를.*하면|아이디어|주제|방향|추천|research idea|trend|recent|latest|what.*research|topic|hypothesis/i.test(value) ||
+    /single[- ]?cell|싱글셀|scRNA|scrna|spatial|공간전사체|trajectory|rna velocity|visium|tumor microenvironment|tme|cancer genomics/i.test(value)
+  );
+}
+
+async function enrichSelectedResearchPapersWithStoredUrls(items, env) {
+  const selected = (items || [])
+    .filter(item => !isThinkingLogicKnowledgeItem(item))
+    .filter(item => String(item.source_url || item.pdf_link || "").trim())
+    .slice(0, 5);
+
+  if (!selected.length) return items || [];
+
+  const enrichedByKey = new Map();
+
+  for (const item of selected) {
+    const key = String(item.source_url || item.pdf_link || item.title || "").trim();
+    let enriched = { ...item };
+    const sourceUrl = String(item.source_url || item.pdf_link || "").trim();
+
+    if (sourceUrl && /^https?:\/\//i.test(sourceUrl)) {
+      try {
+        const fetched = await fetchReadableArticleText(sourceUrl, item.title || "");
+
+        if (fetched && containsExternalArticleData(fetched)) {
+          const combined = [
+            `Paper_Talk DB stored evidence and admin abstract/content:\n${item.content || ""}`,
+            `Live source page / metadata fetched from stored URL (${sourceUrl}):\n${fetched}`
+          ].join("\n\n---\n\n");
+
+          enriched = {
+            ...item,
+            content: cleanFetchedArticleText(combined).slice(0, 52000),
+            matched_chunk: makeBestEvidenceExcerpt(combined),
+            from_selected_db_url_live_fetch: true
+          };
+        }
+      } catch {
+        // Many publisher pages block server-side fetch. Keep DB abstract/content fallback.
+      }
+    }
+
+    if (key) enrichedByKey.set(key, enriched);
+  }
+
+  return (items || []).map(item => {
+    const key = String(item.source_url || item.pdf_link || item.title || "").trim();
+    return enrichedByKey.get(key) || item;
+  });
+}
 
 function extractAutoResearchKeywords(query) {
   const original = String(query || "");
