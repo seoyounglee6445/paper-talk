@@ -4028,9 +4028,10 @@ async function getRecentUserMessagesForRetrieval(threadId, userId, env, limit = 
 }
 
 function buildThreadRetrievalAnchor(recentMessages, currentMessage) {
-  const current = String(currentMessage || '');
+  const current = String(currentMessage || '').trim();
 
-  // If the current message already contains a paper URL/DOI/title, no extra anchor is needed.
+  // If the current message already contains a paper URL/DOI/title, use that directly.
+  // No thread anchor is needed.
   if (extractUrlsFromQuestion(current).length || extractDoiFromTextOrUrl(current)) {
     return '';
   }
@@ -4038,15 +4039,12 @@ function buildThreadRetrievalAnchor(recentMessages, currentMessage) {
   const currentTitles = extractLikelyPaperTitlesFromQuestion(current);
   if (currentTitles.length) return '';
 
-  const followUpLike = /^(key\s*takeaway|takeaway|요약|정리|중요|핵심|전체\s*논문|이\s*논문|그\s*논문|위\s*논문|abstract|초록|4줄|3줄|한\s*줄|1줄|영어로|bullet|불릿|줄\s*주세요|주세요|줘)/i.test(current.trim())
-    || /이\s*논문|그\s*논문|위\s*논문|key\s*takeaway|전체\s*논문|4줄|3줄|1줄|한\s*줄|영어로/i.test(current);
-
-  if (!followUpLike) return '';
-
   const priorTexts = (recentMessages || [])
-    .map(m => String(m.content || ''))
+    .map(m => String(m.content || '').trim())
     .filter(Boolean)
     .reverse();
+
+  let previousExplicitPaper = '';
 
   for (const text of priorTexts) {
     const urls = extractUrlsFromQuestion(text);
@@ -4054,16 +4052,31 @@ function buildThreadRetrievalAnchor(recentMessages, currentMessage) {
     const titles = extractLikelyPaperTitlesFromQuestion(text);
 
     if (urls.length || doi || titles.length) {
-      return [
+      previousExplicitPaper = [
         'Previous explicit paper reference from this thread:',
-        urls.join('
-'),
+        urls.join('\n'),
         doi ? `DOI: ${doi}` : '',
-        titles.join('
-')
-      ].filter(Boolean).join('
-');
+        titles.join('\n')
+      ].filter(Boolean).join('\n');
+      break;
     }
+  }
+
+  if (!previousExplicitPaper) return '';
+
+  // v39 automatic follow-up detection:
+  // Do not maintain a fragile list of phrases such as "key takeaway" or "전체 논문".
+  // Instead, if the user does not provide a new explicit URL/DOI/title and the message is
+  // short enough to be a follow-up/instruction, keep the previous explicit paper as context.
+  // Long standalone research questions still perform normal DB retrieval.
+  const compactCurrent = current.replace(/\s+/g, ' ');
+  const koreanChars = (compactCurrent.match(/[가-힣]/g) || []).length;
+  const latinWords = (compactCurrent.match(/[A-Za-z][A-Za-z0-9_-]*/g) || []).length;
+  const hasManyStandaloneTerms = latinWords >= 18 || koreanChars >= 180;
+  const isShortInstructionLike = compactCurrent.length <= 280 && !hasManyStandaloneTerms;
+
+  if (isShortInstructionLike) {
+    return previousExplicitPaper;
   }
 
   return '';
