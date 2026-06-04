@@ -35,6 +35,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v29: Adds /api/admin/check so admin.html can verify the admin key before saving it; trims admin keys before comparison.
 - v30: Adds no-store JSON headers to prevent stale guest quota/admin auth responses from browser or edge cache.
 - v31: Adds Admin upload for Scientific Thinking Logic PDF/TXT; extracted text is indexed as reasoning framework, not paper evidence.
+- v32: Thinking Logic PDF/TXT is distilled into compact reasoning rules before indexing. GPT uses it silently without changing the normal Paper_Talk research-mentor answer style.
 */
 
 export default {
@@ -1263,16 +1264,30 @@ async function adminImportThinkingLogic(request, env) {
   const fingerprint = `${safeTitle}:${fileName}:${rawText.slice(0, 2000)}`;
   const postId = "thinking_logic_" + await sha256Hex(fingerprint);
 
+  // Important change:
+  // Do NOT store the whole PDF as GPT context.
+  // First compress/distill the PDF into a short scientific reasoning framework.
+  // This keeps Paper_Talk's warm research-mentor answer style and prevents huge prompts / 503 errors.
+  const distilledLogic = await distillThinkingLogicForPaperTalk({
+    title: safeTitle,
+    fileName,
+    rawText,
+    env
+  });
+
   const content = [
     "Paper_Talk Scientific Thinking Logic",
     "Knowledge role: THINKING_FRAMEWORK_ONLY",
-    "Important: Use this as reasoning guidance for reading papers, evaluating data science methods, validation, uncertainty, and limitations. Do not use it as biological research evidence.",
+    "Important: Use this as silent reasoning guidance only. Do not summarize this framework to the user. Do not use it as biological research evidence.",
+    "Important: Final answers must keep the normal Paper_Talk warm Korean research-mentor style. The framework should improve judgment, not change the surface style into a textbook summary.",
     `Title: ${safeTitle}`,
     fileName ? `Imported file: ${fileName}` : "",
     sourceType ? `Imported source type: ${sourceType}` : "",
+    `Original extracted characters: ${rawText.length}`,
+    `Distilled framework characters: ${distilledLogic.length}`,
     "",
-    "Extracted thinking framework text:",
-    rawText.slice(0, 120000)
+    "Distilled scientific reasoning framework:",
+    distilledLogic
   ].filter(Boolean).join("\n");
 
   await env.DB.prepare(`
@@ -1316,9 +1331,208 @@ async function adminImportThinkingLogic(request, env) {
     imported: 1,
     sourceType: "thinking_logic",
     title: safeTitle,
-    characters: rawText.length,
-    message: "Thinking logic file was saved and indexed as reasoning framework. It will guide GPT reasoning but will not be treated as paper evidence."
+    rawCharacters: rawText.length,
+    characters: distilledLogic.length,
+    learnedCharacters: distilledLogic.length,
+    compressionRatio: Number((distilledLogic.length / Math.max(rawText.length, 1)).toFixed(4)),
+    message: "Thinking logic file was distilled into a compact reasoning framework and indexed. It will guide GPT silently without changing the normal Paper_Talk answer style."
   });
+}
+
+function splitTextForThinkingDistillation(text, chunkSize = 18000, maxChunks = 12) {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  const chunks = [];
+
+  for (let i = 0; i < value.length && chunks.length < maxChunks; i += chunkSize) {
+    chunks.push(value.slice(i, i + chunkSize));
+  }
+
+  return chunks;
+}
+
+function fallbackDistillThinkingLogic(rawText, title = "") {
+  const text = String(rawText || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n");
+
+  const importantPatterns = [
+    /data science process/i,
+    /data preparation/i,
+    /preprocessing/i,
+    /exploratory data analysis|EDA/i,
+    /feature/i,
+    /dimensionality/i,
+    /model/i,
+    /algorithm/i,
+    /validation/i,
+    /evaluation/i,
+    /performance/i,
+    /hyper-parameter|hyperparameter/i,
+    /workflow/i,
+    /limitations?|advantages?|disadvantages?/i
+  ];
+
+  const lines = text
+    .split(/\n+/)
+    .map(v => v.trim())
+    .filter(v => v.length >= 40 && v.length <= 600);
+
+  const selected = [];
+  for (const line of lines) {
+    if (selected.length >= 80) break;
+    if (importantPatterns.some(pattern => pattern.test(line))) {
+      selected.push(line);
+    }
+  }
+
+  const evidence = selected.length ? selected.join("\n") : text.slice(0, 22000);
+
+  return `
+SCIENTIFIC REASONING FRAMEWORK DISTILLED FROM: ${title || "uploaded thinking logic"}
+
+Use this silently as a paper-reading and research-design checklist.
+
+Core principles:
+1. Clarify the biological or analytical question before judging any method.
+2. Identify the data type first: bulk RNA-seq, single-cell, spatial, image, clinical cohort, or multi-omics.
+3. Check whether preprocessing, quality control, missing-value handling, scaling, and normalization are appropriate for that data type.
+4. Look for exploratory data analysis before trusting conclusions: distributions, outliers, batch effects, confounders, cohort composition, and feature behavior.
+5. Distinguish feature selection, feature engineering, and dimensionality reduction. Ask whether the chosen features are biologically meaningful and technically reliable.
+6. Match the model or statistical method to the actual task: regression, classification, clustering, trajectory, spatial structure, image analysis, or text analysis.
+7. Evaluate whether the paper uses appropriate validation: held-out data, external cohort, perturbation experiment, functional assay, spatial validation, or clinical association.
+8. Separate observed result, statistical association, biological interpretation, and mechanistic claim.
+9. Treat unsupported mechanism, over-generalization, and weak validation as limitations.
+10. When suggesting research ideas, connect data type, biological question, method, feasibility, novelty, and validation.
+
+Relevant extracted notes:
+${evidence.slice(0, 18000)}
+`.trim();
+}
+
+async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
+  if (!env.OPENAI_API_KEY) {
+    return "";
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You distill long scientific/data-science books into compact internal reasoning rules for a cancer genomics research assistant. Output concise English/Korean mixed rules. Do not write a textbook summary. Extract reusable thinking principles only."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0,
+        max_tokens: maxTokens
+      })
+    });
+
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return "";
+    }
+
+    if (!res.ok) return "";
+    return String(data?.choices?.[0]?.message?.content || "").trim();
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function distillThinkingLogicForPaperTalk({ title, fileName, rawText, env }) {
+  const chunks = splitTextForThinkingDistillation(rawText, 18000, 12);
+  const partials = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const partial = await callOpenAIThinkingDistiller(`
+Uploaded thinking-logic source: ${title || fileName || "Scientific Thinking Logic"}
+Chunk ${i + 1} of ${chunks.length}
+
+Task:
+Extract only reusable reasoning principles useful for reading biomedical/cancer genomics papers.
+Focus on:
+- data quality
+- preprocessing
+- EDA
+- feature engineering
+- model/method selection
+- validation
+- limitations
+- uncertainty
+- how to turn evidence into research ideas
+
+Do NOT summarize chapter content.
+Do NOT create final user-facing answer style.
+Return compact bullet-like rules.
+
+TEXT:
+${chunks[i]}
+`, env, 1000);
+
+    if (partial) partials.push(partial);
+    await sleep(80);
+  }
+
+  if (!partials.length) {
+    return fallbackDistillThinkingLogic(rawText, title || fileName);
+  }
+
+  const finalDistilled = await callOpenAIThinkingDistiller(`
+Source title: ${title || fileName || "Scientific Thinking Logic"}
+
+Below are partial extracted reasoning rules from a long PDF/book.
+Compress them into one final internal Paper_Talk reasoning framework.
+
+Critical constraints:
+- 4,000 to 8,000 characters preferred.
+- This must be used silently by GPT.
+- It must NOT change the final answer into a textbook summary.
+- It must preserve Paper_Talk's warm senior-researcher Korean explanation style.
+- It should help the GPT read papers, evaluate methods, suggest research ideas, and identify validation/limitations.
+- Separate "research evidence" from "reasoning framework".
+
+PARTIAL RULES:
+${partials.join("\n\n---\n\n").slice(0, 50000)}
+`, env, 2200);
+
+  const result = finalDistilled || partials.join("\n\n").slice(0, 12000);
+
+  return `
+PAPER_TALK DISTILLED SCIENTIFIC THINKING LOGIC
+
+Use silently. Do not explain this framework to the user unless explicitly asked.
+Do not cite this framework as paper evidence.
+Do not let this framework change the final answer into a dry textbook summary.
+Keep the existing Paper_Talk answer style: warm, calm, Korean research mentor, practical research suggestions.
+
+${result}
+
+Final-answer behavior:
+- For research ideas, answer like: background → why this direction is promising → what Paper_Talk DB suggests → concrete research questions → validation cautions.
+- Use the framework only to improve judgment about data, methods, validation, and uncertainty.
+- Never output the framework itself as the answer.
+`.trim().slice(0, 14000);
 }
 
 
@@ -3887,7 +4101,8 @@ Auto-inferred research retrieval query:
 ${autoIntent.retrieval_query}`
     : message;
 
-  const context = await searchResearchKnowledge(retrievalMessage, env);
+  const context = (await searchResearchKnowledge(retrievalMessage, env))
+    .filter(item => !isThinkingLogicKnowledgeItem(item));
   const thinkingLogicFrameworks = await retrieveThinkingLogicFrameworks({
     userMessage: message
   }, env);
@@ -5417,7 +5632,22 @@ async function getRecentThreadMessages(threadId, userId, env) {
 
 
 
-async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
+async 
+function isThinkingLogicKnowledgeItem(item) {
+  const postId = String(item?.post_id || item?.postId || "").toLowerCase();
+  const title = String(item?.title || "").toLowerCase();
+  const content = String(item?.content || item?.matched_chunk || "").toLowerCase();
+
+  return (
+    postId.startsWith("thinking_logic_") ||
+    title.includes("[thinking logic]".toLowerCase()) ||
+    content.includes("knowledge role: thinking_framework_only") ||
+    content.includes("paper_talk scientific thinking logic") ||
+    content.includes("thinking framework only")
+  );
+}
+
+function retrieveThinkingLogicFrameworks({ userMessage }, env) {
   try {
     if (!env.DB) return [];
 
@@ -5443,7 +5673,7 @@ async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
           )
           AND (${clauses})
         ORDER BY datetime(updated_at) DESC
-        LIMIT 4
+        LIMIT 2
       `).bind(...params).all();
 
       rows = result.results || [];
@@ -5460,7 +5690,7 @@ async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
             OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
           )
         ORDER BY datetime(updated_at) DESC
-        LIMIT 3
+        LIMIT 1
       `).all();
 
       rows = recent.results || [];
@@ -5468,7 +5698,7 @@ async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
 
     return rows.map(row => ({
       title: cleanBibtexText(row.title || "Scientific Thinking Logic").slice(0, 240),
-      content: cleanBibtexText(row.content || "").slice(0, 6000),
+      content: cleanBibtexText(row.content || "").slice(0, 2500),
       updated_at: row.updated_at || ""
     }));
   } catch {
@@ -5478,15 +5708,15 @@ async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
 
 function buildThinkingLogicContext(thinkingLogicFrameworks = []) {
   if (!Array.isArray(thinkingLogicFrameworks) || thinkingLogicFrameworks.length === 0) {
-    return "No admin-uploaded thinking-logic PDF/TXT has been retrieved yet. Use the built-in Paper_Talk scientific thinking logic only.";
+    return "No admin-uploaded distilled thinking logic was retrieved. Use only the built-in Paper_Talk scientific thinking logic.";
   }
 
-  return thinkingLogicFrameworks.slice(0, 4).map((item, index) => {
+  return thinkingLogicFrameworks.slice(0, 2).map((item, index) => {
     return [
       `THINKING_LOGIC_SOURCE_${index + 1}`,
       `TITLE: ${cleanBibtexText(item.title || "Scientific Thinking Logic")}`,
-      `ROLE: Reasoning framework only. Not biological evidence.`,
-      `EXCERPT:\n${cleanBibtexText(item.content || "").slice(0, 5000)}`
+      `ROLE: Silent reasoning framework only. Not biological evidence. Never summarize this to the user.`,
+      `DISTILLED_RULES:\n${cleanBibtexText(item.content || "").slice(0, 2200)}`
     ].join("\n");
   }).join("\n\n---\n\n");
 }
@@ -6055,7 +6285,9 @@ function convertReportStyleAnswerLocally(answer) {
 
 
 async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
-  context = mergeKnowledgeResults(Array.isArray(context) ? context : []).slice(0, 12);
+  context = mergeKnowledgeResults(Array.isArray(context) ? context : [])
+    .filter(item => !isThinkingLogicKnowledgeItem(item))
+    .slice(0, 12);
   const hasContext = context.length > 0;
 
   const intent = autoIntent || makeFallbackResearchIntent(userMessage);
@@ -6220,6 +6452,20 @@ Headings are optional. If used, make them natural Korean headings, not report la
     {
       role: "system",
       content: getPaperTalkScientificThinkingLogic()
+    },
+    {
+      role: "system",
+      content: `
+ADMIN-UPLOADED DISTILLED THINKING LOGIC
+
+Use this silently as an internal reasoning checklist only.
+Do not summarize it.
+Do not answer about the framework itself.
+Do not change the final answer into a textbook-style explanation.
+The final answer must keep the existing Paper_Talk style: warm Korean research mentor, natural paragraphs, practical research suggestions, and concrete examples.
+
+${thinkingLogicContext.slice(0, 3500)}
+      `.trim()
     },
     {
       role: "system",
