@@ -161,6 +161,7 @@
       </div>
 
       <button type="submit">Import Thinking Logic File</button>
+      <button type="button" class="danger-btn" onclick="deleteThinkingLogic()">Delete All Thinking Logic</button>
       <p id="thinkingLogicStatus"></p>
     </form>
   </section>
@@ -882,6 +883,47 @@ async function importThinkingLogicFile(e) {
     e.target.reset();
   } catch (error) {
     const message = `Thinking logic import failed: ${error?.message || error}`;
+    if (status) status.textContent = message;
+    alert(message);
+  }
+}
+
+
+async function deleteThinkingLogic() {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  if (!confirm("Delete all uploaded Scientific Thinking Logic PDF/TXT files from GPT knowledge?")) {
+    return;
+  }
+
+  const status = document.getElementById("thinkingLogicStatus");
+  if (status) status.textContent = "Deleting uploaded thinking logic files...";
+
+  try {
+    const res = await fetch("/api/admin/thinking-logic/delete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      },
+      body: JSON.stringify({ deleteAll: true })
+    });
+
+    const result = await res.json().catch(() => ({}));
+
+    if (!res.ok || !result.ok) {
+      const message = result.error || result.message || "Delete thinking logic failed.";
+      if (status) status.textContent = message;
+      alert(message);
+      return;
+    }
+
+    const message = result.message || `Deleted ${result.deleted || 0} thinking logic file(s).`;
+    if (status) status.textContent = message;
+    alert(message);
+  } catch (error) {
+    const message = `Delete thinking logic failed: ${error?.message || error}`;
     if (status) status.textContent = message;
     alert(message);
   }
