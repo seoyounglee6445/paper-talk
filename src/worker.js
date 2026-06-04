@@ -36,6 +36,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v30: Adds no-store JSON headers to prevent stale guest quota/admin auth responses from browser or edge cache.
 - v31: Adds Admin upload for Scientific Thinking Logic PDF/TXT; extracted text is indexed as reasoning framework, not paper evidence.
 - v32: Thinking Logic PDF/TXT is distilled into compact reasoning rules before indexing. GPT uses it silently without changing the normal Paper_Talk research-mentor answer style.
+- v33: CPU-safe Thinking Logic: old full-PDF logic rows are deleted on import, chat retrieves only the latest compact distilled framework, and normal paper searches exclude Thinking Logic rows.
 */
 
 export default {
@@ -1274,6 +1275,16 @@ async function adminImportThinkingLogic(request, env) {
     rawText,
     env
   });
+
+  // Remove previous thinking-logic rows first. Keeping only the latest distilled rules prevents
+  // old full-PDF rows from being scanned during chat and avoids Cloudflare CPU-limit 503 errors.
+  await env.DB.prepare(`
+    DELETE FROM research_knowledge
+    WHERE post_id LIKE 'thinking_logic_%'
+       OR title LIKE '[Thinking Logic]%'
+       OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+       OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
+  `).run();
 
   const content = [
     "Paper_Talk Scientific Thinking Logic",
@@ -4669,6 +4680,8 @@ async function smartKeywordKnowledgeSearch(query, env, limit = 14) {
     SELECT title, source_url, pdf_link, content, updated_at
     FROM research_knowledge
     WHERE status = 'indexed'
+      AND post_id NOT LIKE 'thinking_logic_%'
+      AND title NOT LIKE '[Thinking Logic]%'
       AND (${clauses.join(" OR ")})
     ORDER BY
       CASE
@@ -4802,6 +4815,8 @@ async function exactPhraseKnowledgeSearch(phrase, env) {
     SELECT title, source_url, pdf_link, content
     FROM research_knowledge
     WHERE status = 'indexed'
+      AND post_id NOT LIKE 'thinking_logic_%'
+      AND title NOT LIKE '[Thinking Logic]%'
       AND (
         LOWER(title) LIKE ?
         OR LOWER(content) LIKE ?
@@ -4937,6 +4952,8 @@ async function vectorSemanticSearch(query, env) {
       FROM research_knowledge
       WHERE post_id = ?
         AND status = 'indexed'
+        AND post_id NOT LIKE 'thinking_logic_%'
+        AND title NOT LIKE '[Thinking Logic]%'
     `).bind(postId).first();
 
     if (paper) {
@@ -4965,6 +4982,8 @@ async function directResearchKnowledgeSearch(query, env) {
         SELECT title, source_url, pdf_link, content
         FROM research_knowledge
         WHERE status = 'indexed'
+          AND post_id NOT LIKE 'thinking_logic_%'
+          AND title NOT LIKE '[Thinking Logic]%'
           AND (
             LOWER(title) LIKE ?
             OR LOWER(content) LIKE ?
@@ -4999,6 +5018,8 @@ async function directResearchKnowledgeSearch(query, env) {
         SELECT title, source_url, pdf_link, content
         FROM research_knowledge
         WHERE status = 'indexed'
+          AND post_id NOT LIKE 'thinking_logic_%'
+          AND title NOT LIKE '[Thinking Logic]%'
           AND (${titleClauses})
         ORDER BY datetime(updated_at) DESC
         LIMIT 8
@@ -5021,6 +5042,8 @@ async function directResearchKnowledgeSearch(query, env) {
         SELECT title, source_url, pdf_link, content
         FROM research_knowledge
         WHERE status = 'indexed'
+          AND post_id NOT LIKE 'thinking_logic_%'
+          AND title NOT LIKE '[Thinking Logic]%'
           AND (${contentClauses})
         ORDER BY datetime(updated_at) DESC
         LIMIT 8
@@ -5051,6 +5074,8 @@ async function directResearchKnowledgeSearch(query, env) {
         SELECT title, source_url, pdf_link, content
         FROM research_knowledge
         WHERE status = 'indexed'
+          AND post_id NOT LIKE 'thinking_logic_%'
+          AND title NOT LIKE '[Thinking Logic]%'
           AND (${orClauses})
         ORDER BY datetime(updated_at) DESC
         LIMIT 12
@@ -5320,7 +5345,10 @@ async function keywordFallbackSearch(query, env) {
     const result = await env.DB.prepare(`
       SELECT title, source_url, pdf_link, content
       FROM research_knowledge
-      WHERE (${clauses.join(" OR ")})
+      WHERE status = 'indexed'
+        AND post_id NOT LIKE 'thinking_logic_%'
+        AND title NOT LIKE '[Thinking Logic]%'
+        AND (${clauses.join(" OR ")})
       ORDER BY datetime(updated_at) DESC
       LIMIT 8
     `).bind(...params).all();
@@ -5337,7 +5365,10 @@ async function keywordFallbackSearch(query, env) {
       const fallback = await env.DB.prepare(`
         SELECT title, source_url, pdf_link, content
         FROM research_knowledge
-        WHERE LOWER(title) LIKE ?
+        WHERE status = 'indexed'
+          AND post_id NOT LIKE 'thinking_logic_%'
+          AND title NOT LIKE '[Thinking Logic]%'
+          AND LOWER(title) LIKE ?
         ORDER BY datetime(updated_at) DESC
         LIMIT 8
       `).bind(`%${fallbackPhrase}%`).all();
@@ -5535,6 +5566,8 @@ async function latestResearchKnowledge(env, limit = 8) {
       SELECT title, source_url, pdf_link, content
       FROM research_knowledge
       WHERE status = 'indexed'
+        AND post_id NOT LIKE 'thinking_logic_%'
+        AND title NOT LIKE '[Thinking Logic]%'
       ORDER BY datetime(updated_at) DESC
       LIMIT ?
     `).bind(limit).all();
@@ -5647,27 +5680,39 @@ function isThinkingLogicKnowledgeItem(item) {
 }
 
 async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
-  // TEMPORARILY DISABLED to prevent Cloudflare CPU time limit errors.
-  // The uploaded Thinking Logic PDF is kept in the DB, but it is NOT retrieved during chat.
-  // This restores normal logged-in GPT chat behavior.
-  // Later, this can be re-enabled only after storing a very small pre-distilled framework.
-  return [];
-}
-function extractDistilledThinkingLogicOnly(content) {
-  const text = cleanBibtexText(content || '');
-  const marker = 'Distilled scientific reasoning framework:';
-  const markerIndex = text.toLowerCase().indexOf(marker.toLowerCase());
-  if (markerIndex >= 0) {
-    return text.slice(markerIndex + marker.length).trim();
-  }
+  // CPU-safe v33:
+  // Thinking Logic PDF/TXT is summarized at import time.
+  // During chat, NEVER scan the full PDF text and NEVER run keyword LIKE over content.
+  // Just load the latest compact distilled framework and pass only a small slice to GPT.
+  try {
+    if (!env.DB) return [];
 
-  const marker2 = 'PAPER_TALK DISTILLED SCIENTIFIC THINKING LOGIC';
-  const marker2Index = text.toLowerCase().indexOf(marker2.toLowerCase());
-  if (marker2Index >= 0) {
-    return text.slice(marker2Index).trim();
-  }
+    const result = await env.DB.prepare(`
+      SELECT title, content, updated_at
+      FROM research_knowledge
+      WHERE status = 'indexed'
+        AND post_id LIKE 'thinking_logic_%'
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 1
+    `).all();
 
-  return text;
+    const rows = result.results || [];
+
+    return rows.map(row => {
+      const full = cleanBibtexText(row.content || "");
+      const marker = "Distilled scientific reasoning framework:";
+      const idx = full.toLowerCase().indexOf(marker.toLowerCase());
+      const distilled = idx >= 0 ? full.slice(idx + marker.length) : full;
+
+      return {
+        title: cleanBibtexText(row.title || "Scientific Thinking Logic").slice(0, 240),
+        content: distilled.slice(0, 3500),
+        updated_at: row.updated_at || ""
+      };
+    });
+  } catch {
+    return [];
+  }
 }
 
 function buildThinkingLogicContext(thinkingLogicFrameworks = []) {
@@ -6276,7 +6321,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const contextText = hasContext
     ? context.slice(0, 10).map((item, index) => {
         const title = cleanBibtexText(item.title || "");
-        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 1000);
+        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 1600);
 
         return [
           `DB_SOURCE_${index + 1}`,
@@ -6428,7 +6473,7 @@ Do not answer about the framework itself.
 Do not change the final answer into a textbook-style explanation.
 The final answer must keep the existing Paper_Talk style: warm Korean research mentor, natural paragraphs, practical research suggestions, and concrete examples.
 
-${thinkingLogicContext.slice(0, 2400)}
+${thinkingLogicContext.slice(0, 3500)}
       `.trim()
     },
     {
@@ -6445,7 +6490,7 @@ ${thinkingLogicContext.slice(0, 2400)}
     },
     {
       role: "system",
-      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 6500)}`
+      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 10000)}`
     },
     {
       role: "system",
@@ -6471,7 +6516,7 @@ ${thinkingLogicContext.slice(0, 2400)}
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
+  const timeout = setTimeout(() => controller.abort(), 110000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -6485,7 +6530,7 @@ ${thinkingLogicContext.slice(0, 2400)}
         model: env.OPENAI_MODEL || "gpt-4o-mini",
         messages,
         temperature: isResearchRelated ? 0 : 0.1,
-        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 900 : 1300
+        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 1400 : 2200
       })
     });
 
@@ -6505,7 +6550,7 @@ ${thinkingLogicContext.slice(0, 2400)}
     return data?.choices?.[0]?.message?.content || "No answer was generated.";
   } catch (error) {
     if (error && error.name === "AbortError") {
-      return "OpenAI API timeout after 45 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
+      return "OpenAI API timeout after 110 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
     }
 
     return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
