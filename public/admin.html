@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin | Paper_Talk</title>
-  <!-- v22 admin: one-click auto reindex + CSV/BibTeX import enabled -->
+  <!-- v42 admin: one-click auto reindex + CSV/BibTeX + Thinking Logic + Research Full Text PDF/TXT import enabled -->
   <link rel="stylesheet" href="/style.css">
 </head>
 
@@ -128,6 +128,32 @@
       </div>
 
       <button type="submit">Save Research Paper</button>
+    </form>
+  </section>
+
+
+  <section class="card write-form">
+    <h2>Import Research Paper Full Text PDF / TXT</h2>
+    <p>Upload the actual paper PDF or TXT full text. This is paper evidence, not Thinking Logic. GPT will use this before abstract/metadata when answering about the matched paper.</p>
+
+    <form onsubmit="importResearchFullTextFile(event)">
+      <div class="full-row">
+        <label>Paper Title or Article URL to Match</label>
+        <input id="fullTextPaperMatch" placeholder="Paste exact paper title or article URL already saved in Paper_Talk DB" required>
+      </div>
+
+      <div class="full-row">
+        <label>Optional PDF Link</label>
+        <input id="fullTextPdfLink" placeholder="Optional PDF/file link">
+      </div>
+
+      <div class="full-row">
+        <label>Research Paper Full Text PDF / TXT File</label>
+        <input type="file" id="researchFullTextFile" accept=".pdf,.txt,text/plain,application/pdf" required>
+      </div>
+
+      <button type="submit">Import Research Paper Full Text</button>
+      <p id="researchFullTextStatus"></p>
     </form>
   </section>
 
@@ -813,6 +839,100 @@ async function extractPdfTextFromFile(file) {
 
   return pages.join("\n\n");
 }
+
+
+async function importResearchFullTextFile(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const matchInput = document.getElementById("fullTextPaperMatch");
+  const pdfLinkInput = document.getElementById("fullTextPdfLink");
+  const fileInput = document.getElementById("researchFullTextFile");
+  const status = document.getElementById("researchFullTextStatus");
+
+  const matchValue = (matchInput.value || "").trim();
+  const pdfLink = (pdfLinkInput.value || "").trim();
+  const file = fileInput.files[0];
+
+  if (!matchValue) {
+    alert("Please paste the exact paper title or article URL to match.");
+    return;
+  }
+
+  if (!file) {
+    alert("Please select a research paper PDF or TXT file.");
+    return;
+  }
+
+  const fileName = file.name || "research-full-text";
+  const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
+  const isUrl = /^https?:\/\//i.test(matchValue);
+
+  try {
+    if (status) {
+      status.textContent = isPdf
+        ? "Reading paper PDF text in your browser... Large PDFs can take a little while."
+        : "Reading paper TXT file...";
+    }
+
+    const extractedText = isPdf
+      ? await extractPdfTextFromFile(file)
+      : await file.text();
+
+    if (!String(extractedText || "").trim() || String(extractedText || "").trim().length < 500) {
+      alert("I could not extract enough text from this paper. If it is a scanned PDF, OCR it first or upload a text-based PDF/TXT.");
+      if (status) status.textContent = "Import stopped: not enough readable full text was extracted.";
+      return;
+    }
+
+    if (status) {
+      status.textContent = "Uploading research full text to Paper_Talk DB and re-indexing...";
+    }
+
+    const res = await fetch("/api/admin/research/fulltext/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      },
+      body: JSON.stringify({
+        title: isUrl ? "" : matchValue,
+        sourceUrl: isUrl ? matchValue : "",
+        pdfLink,
+        fileName,
+        sourceType: isPdf ? "pdf" : "text",
+        text: extractedText
+      })
+    });
+
+    const result = await res.json().catch(() => ({}));
+
+    if (!res.ok || !result.ok) {
+      const message = result.error || result.message || "Research full text import failed.";
+      if (status) status.textContent = message;
+      alert(message);
+      return;
+    }
+
+    const doneMessage =
+      `Research full text imported.\nMatched existing paper: ${result.matchedExistingPaper ? "yes" : "no"}\nTitle: ${result.title || ""}\nCharacters: ${result.fullTextCharacters || 0}`;
+
+    if (status) {
+      status.textContent = `Research full text imported and indexed: ${result.title || "paper"} (${result.fullTextCharacters || 0} characters).`;
+    }
+
+    alert(doneMessage);
+    e.target.reset();
+    loadAdminPosts();
+  } catch (error) {
+    const message = `Research full text import failed: ${error?.message || error}`;
+    if (status) status.textContent = message;
+    alert(message);
+  }
+}
+
 
 async function importThinkingLogicFile(e) {
   e.preventDefault();
