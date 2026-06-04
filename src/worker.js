@@ -1,4 +1,12 @@
 /*
+v67 additions:
+- User intent is detected deterministically before answer generation.
+- Similar research-direction questions always use the same Research Insight style.
+- Concept, validation, literature/source, summary, comparison, and general questions each get their own stable style.
+- Research-direction answers automatically use hidden N-paper DB synthesis and do not expose paper titles.
+- Source papers are shown only when the user explicitly asks for sources/references/which papers.
+*/
+/*
 v66 additions:
 - For every research-related question, Paper_Talk automatically selects an adaptive number of DB papers (N = 3~10) internally.
 - The first answer does NOT reveal which papers were used.
@@ -31,7 +39,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v66 update - hidden N-paper synthesis + clean adaptive answer style:
+Paper_Talk v67 update - deterministic intent recognition + matching answer style:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -8994,33 +9002,98 @@ function enforceStrictUserOutputFormat(answer, userMessage) {
 }
 
 
-function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
-  const message = String(userMessage || "").toLowerCase();
+function normalizePaperTalkIntentLabel(value) {
+  const label = String(value || "").trim().toUpperCase();
+  const allowed = [
+    "SOURCE_TRACE",
+    "LITERATURE_REVIEW",
+    "RESEARCH_DIRECTION",
+    "VALIDATION_PLAN",
+    "CONCEPT_EXPLANATION",
+    "PAPER_SUMMARY",
+    "COMPARISON",
+    "METHOD_EXPLANATION",
+    "GENERAL_RESEARCH",
+    "STANDARD"
+  ];
+  return allowed.includes(label) ? label : "STANDARD";
+}
+
+function detectPaperTalkUserIntent(userMessage, intent = null) {
+  const raw = String(userMessage || "");
+  const text = raw.toLowerCase().replace(/\s+/g, " ").trim();
   const questionType = normalizeQuestionType(intent?.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent?.answer_style || "concise_answer");
 
-  const asksSources =
-    /(어떤\s*논문|무슨\s*논문|근거\s*논문|참고\s*논문|출처|source|sources|reference|references|citation|cite|paper list|논문\s*목록)/i.test(message);
+  // 1. Source tracing must be first: only this mode can reveal supporting papers.
+  if (/(어떤\s*논문|무슨\s*논문|근거\s*논문|참고\s*논문|사용한\s*논문|기반\s*논문|출처|레퍼런스|reference|references|source|sources|citation|cite|paper list|논문\s*목록)/i.test(raw)) {
+    return "SOURCE_TRACE";
+  }
 
-  const asksPaperReview =
-    /(논문\s*정리|논문\s*요약|문헌\s*리뷰|literature review|paper review|related papers|관련\s*논문|논문\s*추천|papers?\s+about)/i.test(message);
+  // 2. Explicit literature / paper review request.
+  if (/(논문\s*정리|논문\s*요약|문헌\s*리뷰|문헌\s*정리|관련\s*논문|논문\s*추천|literature review|paper review|related papers|summarize papers?|papers?\s+about)/i.test(raw)) {
+    return "LITERATURE_REVIEW";
+  }
 
-  const asksResearchDirection =
-    /(연구\s*방향|유망|앞으로|future direction|promising|research direction|연구\s*주제|아이디어|gap|knowledge gap|가설|hypothesis|뭘\s*연구|어떤\s*연구)/i.test(message);
+  // 3. Research direction / promising topic / gap / hypothesis.
+  // This catches both "cancer와 aging..." and "cancer와 metabolic..." consistently.
+  if (/(유망|앞으로|향후|연구\s*방향|연구\s*주제|연구\s*아이디어|어떤\s*연구|무슨\s*연구|뭘\s*연구|연구하면\s*좋|gap|knowledge gap|future direction|research direction|promising|hypothesis|가설|아이디어)/i.test(raw)) {
+    return "RESEARCH_DIRECTION";
+  }
 
-  const asksValidation =
-    /(검증|validation|validate|실험|experiment|protocol|control|대조군|분석\s*방법|어떻게\s*확인|how to test|test this)/i.test(message);
+  // 4. Validation / experiment / analysis design.
+  if (/(검증|실험|validation|validate|experimental design|experiment|protocol|control|대조군|분석\s*방법|어떻게\s*확인|how to test|test this|assay|perturbation)/i.test(raw)) {
+    return "VALIDATION_PLAN";
+  }
 
-  const asksConcept =
-    /(개념|정의|뜻|뭐야|무엇|설명|overview|explain|what is|define|meaning|mechanism|메커니즘|기전)/i.test(message);
+  // 5. Comparison.
+  if (/(비교|차이|다른점|공통점|compare|comparison|difference|similarity|versus| vs\.? )/i.test(raw)) {
+    return "COMPARISON";
+  }
 
-  if (asksSources) return "SOURCE_TRACE";
-  if (questionType === "LITERATURE" || asksPaperReview) return "LITERATURE_REVIEW";
-  if (questionType === "VALIDATION" || asksValidation) return "VALIDATION_PLAN";
-  if (questionType === "RESEARCH" || answerStyle === "hypothesis_generation" || asksResearchDirection) return "RESEARCH_INSIGHT";
-  if (questionType === "CONCEPT" || answerStyle === "educational_overview" || asksConcept) return "CONCEPT_EXPLANATION";
-  if (hasContext) return "RESEARCH_SYNTHESIS";
-  return "STANDARD";
+  // 6. Method explanation.
+  if (/(방법론|method|pipeline|workflow|algorithm|분석법|분석\s*파이프라인|어떻게\s*분석|tool|툴)/i.test(raw)) {
+    return "METHOD_EXPLANATION";
+  }
+
+  // 7. Concept/mechanism explanation.
+  if (/(개념|정의|뜻|뭐야|무엇|설명|기전|메커니즘|mechanism|overview|explain|what is|define|meaning|why does|how does)/i.test(raw)) {
+    return "CONCEPT_EXPLANATION";
+  }
+
+  if (questionType === "RESEARCH" || answerStyle === "hypothesis_generation") return "RESEARCH_DIRECTION";
+  if (questionType === "VALIDATION" || answerStyle === "validation_plan") return "VALIDATION_PLAN";
+  if (questionType === "LITERATURE" || answerStyle === "literature_review") return "LITERATURE_REVIEW";
+  if (questionType === "CONCEPT" || answerStyle === "educational_overview") return "CONCEPT_EXPLANATION";
+
+  return "GENERAL_RESEARCH";
+}
+
+function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
+  const detectedIntent = detectPaperTalkUserIntent(userMessage, intent);
+
+  switch (detectedIntent) {
+    case "SOURCE_TRACE":
+      return "SOURCE_TRACE";
+    case "LITERATURE_REVIEW":
+      return "LITERATURE_REVIEW";
+    case "RESEARCH_DIRECTION":
+      return "RESEARCH_INSIGHT";
+    case "VALIDATION_PLAN":
+      return "VALIDATION_PLAN";
+    case "CONCEPT_EXPLANATION":
+      return "CONCEPT_EXPLANATION";
+    case "COMPARISON":
+      return "COMPARISON";
+    case "METHOD_EXPLANATION":
+      return "METHOD_EXPLANATION";
+    case "PAPER_SUMMARY":
+      return "PAPER_SUMMARY";
+    case "GENERAL_RESEARCH":
+      return hasContext ? "RESEARCH_SYNTHESIS" : "STANDARD";
+    default:
+      return hasContext ? "RESEARCH_SYNTHESIS" : "STANDARD";
+  }
 }
 
 function buildAdaptiveStyleInstruction({ outputStyle, hasContext }) {
@@ -9039,27 +9112,32 @@ GENERAL READABILITY RULES
     return `
 ${common}
 
-AUTOMATIC STYLE: CLEAN RESEARCH INSIGHT
+AUTOMATIC STYLE: RESEARCH INSIGHT
 
-The user is asking for research direction, future potential, gap, or research idea.
+Use this style for questions about:
+- 유망한 연구
+- 앞으로의 연구 방향
+- research direction
+- future direction
+- research gap
+- hypothesis / 가설
+- 어떤 연구가 좋을지
 
-Use this exact style pattern:
+Output format:
 
 현재 Paper_Talk DB 근거들을 종합하면,
 이 주제는 크게 3~5개의 연구 축으로 정리할 수 있습니다.
 
-### 1. [Short biological theme]
+### 1. [Short theme name]
 
-[2-3 short sentences explaining what this direction means.]
+[Explain what this direction means in 2-3 short sentences.]
 
-[1-2 short sentences explaining why it is promising.]
+[Explain why it is promising in 1-2 short sentences.]
 
 
-### 2. [Short biological theme]
+### 2. [Short theme name]
 
-[2-3 short sentences.]
-
-[1-2 short sentences.]
+[Explain clearly.]
 
 
 정리하면,
@@ -9067,13 +9145,12 @@ Use this exact style pattern:
 [2-3 short lines giving the practical conclusion.]
 
 Rules:
-- Choose 3~5 themes from the selected internal papers.
+- Similar research-direction questions must use this same structure.
+- Choose 3~5 themes from the internally selected DB papers.
 - Do NOT mention how many papers were selected.
 - Do NOT mention paper titles.
-- Do NOT mention "논문", "paper", "source", "reference", "근거 논문" in the normal answer.
-- Do NOT write "첫째, 둘째, 셋째" as dense prose. Use markdown headings.
-- Do NOT use numbered inline paragraphs like "1. ... 2. ...". Use separated markdown sections.
-- The output should look easy to read on a web page.
+- Do NOT mention "논문", "paper", "source", "reference", or "근거 논문" in the normal answer.
+- Do NOT use dense numbered prose like "1. ... 2. ...". Use markdown headings with blank lines.
     `.trim();
   }
 
@@ -9130,6 +9207,58 @@ Give practical research relevance.
 ### 주의할 점
 
 Mention limitations or common misunderstanding.
+    `.trim();
+  }
+
+  if (outputStyle === "COMPARISON") {
+    return `
+${common}
+
+AUTOMATIC STYLE: COMPARISON
+
+Use this structure:
+
+### 핵심 차이
+
+Explain the main difference.
+
+### 공통점
+
+Explain shared mechanisms or shared research relevance.
+
+### 연구적으로 중요한 포인트
+
+Explain what this comparison means for study design.
+
+### 정리하면
+
+Give a short conclusion.
+    `.trim();
+  }
+
+  if (outputStyle === "METHOD_EXPLANATION") {
+    return `
+${common}
+
+AUTOMATIC STYLE: METHOD / ANALYSIS EXPLANATION
+
+Use this structure:
+
+### 분석 목적
+
+Explain what the method is trying to answer.
+
+### 기본 흐름
+
+Explain the workflow step by step.
+
+### 해석 포인트
+
+Explain what results mean biologically.
+
+### 주의할 점
+
+Mention limitations, controls, and common mistakes.
     `.trim();
   }
 
@@ -9197,8 +9326,16 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  if (outputStyle === "RESEARCH_INSIGHT" || outputStyle === "RESEARCH_SYNTHESIS") {
-    // Convert dense ordinal prose into readable sections.
+  const sectionStyles = new Set([
+    "RESEARCH_INSIGHT",
+    "RESEARCH_SYNTHESIS",
+    "VALIDATION_PLAN",
+    "CONCEPT_EXPLANATION",
+    "COMPARISON",
+    "METHOD_EXPLANATION"
+  ]);
+
+  if (sectionStyles.has(outputStyle)) {
     text = text
       .replace(/(?:^|\n)\s*1\.\s*/g, "\n\n### 1. ")
       .replace(/(?:^|\n)\s*2\.\s*/g, "\n\n### 2. ")
@@ -9210,19 +9347,10 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
       .replace(/셋째[,，]?\s*/g, "\n\n### 3. ")
       .replace(/넷째[,，]?\s*/g, "\n\n### 4. ")
       .replace(/다섯째[,，]?\s*/g, "\n\n### 5. ");
-
-    // If it has no headings, add spacing around likely thematic sentences.
-    text = text.replace(/(정리하면[,，]?)/g, "\n\n$1");
   }
 
-  // Make markdown headings visually readable.
   text = text
     .replace(/\n{0,2}(#{2,3}\s+[^\n]+)\n{0,2}/g, "\n\n$1\n\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  // Keep summary separated.
-  text = text
     .replace(/\s*(정리하면[,，]?)/g, "\n\n$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
