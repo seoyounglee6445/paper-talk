@@ -1522,14 +1522,14 @@ async function adminImportResearchFullText(request, env) {
     }, 400);
   }
 
-  const matched = await findResearchKnowledgeMatchForFullText({
-    titleInput,
-    sourceUrlInput,
-    pdfLinkInput,
-    env
-  });
+  // v51 queue-safe mode:
+  // Do not run DB matching during high-volume PDF import. Each import should be a
+  // cheap write-only operation. This avoids Cloudflare 500/503 HTML errors caused
+  // by repeated D1 lookups while uploading many files. Matching/reindexing can be
+  // repaired later by metadata title.
+  const matched = null;
 
-  const finalTitle = matched?.title || titleInput || fileName.replace(/\.[^.]+$/, "");
+  const finalTitle = titleInput || fileName.replace(/\.[^.]+$/, "");
   const finalSourceUrl = matched?.source_url || sourceUrlInput || "";
   const finalPdfLink = matched?.pdf_link || pdfLinkInput || "";
   const postId = matched?.post_id || "fulltext_" + await sha256Hex(`${finalTitle}:${finalSourceUrl}:${fileName}`);
@@ -4828,14 +4828,14 @@ function isSameKnowledgePaper(a, b) {
 }
 
 
-const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 8;
+const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 4;
 const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 0;
 const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 2;
-const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 2500;
-const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 800;
+const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 1800;
+const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 650;
 const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 400;
 const PAPER_TALK_MIN_FULLTEXT_CHARS = 20;
-const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS = 28000;
+const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS = 12000;
 const PAPER_TALK_SKIP_VECTORIZE_DURING_IMPORT = true;
 
 function isLikelyGeneralQuestionFast(message) {
@@ -4862,6 +4862,9 @@ function isBroadResearchAdviceQuestionFast(message) {
   const text = String(message || '').trim();
   if (!text) return false;
   const lower = text.toLowerCase();
+
+  // Recommendation requests for specific papers should still use the lightweight DB lookup.
+  if (/(recommend|추천).{0,30}(paper|papers|논문)|(?:paper|papers|논문).{0,30}(recommend|추천)/i.test(text)) return false;
 
   // These are broad brainstorming / career / direction questions. Searching hundreds of
   // PDF chunks for them is expensive and caused Cloudflare 500/503 HTML responses after
@@ -5004,6 +5007,58 @@ async function safeRetrievePaperContextForChat(message, env) {
   return trimContextForChat(items).slice(0, 2);
 }
 
+
+async function callOpenAIGeneralNoRetrieval(userMessage, env) {
+  if (!env.OPENAI_API_KEY) return "OPENAI_API_KEY is missing.";
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are Paper_Talk Vision GPT. Answer in the user's language. For broad research-idea, planning, or recommendation-style questions, give a helpful senior cancer genomics/bioinformatics mentor answer using general reasoning. Do not claim that the answer came from Paper_Talk DB unless specific DB context is provided. Keep it concise, practical, and calm. Plain text only.`
+          },
+          {
+            role: "user",
+            content: String(userMessage || "").slice(0, 1200)
+          }
+        ],
+        temperature: 0.2,
+        max_tokens: 900
+      })
+    });
+
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return `OpenAI general request returned non-JSON response. HTTP ${res.status}. ${raw.slice(0, 300)}`;
+    }
+
+    if (!res.ok) {
+      return `OpenAI general request failed. HTTP ${res.status}. ${data?.error?.message || JSON.stringify(data).slice(0, 300)}`;
+    }
+
+    return String(data?.choices?.[0]?.message?.content || "").trim() || "No answer returned.";
+  } catch (error) {
+    return `OpenAI general request failed safely: ${error?.message || error}`;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function gptChat(request, env) {
   try {
     const user = await getSession(request, env);
@@ -5080,16 +5135,18 @@ async function gptChat(request, env) {
 
     const autoIntent = makeFallbackResearchIntent(message);
 
-    let assistantText = await callOpenAIForPaperTalk({
-      userMessage: message,
-      context,
-      thinkingLogicFrameworks: [],
-      pastFrameworks: [],
-      generatedFramework: "",
-      recentMessages: [],
-      autoIntent,
-      strictActivePaperLocked: false
-    }, env);
+    let assistantText = generalOrBroad
+      ? await callOpenAIGeneralNoRetrieval(message, env)
+      : await callOpenAIForPaperTalk({
+          userMessage: message,
+          context,
+          thinkingLogicFrameworks: [],
+          pastFrameworks: [],
+          generatedFramework: "",
+          recentMessages: [],
+          autoIntent,
+          strictActivePaperLocked: false
+        }, env);
 
     const assistantFailed =
       /^OpenAI API timeout/i.test(assistantText) ||
