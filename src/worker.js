@@ -1,4 +1,12 @@
 /*
+v66 additions:
+- For every research-related question, Paper_Talk automatically selects an adaptive number of DB papers (N = 3~10) internally.
+- The first answer does NOT reveal which papers were used.
+- The answer is synthesized from the selected papers as research insight, not as a paper list.
+- Paper titles are shown only when the user explicitly asks for sources/references/which papers.
+- Research-direction answers use a clean, readable card-like style with headings, blank lines, and short paragraphs.
+*/
+/*
 v65 additions:
 - Retrieved Paper_Talk DB papers are INTERNAL EVIDENCE ONLY by default.
 - Normal answers must never expose paper titles, author names, journal names, DOI/PMID, URLs, or paper-label citations.
@@ -23,7 +31,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v65 update - strict internal-evidence-only answers + adaptive research style:
+Paper_Talk v66 update - hidden N-paper synthesis + clean adaptive answer style:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -5298,34 +5306,39 @@ async function ensureGptMessageSourcesTable(env) {
   `).run();
 }
 
-function estimateAdaptiveSupportingPaperLimit(context) {
+
+function estimateAdaptiveSupportingPaperLimit(context, outputStyle = "STANDARD") {
   const items = Array.isArray(context) ? context : [];
-  if (items.length <= 3) return Math.max(items.length, 0);
+  if (!items.length) return 0;
+
+  // Source/literature modes can use more papers because the user asked for papers.
+  const maxLimit = outputStyle === "SOURCE_TRACE" || outputStyle === "LITERATURE_REVIEW" ? 10 : 8;
 
   const scores = items
     .map(item => Number(item?.similarity_score || 0))
     .filter(score => Number.isFinite(score) && score > 0);
 
-  const best = scores.length ? Math.max(...scores) : 0;
-  const average = scores.length
-    ? scores.slice(0, Math.min(scores.length, 10)).reduce((a, b) => a + b, 0) / Math.min(scores.length, 10)
+  const topScores = scores.slice(0, Math.min(scores.length, 10));
+  const best = topScores.length ? Math.max(...topScores) : 0;
+  const average = topScores.length
+    ? topScores.reduce((a, b) => a + b, 0) / topScores.length
     : 0;
 
-  // Adaptive rule:
-  // - If evidence is very focused, a few papers are enough.
-  // - If the question is broad or evidence is diffuse, use more papers internally.
-  // - Never exceed 10 in chat prompt/storage.
-  if (items.length <= 5) return items.length;
-  if (best >= 0.88 || average >= 0.76) return Math.min(3, items.length);
-  if (best >= 0.72 || average >= 0.58) return Math.min(5, items.length);
-  if (items.length >= 8) return Math.min(8, items.length);
-  return Math.min(10, items.length);
+  // Adaptive N:
+  // - Narrow/focused evidence: 3~4 papers
+  // - Moderately broad evidence: 5~6 papers
+  // - Broad/diffuse research-direction questions: 7~10 papers
+  if (items.length <= 3) return items.length;
+  if (best >= 0.88 || average >= 0.76) return Math.min(4, items.length, maxLimit);
+  if (best >= 0.72 || average >= 0.58) return Math.min(6, items.length, maxLimit);
+  if (items.length >= 10) return Math.min(10, items.length, maxLimit);
+  return Math.min(items.length, maxLimit);
 }
 
-function selectTopSupportingPapersForAnswer(context, limit = null) {
+function selectTopSupportingPapersForAnswer(context, limit = null, outputStyle = "STANDARD") {
   const seen = new Set();
   const selected = [];
-  const adaptiveLimit = limit || estimateAdaptiveSupportingPaperLimit(context) || 0;
+  const adaptiveLimit = limit || estimateAdaptiveSupportingPaperLimit(context, outputStyle) || 0;
 
   for (const item of Array.isArray(context) ? context : []) {
     const title = cleanBibtexText(item?.title || "").trim();
@@ -5341,6 +5354,7 @@ function selectTopSupportingPapersForAnswer(context, limit = null) {
 
   return selected;
 }
+
 function isSupportingPaperFollowUp(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -5678,7 +5692,8 @@ async function gptChat(request, env) {
       }
     }
 
-    context = selectTopSupportingPapersForAnswer(context);
+    const outputStyleForSelection = determinePaperTalkOutputStyle({ userMessage: message, intent: inferredIntent, hasContext: context.length > 0 });
+    context = selectTopSupportingPapersForAnswer(context, null, outputStyleForSelection);
 
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
 
@@ -5730,10 +5745,17 @@ async function gptChat(request, env) {
       assistantText = hideInternalEvidenceLeaksFromNormalAnswer(assistantText);
     }
 
+    const finalOutputStyle = determinePaperTalkOutputStyle({ userMessage: message, intent: autoIntent, hasContext: context.length > 0 });
+
     assistantText = formatAnswerForReadability(
       assistantText,
-      determinePaperTalkOutputStyle({ userMessage: message, intent: autoIntent, hasContext: context.length > 0 })
+      finalOutputStyle
     );
+
+    if (!isSupportingPaperFollowUp(message)) {
+      assistantText = hideInternalEvidenceLeaksFromNormalAnswer(assistantText);
+      assistantText = formatAnswerForReadability(assistantText, finalOutputStyle);
+    }
 
     assistantText = enforceStrictUserOutputFormat(assistantText, message);
 
@@ -8585,15 +8607,15 @@ function hideInternalEvidenceLeaksFromNormalAnswer(answer) {
   let text = String(answer || "");
   if (!text.trim()) return text;
 
-  // Remove explicit internal source dumps after phrases like "다음과 같은 연구 방향".
-  text = text.replace(/(:\s*)?(?:[A-Z][^:\n]{20,180}:\s*){2,}/g, "$1");
-
   // Remove parenthetical source leaks like (논문 A: Title...) or (Paper B: Title...).
-  text = text.replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J]\s*[:：][^\)\]\n]{0,800}[\)\]]/gi, "");
+  text = text.replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J]\s*[:：][^\)\]\n]{0,1000}[\)\]]/gi, "");
 
-  // Remove direct source labels.
+  // Remove visible retrieved title chains, often English biomedical titles separated by colons.
+  text = text.replace(/검색된\s+[A-Z][A-Za-z0-9\s,\-–—:;'"“”()\/]{40,700}(?=\n|###|1\.|2\.|3\.|4\.|5\.)/g, "검색된 Paper_Talk DB 근거들을 종합하면,\n현재 이 주제는 몇 가지 연구 축으로 정리할 수 있습니다.\n\n");
+
+  // Remove direct source labels or inline paper labels.
   text = text
-    .replace(/(?:논문|paper)\s*[A-J]\s*[:：][^\n]{0,800}/gi, "")
+    .replace(/(?:논문|paper)\s*[A-J]\s*[:：][^\n]{0,1000}/gi, "")
     .replace(/(?:예를\s*들어\s*)?(?:논문|paper)\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|shows|suggests|indicates|reports|demonstrates|reveals|finds)\s*/gi, "")
     .replace(/(?:\(|\[)?\s*(?:논문|paper)\s*[A-J]\s*(?:\)|\])?/gi, "");
 
@@ -8608,18 +8630,18 @@ function hideInternalEvidenceLeaksFromNormalAnswer(answer) {
       continue;
     }
 
-    // Remove source-list headings and title-looking dumps in normal answers.
     if (/^(근거\s*논문|참고\s*논문|사용한\s*논문|supporting papers?|references?|sources?|relevant papers?)\s*[:：]?$/i.test(line)) continue;
     if (/^(?:article|pdf|doi|pmid|journal|authors?)\s*[:：]/i.test(line)) continue;
-    if (/^[-•]\s*(?:[A-Z][A-Za-z0-9,;:'"“”\- ]{25,})$/.test(line)) continue;
 
-    // Remove likely pasted title chain lines containing multiple title separators.
     const colonCount = (line.match(/:/g) || []).length;
-    if (colonCount >= 3 && /[A-Za-z]{8,}/.test(line) && line.length > 120) continue;
+    const englishTitleLike = /[A-Za-z]{8,}/.test(line) && line.length > 80;
+    if (colonCount >= 2 && englishTitleLike) continue;
 
-    // Remove inline parenthetical citation leftovers.
+    // Remove a single title-looking line at the top.
+    if (/^[A-Z][A-Za-z0-9\s,\-–—:;'"“”()\/]{70,}$/.test(line) && !/[가-힣]/.test(line)) continue;
+
     line = line
-      .replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J][^\)\]]{0,600}[\)\]]/gi, "")
+      .replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J][^\)\]]{0,800}[\)\]]/gi, "")
       .replace(/^(첫째|둘째|셋째|넷째|다섯째)\s*,?\s*(?:논문|paper)?\s*[A-J]?\s*(?:에서는|은|는|에서)?\s*/i, "")
       .replace(/^논문\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|은\/는)\s*/i, "")
       .replace(/^Paper\s*[A-J]\s*(?:shows|suggests|indicates|reports|demonstrates|reveals|finds|에서는|은|는)?\s*/i, "");
@@ -9009,42 +9031,49 @@ GENERAL READABILITY RULES
 - Put a blank line between major ideas.
 - Do not create a wall of text.
 - Keep a calm senior cancer-genomics mentor tone.
-- Unless the user explicitly asks for sources, do not expose paper titles, paper labels, or parenthetical paper citations.
+- Unless the user explicitly asks for sources, do not expose paper titles, paper labels, author names, journal names, DOI/PMID, URLs, or parenthetical paper citations.
+- The retrieved papers are used only to synthesize the answer.
   `.trim();
 
-  if (outputStyle === "RESEARCH_INSIGHT") {
+  if (outputStyle === "RESEARCH_INSIGHT" || outputStyle === "RESEARCH_SYNTHESIS") {
     return `
 ${common}
 
-AUTOMATIC STYLE: RESEARCH INSIGHT REPORT
+AUTOMATIC STYLE: CLEAN RESEARCH INSIGHT
 
-Use this structure:
+The user is asking for research direction, future potential, gap, or research idea.
 
-1. Start with 1-2 synthesis sentences.
-Example:
-"검색된 Paper_Talk DB 근거들을 종합하면,
-현재 이 주제는 크게 3~5개의 연구 축으로 정리할 수 있습니다."
+Use this exact style pattern:
 
-2. Then create 3~5 sections with markdown headings:
-### 1. [Short theme name]
-### 2. [Short theme name]
-### 3. [Short theme name]
+현재 Paper_Talk DB 근거들을 종합하면,
+이 주제는 크게 3~5개의 연구 축으로 정리할 수 있습니다.
 
-3. Under each heading, write 2 short paragraphs:
-- what the direction means
-- why it matters / why it is promising
+### 1. [Short biological theme]
 
-4. End with:
-"정리하면,"
-followed by 2-3 short lines.
+[2-3 short sentences explaining what this direction means.]
 
-5. Never write:
-- 논문 A/B/C
-- Paper A/B/C
-- paper titles
-- "(논문 A: title)"
-- "이 논문에서는"
-- "근거 논문:"
+[1-2 short sentences explaining why it is promising.]
+
+
+### 2. [Short biological theme]
+
+[2-3 short sentences.]
+
+[1-2 short sentences.]
+
+
+정리하면,
+
+[2-3 short lines giving the practical conclusion.]
+
+Rules:
+- Choose 3~5 themes from the selected internal papers.
+- Do NOT mention how many papers were selected.
+- Do NOT mention paper titles.
+- Do NOT mention "논문", "paper", "source", "reference", "근거 논문" in the normal answer.
+- Do NOT write "첫째, 둘째, 셋째" as dense prose. Use markdown headings.
+- Do NOT use numbered inline paragraphs like "1. ... 2. ...". Use separated markdown sections.
+- The output should look easy to read on a web page.
     `.trim();
   }
 
@@ -9075,8 +9104,6 @@ Explain controls, confounders, and limitations.
 ### 정리하면
 
 Give the most practical next step.
-
-Do not expose paper titles unless the user asks for sources.
     `.trim();
   }
 
@@ -9103,8 +9130,6 @@ Give practical research relevance.
 ### 주의할 점
 
 Mention limitations or common misunderstanding.
-
-Do not expose paper titles unless the user asks for sources.
     `.trim();
   }
 
@@ -9114,7 +9139,7 @@ ${common}
 
 AUTOMATIC STYLE: LITERATURE REVIEW
 
-The user is asking for literature/papers, so it is allowed to show paper titles.
+The user is asking for literature/papers, so it is allowed to show retrieved Paper_Talk DB paper titles.
 
 Use this structure:
 
@@ -9165,7 +9190,6 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
   let text = String(answer || "").trim();
   if (!text) return text;
 
-  // Normalize excessive spaces but preserve paragraphing.
   text = text
     .replace(/\r/g, "\n")
     .replace(/[ \t]+\n/g, "\n")
@@ -9173,29 +9197,31 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  // If model used ordinal prose for research insight, create readable sections.
   if (outputStyle === "RESEARCH_INSIGHT" || outputStyle === "RESEARCH_SYNTHESIS") {
-    const replacements = [
-      [/첫째[,，]?\s*/g, "\n\n### 1. "],
-      [/둘째[,，]?\s*/g, "\n\n### 2. "],
-      [/셋째[,，]?\s*/g, "\n\n### 3. "],
-      [/넷째[,，]?\s*/g, "\n\n### 4. "],
-      [/다섯째[,，]?\s*/g, "\n\n### 5. "],
-      [/마지막으로[,，]?\s*/g, "\n\n### 마지막으로 "]
-    ];
+    // Convert dense ordinal prose into readable sections.
+    text = text
+      .replace(/(?:^|\n)\s*1\.\s*/g, "\n\n### 1. ")
+      .replace(/(?:^|\n)\s*2\.\s*/g, "\n\n### 2. ")
+      .replace(/(?:^|\n)\s*3\.\s*/g, "\n\n### 3. ")
+      .replace(/(?:^|\n)\s*4\.\s*/g, "\n\n### 4. ")
+      .replace(/(?:^|\n)\s*5\.\s*/g, "\n\n### 5. ")
+      .replace(/첫째[,，]?\s*/g, "\n\n### 1. ")
+      .replace(/둘째[,，]?\s*/g, "\n\n### 2. ")
+      .replace(/셋째[,，]?\s*/g, "\n\n### 3. ")
+      .replace(/넷째[,，]?\s*/g, "\n\n### 4. ")
+      .replace(/다섯째[,，]?\s*/g, "\n\n### 5. ");
 
-    for (const [pattern, value] of replacements) {
-      text = text.replace(pattern, value);
-    }
+    // If it has no headings, add spacing around likely thematic sentences.
+    text = text.replace(/(정리하면[,，]?)/g, "\n\n$1");
   }
 
-  // Ensure headings have blank lines around them.
+  // Make markdown headings visually readable.
   text = text
     .replace(/\n{0,2}(#{2,3}\s+[^\n]+)\n{0,2}/g, "\n\n$1\n\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  // Add spacing before final summary markers.
+  // Keep summary separated.
   text = text
     .replace(/\s*(정리하면[,，]?)/g, "\n\n$1")
     .replace(/\n{3,}/g, "\n\n")
@@ -9203,7 +9229,6 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
 
   return text;
 }
-
 
 function buildStrictInternalEvidenceInstruction({ outputStyle, hasContext }) {
   const sourceRequested = outputStyle === "SOURCE_TRACE" || outputStyle === "LITERATURE_REVIEW";
@@ -9232,6 +9257,9 @@ For normal answers, NEVER expose:
 - source lists
 - parenthetical paper citations such as "(논문 A: ...)" or "(Paper B: ...)"
 - phrases like "이 논문에서는", "논문 C에 따르면", "The paper shows"
+- long pasted title chains from retrieved context
+
+Also avoid saying "논문", "paper", "source", "reference", "근거 논문" in the answer unless the user explicitly asks for sources.
 
 Use retrieved papers only to infer:
 - common biological themes
@@ -9281,10 +9309,10 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
         return [
           `DB_SOURCE_${index + 1}`,
           `INTERNAL_SOURCE_LABEL_DO_NOT_OUTPUT: ${paperLabel}`,
+          `DB_EXCERPT_FOR_SYNTHESIS_ONLY: ${excerpt}`,
           `INTERNAL_DB_TITLE_DO_NOT_OUTPUT: ${title}`,
           item.source_url ? `INTERNAL_ARTICLE_URL_DO_NOT_OUTPUT: ${item.source_url}` : "",
-          item.pdf_link ? `INTERNAL_PDF_URL_DO_NOT_OUTPUT: ${item.pdf_link}` : "",
-          `DB_EXCERPT: ${excerpt}`
+          item.pdf_link ? `INTERNAL_PDF_URL_DO_NOT_OUTPUT: ${item.pdf_link}` : ""
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "NO_MATCHING_PAPER_TALK_DB_CONTEXT";
@@ -9348,7 +9376,7 @@ For research-related answers:
 9. You may make a cautious research interpretation, but it must be explicitly based on the DB excerpts.
 10. If the DB excerpts are too thin for a strong claim, say the evidence is limited.
 
-Internal Paper_Talk DB titles, not to be shown unless user explicitly asks for sources:
+Internal Paper_Talk DB titles for storage/source-follow-up only. Do not output these titles in normal answers:
 ${dbTitles.map((title, index) => `${index + 1}. ${title}`).join("\n")}
 
 Important:
