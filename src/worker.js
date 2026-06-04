@@ -1,4 +1,12 @@
 /*
+v68 additions:
+- Style is not left to the first GPT answer.
+- After answer generation, Worker detects the user intent deterministically and rewrites/formats the final answer into the correct style.
+- Research-direction questions always become the same clean Research Insight format.
+- Similar questions such as cancer-aging, cancer-metabolism, and deep-learning+cancer now share the same layout.
+- Normal answers still hide paper titles and source metadata unless the user explicitly asks for sources.
+*/
+/*
 v67 additions:
 - User intent is detected deterministically before answer generation.
 - Similar research-direction questions always use the same Research Insight style.
@@ -39,7 +47,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v67 update - deterministic intent recognition + matching answer style:
+Paper_Talk v68 update - enforced final answer style normalization:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -5755,13 +5763,14 @@ async function gptChat(request, env) {
 
     const finalOutputStyle = determinePaperTalkOutputStyle({ userMessage: message, intent: autoIntent, hasContext: context.length > 0 });
 
-    assistantText = formatAnswerForReadability(
-      assistantText,
-      finalOutputStyle
-    );
-
     if (!isSupportingPaperFollowUp(message)) {
-      assistantText = hideInternalEvidenceLeaksFromNormalAnswer(assistantText);
+      assistantText = await normalizeFinalAnswerToUserIntentStyle({
+        answer: assistantText,
+        userMessage: message,
+        outputStyle: finalOutputStyle,
+        env
+      });
+    } else {
       assistantText = formatAnswerForReadability(assistantText, finalOutputStyle);
     }
 
@@ -9037,7 +9046,7 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
 
   // 3. Research direction / promising topic / gap / hypothesis.
   // This catches both "cancer와 aging..." and "cancer와 metabolic..." consistently.
-  if (/(유망|앞으로|향후|연구\s*방향|연구\s*주제|연구\s*아이디어|어떤\s*연구|무슨\s*연구|뭘\s*연구|연구하면\s*좋|gap|knowledge gap|future direction|research direction|promising|hypothesis|가설|아이디어)/i.test(raw)) {
+  if (/(유망|앞으로|향후|관련해서\s*어떤\s*연구|간에\s*어떤\s*연구|접목해서\s*연구|어떤게\s*접목|연구\s*방향|연구\s*주제|연구\s*아이디어|어떤\s*연구|무슨\s*연구|뭘\s*연구|연구하면\s*좋|gap|knowledge gap|future direction|research direction|promising|hypothesis|가설|아이디어)/i.test(raw)) {
     return "RESEARCH_DIRECTION";
   }
 
@@ -9399,6 +9408,167 @@ Use retrieved papers only to infer:
 The user should see the synthesized research insight, not the retrieval evidence.
 If the user later asks "어떤 논문 기반이야?", the Worker will show stored sources separately.
   `.trim();
+}
+
+
+async function normalizeFinalAnswerToUserIntentStyle({ answer, userMessage, outputStyle, env }) {
+  const original = String(answer || "").trim();
+  if (!original) return original;
+
+  // Source-trace and literature modes are allowed to expose papers; do not rewrite them into hidden style.
+  if (outputStyle === "SOURCE_TRACE" || outputStyle === "LITERATURE_REVIEW") {
+    return formatAnswerForReadability(original, outputStyle);
+  }
+
+  const cleaned = hideInternalEvidenceLeaksFromNormalAnswer(original);
+  const formatted = formatAnswerForReadability(cleaned, outputStyle);
+
+  // For research-direction questions, enforce the card-like Research Insight style with a second short rewrite.
+  // This is intentionally separate from the main answer generation because otherwise the model may still
+  // produce dense prose or inconsistent numbered paragraphs.
+  if (outputStyle !== "RESEARCH_INSIGHT" && outputStyle !== "RESEARCH_SYNTHESIS") {
+    return formatted;
+  }
+
+  if (!env.OPENAI_API_KEY) {
+    return forceLocalResearchInsightLayout(formatted);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `
+You are the final answer style normalizer for Paper_Talk.
+
+Task:
+Rewrite the draft into the exact user-facing style requested below.
+
+CRITICAL:
+- Do NOT add new scientific facts.
+- Do NOT add paper titles.
+- Do NOT mention paper labels such as 논문 A/B/C or Paper A/B/C.
+- Do NOT mention "source", "reference", "paper", "논문", "근거 논문", "출처".
+- Do NOT expose author names, journal names, DOI, PMID, URLs, or retrieval scores.
+- Do NOT write dense numbered prose.
+- Use clean Korean research-mentor style.
+
+Required format for research-direction questions:
+
+현재 Paper_Talk DB 근거들을 종합하면,
+이 주제는 크게 3~5개의 연구 축으로 정리할 수 있습니다.
+
+### 1. [Short theme name]
+
+[2-3 short sentences.]
+
+[1-2 short sentences explaining why this is promising.]
+
+
+### 2. [Short theme name]
+
+[2-3 short sentences.]
+
+[1-2 short sentences explaining why this is promising.]
+
+
+정리하면,
+
+[2-3 short lines.]
+
+Style:
+- Put a blank line between sections.
+- Each section should be readable on a web page.
+- Use 3 to 5 sections depending on the content.
+- Same style for similar questions.
+- Return only the rewritten answer.
+            `.trim()
+          },
+          {
+            role: "user",
+            content: [
+              "User question:",
+              String(userMessage || "").slice(0, 1000),
+              "",
+              "Draft answer to rewrite:",
+              formatted.slice(0, 5000)
+            ].join("\\n")
+          }
+        ],
+        temperature: 0,
+        max_tokens: 1600
+      })
+    });
+
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return forceLocalResearchInsightLayout(formatted);
+    }
+
+    if (!res.ok) return forceLocalResearchInsightLayout(formatted);
+
+    const rewritten = String(data?.choices?.[0]?.message?.content || "").trim();
+    if (!rewritten) return forceLocalResearchInsightLayout(formatted);
+
+    return formatAnswerForReadability(
+      hideInternalEvidenceLeaksFromNormalAnswer(rewritten),
+      outputStyle
+    );
+  } catch {
+    return forceLocalResearchInsightLayout(formatted);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function forceLocalResearchInsightLayout(answer) {
+  let text = String(answer || "").trim();
+  if (!text) return text;
+
+  text = hideInternalEvidenceLeaksFromNormalAnswer(text);
+
+  // Convert common ordinal or inline numbered prose into sections.
+  text = text
+    .replace(/(?:^|\n)\s*1\.\s*/g, "\n\n### 1. ")
+    .replace(/(?:^|\n)\s*2\.\s*/g, "\n\n### 2. ")
+    .replace(/(?:^|\n)\s*3\.\s*/g, "\n\n### 3. ")
+    .replace(/(?:^|\n)\s*4\.\s*/g, "\n\n### 4. ")
+    .replace(/(?:^|\n)\s*5\.\s*/g, "\n\n### 5. ")
+    .replace(/첫 번째로[,，]?\s*/g, "\n\n### 1. ")
+    .replace(/두 번째로[,，]?\s*/g, "\n\n### 2. ")
+    .replace(/세 번째로[,，]?\s*/g, "\n\n### 3. ")
+    .replace(/첫째[,，]?\s*/g, "\n\n### 1. ")
+    .replace(/둘째[,，]?\s*/g, "\n\n### 2. ")
+    .replace(/셋째[,，]?\s*/g, "\n\n### 3. ")
+    .replace(/넷째[,，]?\s*/g, "\n\n### 4. ")
+    .replace(/다섯째[,，]?\s*/g, "\n\n### 5. ");
+
+  if (!/^현재 Paper_Talk DB 근거들을 종합하면/.test(text)) {
+    text = "현재 Paper_Talk DB 근거들을 종합하면,\n이 주제는 몇 가지 연구 축으로 정리할 수 있습니다.\n\n" + text;
+  }
+
+  text = text
+    .replace(/\n{0,2}(#{2,3}\s+[^\n]+)\n{0,2}/g, "\n\n$1\n\n")
+    .replace(/\s*(정리하면[,，]?)/g, "\n\n$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return text;
 }
 
 async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env) {
