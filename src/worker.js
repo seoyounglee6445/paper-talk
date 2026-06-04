@@ -1368,12 +1368,22 @@ async function upsertFullTextChunkVectors({ postId, title, sourceUrl, pdfLink, f
 
   const pending = [];
   const chunksForVector = (chunks || []).slice(0, PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT);
+  let indexedAny = false;
+
+  if (!chunksForVector.length) return false;
 
   for (let i = 0; i < chunksForVector.length; i++) {
     const text = chunksForVector[i];
     const vectorId = `${postId}:fulltext:${String(contentHash || "").slice(0, 16)}:${i}`;
 
-    const embedding = await createEmbedding(text, env);
+    let embedding = null;
+    try {
+      embedding = await createEmbedding(text, env);
+    } catch {
+      continue;
+    }
+
+    indexedAny = true;
 
     pending.push({
       id: vectorId,
@@ -1403,7 +1413,7 @@ async function upsertFullTextChunkVectors({ postId, title, sourceUrl, pdfLink, f
     await env.VECTORIZE.upsert(pending);
   }
 
-  return true;
+  return indexedAny;
 }
 
 async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInput, pdfLinkInput, env }) {
@@ -1417,6 +1427,9 @@ async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInpu
       SELECT id, post_id, title, source_url, pdf_link, content
       FROM research_knowledge
       WHERE status = 'indexed'
+        AND post_id NOT LIKE 'thinking_logic_%'
+        AND title NOT LIKE '[Thinking Logic]%'
+        AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
         AND (
           source_url = ?
           OR pdf_link = ?
@@ -1442,6 +1455,9 @@ async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInpu
       SELECT id, post_id, title, source_url, pdf_link, content
       FROM research_knowledge
       WHERE status = 'indexed'
+        AND post_id NOT LIKE 'thinking_logic_%'
+        AND title NOT LIKE '[Thinking Logic]%'
+        AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
         AND lower(title) = lower(?)
       ORDER BY datetime(updated_at) DESC
       LIMIT 1
@@ -1456,6 +1472,9 @@ async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInpu
         SELECT id, post_id, title, source_url, pdf_link, content
         FROM research_knowledge
         WHERE status = 'indexed'
+        AND post_id NOT LIKE 'thinking_logic_%'
+        AND title NOT LIKE '[Thinking Logic]%'
+        AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
           AND title LIKE ?
         ORDER BY datetime(updated_at) DESC
         LIMIT 1
@@ -1474,6 +1493,9 @@ async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInpu
         SELECT id, post_id, title, source_url, pdf_link, content
         FROM research_knowledge
         WHERE status = 'indexed'
+        AND post_id NOT LIKE 'thinking_logic_%'
+        AND title NOT LIKE '[Thinking Logic]%'
+        AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
         ORDER BY datetime(updated_at) DESC
         LIMIT 500
       `).all();
@@ -1567,10 +1589,10 @@ async function adminImportResearchFullText(request, env) {
     }, 400);
   }
 
-  if (!rawText || rawText.length < 120) {
+  if (!rawText || rawText.length < PAPER_TALK_MIN_FULLTEXT_CHARS) {
     return json({
       ok: false,
-      error: "Full text is too short. If this PDF is scanned images, use a text-based PDF or OCR it first."
+      error: "Full text is too short. If this PDF is scanned images, use a text-based PDF or OCR it first. Extracted characters: " + rawText.length
     }, 400);
   }
 
@@ -1609,13 +1631,20 @@ async function adminImportResearchFullText(request, env) {
     });
   }
 
-  const chunks = chunkFullTextForStorage(cleanedFullText);
+  let chunks = chunkFullTextForStorage(cleanedFullText);
 
   if (!chunks.length) {
-    return json({
-      ok: false,
-      error: "No usable full-text chunks were created. OCR or convert this PDF to text first."
-    }, 400);
+    const metadataChunk = [
+      "Paper_Talk DB Research Paper",
+      "Knowledge source: PDF_METADATA_ONLY_OR_LOW_TEXT_UPLOAD",
+      `Title: ${finalTitle}`,
+      finalSourceUrl ? `Article link: ${finalSourceUrl}` : "",
+      finalPdfLink ? `PDF link: ${finalPdfLink}` : "",
+      fileName ? `Imported file: ${fileName}` : "",
+      `Extracted characters: ${cleanedFullText.length}`,
+      cleanedFullText ? `Extracted text preview: ${cleanedFullText.slice(0, 1200)}` : ""
+    ].filter(Boolean).join("\n");
+    chunks = [metadataChunk];
   }
 
   await ensureMinimalResearchKnowledgeForFullText({
@@ -1630,37 +1659,39 @@ async function adminImportResearchFullText(request, env) {
 
   const vectorIds = chunks.map((_, index) => `${postId}:fulltext:${fullTextHash.slice(0, 16)}:${index}`);
 
-  for (let i = 0; i < chunks.length; i++) {
-    await env.DB.prepare(`
-      INSERT INTO paper_fulltext_chunks (
-        id,
-        post_id,
-        title,
-        source_url,
-        pdf_link,
-        file_name,
-        source_type,
-        content_hash,
-        chunk_index,
-        vector_id,
-        text,
-        text_length
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      `${postId}:fulltext:${fullTextHash.slice(0, 16)}:${i}`,
-      postId,
-      finalTitle,
-      finalSourceUrl,
-      finalPdfLink,
-      fileName,
-      sourceType,
-      fullTextHash,
-      i,
-      vectorIds[i],
-      chunks[i],
-      chunks[i].length
-    ).run();
+  const insertStatements = chunks.map((chunk, i) => env.DB.prepare(`
+    INSERT INTO paper_fulltext_chunks (
+      id,
+      post_id,
+      title,
+      source_url,
+      pdf_link,
+      file_name,
+      source_type,
+      content_hash,
+      chunk_index,
+      vector_id,
+      text,
+      text_length
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    `${postId}:fulltext:${fullTextHash.slice(0, 16)}:${i}`,
+    postId,
+    finalTitle,
+    finalSourceUrl,
+    finalPdfLink,
+    fileName,
+    cleanedFullText.length < 500 ? `${sourceType}_low_text` : sourceType,
+    fullTextHash,
+    i,
+    vectorIds[i],
+    chunk,
+    chunk.length
+  ));
+
+  for (let i = 0; i < insertStatements.length; i += 24) {
+    await env.DB.batch(insertStatements.slice(i, i + 24));
   }
 
   let vectorIndexed = false;
@@ -4871,12 +4902,13 @@ function isSameKnowledgePaper(a, b) {
 }
 
 
-const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 60;
-const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 24;
-const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 6;
-const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 7000;
-const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 1800;
-const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 1500;
+const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 24;
+const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 6;
+const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 4;
+const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 5000;
+const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 1200;
+const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 900;
+const PAPER_TALK_MIN_FULLTEXT_CHARS = 20;
 
 function isLikelyGeneralQuestionFast(message) {
   const text = String(message || '').trim();
