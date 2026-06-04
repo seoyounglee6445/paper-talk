@@ -1,130 +1,9 @@
 /*
-v71 additions:
-- LITERATURE_REVIEW is now hard-separated from RESEARCH_INSIGHT.
-- "논문 추천/최신 논문/트렌디한 논문/관련 논문/읽어볼 논문" always returns a paper recommendation layout.
-- Paper recommendation answers show actual retrieved DB paper titles, grouped by theme, with no retrieval scores and no 논문 A/B/C labels.
-- Research direction questions hide paper titles and synthesize directions only.
-- Source trace questions show prior supporting papers only when explicitly asked.
-*/
-/*
-v70 additions:
-- Paper recommendation questions are now deterministically routed to LITERATURE_REVIEW before research-direction routing.
-- Queries containing "논문 추천", "트렌디한 논문", "최근 논문", "관련 논문", "paper recommendation", "related papers" are never treated as RESEARCH_INSIGHT.
-- Follow-up "더 주세요" reuses previous topic but preserves previous task type: paper recommendation continues as LITERATURE_REVIEW, research direction continues as RESEARCH_INSIGHT.
-- LITERATURE_REVIEW answers group retrieved DB papers by theme, hide retrieval scores, and avoid 논문 A/B/C labels.
-- RESEARCH_INSIGHT answers remain hidden-source synthesis with clean section formatting.
-*/
-/*
-v69 additions:
-- Follow-up requests such as "더 주세요", "추가로", "1개가 끝인가요?", "다른 것도" reuse the previous user topic/assistant context.
-- These continuation requests do NOT trigger source-trace mode.
-- Source-trace mode is reserved only for explicit "어떤 논문 기반?", "근거 논문?", "출처?", "references?" questions.
-- Paper recommendation follow-ups continue the previous recommendation task and retrieve more DB papers.
-- Retrieval score and 논문 A/B/C labels are hidden from normal recommendation answers.
-*/
-/*
-v68 additions:
-- Style is not left to the first GPT answer.
-- After answer generation, Worker detects the user intent deterministically and rewrites/formats the final answer into the correct style.
-- Research-direction questions always become the same clean Research Insight format.
-- Similar questions such as cancer-aging, cancer-metabolism, and deep-learning+cancer now share the same layout.
-- Normal answers still hide paper titles and source metadata unless the user explicitly asks for sources.
-*/
-/*
-v67 additions:
-- User intent is detected deterministically before answer generation.
-- Similar research-direction questions always use the same Research Insight style.
-- Concept, validation, literature/source, summary, comparison, and general questions each get their own stable style.
-- Research-direction answers automatically use hidden N-paper DB synthesis and do not expose paper titles.
-- Source papers are shown only when the user explicitly asks for sources/references/which papers.
-*/
-/*
-v66 additions:
-- For every research-related question, Paper_Talk automatically selects an adaptive number of DB papers (N = 3~10) internally.
-- The first answer does NOT reveal which papers were used.
-- The answer is synthesized from the selected papers as research insight, not as a paper list.
-- Paper titles are shown only when the user explicitly asks for sources/references/which papers.
-- Research-direction answers use a clean, readable card-like style with headings, blank lines, and short paragraphs.
-*/
-/*
-v65 additions:
-- Retrieved Paper_Talk DB papers are INTERNAL EVIDENCE ONLY by default.
-- Normal answers must never expose paper titles, author names, journal names, DOI/PMID, URLs, or paper-label citations.
-- Papers are shown only when the user explicitly asks for sources/references/which papers.
-- Research-direction questions automatically use readable insight-report style with blank lines and headings.
-- Concept, validation, literature, and source-trace questions automatically use different answer styles.
-- Supporting papers are stored silently in gpt_message_sources for later source follow-up.
-*/
-/*
-v64 additions:
-- The answer style is chosen automatically from the user's actual intent.
-- Research-direction questions use readable insight sections with spacing and short paragraphs.
-- Concept questions use educational explanation style.
-- Validation questions use practical validation-plan style.
-- Literature/source questions may show papers only when the user explicitly asks for papers/sources.
-- Normal research answers hide paper titles, paper labels, and parenthetical paper citations.
-- Supporting papers are stored silently in gpt_message_sources and shown only when the user asks for evidence/sources.
-*/
-/*
-Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titles:
-- v59: For research-purpose GPT questions, infer the user intent with the uploaded thinking logic, select up to five most relevant Paper_Talk DB papers, label them as 논문 A/B/C/D/E/E, show each exact DB title, and answer the user question based on the synthesis of those papers.
-- v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
-- v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
-
-Paper_Talk v71 update - hard-separated paper recommendation, source trace, and research insight modes:
-- Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
-- Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
-- Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
-- If no external abstract is found, stores a short clean title-only fallback instead of duplicating old content.
-- Research GPT remains DB-grounded: research/literature answers use retrieved Paper_Talk DB context only.
-- General questions are answered normally without forced paper comparison.
-- Monthly GPT quota remains stored separately from chat messages, so logout/login or deleting threads does not reset usage.
-- JSON-safe OpenAI parsing and timeout-safe answer generation are preserved.
-- v17: Reindex is processed in small batches to avoid Cloudflare 'Too many subrequests'.
-- v17: DOI/title lookup stops as soon as one external abstract/metadata source is found.
-- v17: Reindex rows are marked after processing so repeated clicks continue to the next batch.
-- v18: Default reindex batch size increased from 5 to 25, with max 50 via ?limit=50.
-- v18: Sleep between rows reduced to 50 ms to make reindex much faster while still avoiding burst calls.
-- v19: Default reindex batch size increased to 50 so the frontend can auto-continue efficiently.
-- v19: Response includes remaining count for admin.html one-click auto-loop reindex.
-- v20: Admin-entered Abstract/Description/Note are treated as first-class GPT knowledge.
-- v20: If DOI/title lookup fails, manual Admin abstract is still indexed as trusted Paper_Talk DB evidence.
-- v21: External article learning order is DOI/title -> Crossref -> PubMed -> Europe PMC -> Semantic Scholar -> OpenAlex -> Admin abstract fallback.
-- v22: /api/admin/research/import-linkedin-csv now accepts both LinkedIn CSV and BibTeX text.
-- v22: BibTeX is parsed entry-by-entry so title/author/journal/year/doi/url/abstract stay in one paper record.
-- v22: Prevents @article keys, author lines, journal lines, and year lines from being stored as fake paper titles.
-- v24: GPT retrieval now extracts keywords/synonyms from any user question and searches Paper_Talk DB automatically.
-- v24: RNA velocity queries automatically search related terms such as scVelo, velocyto, spliced/unspliced RNA, trajectory inference, pseudotime, and cell-state transition.
-- v24: If Vectorize misses a paper, D1 keyword/title/content fallback is always used before saying no matching DB source was retrieved.
-- v25: GPT answers now automatically choose the response format based on user intent instead of forcing fixed numbered report sections.
-- v25: GPT tone is softer, warmer, more conversational, and explains concepts in more detail.
-- v25: Research answers should feel like a helpful senior cancer genomics colleague, not a rigid paper-search report.
-- v26: GPT answers should use a calm explanatory research-mentor style: not a report, not casual chat.
-- v26: GPT must not create sections like Direct answer, Relevant papers, Paper-by-paper findings, Agreements, Contradictions, or Knowledge gaps unless the user explicitly asks.
-- v26: Retrieved papers must be woven naturally into the explanation as evidence, not dumped as a paper list.
-- v27: If GPT still returns report headings such as Direct answer / Relevant papers / Paper-by-paper findings, Worker automatically rewrites the answer into calm explanatory prose before saving it.
-- v28: Guest users can ask Paper_Talk Vision GPT up to 3 questions per day per hashed IP address before signing in.
-- v29: Adds /api/admin/check so admin.html can verify the admin key before saving it; trims admin keys before comparison.
-- v30: Adds no-store JSON headers to prevent stale guest quota/admin auth responses from browser or edge cache.
-- v31: Adds Admin upload for Scientific Thinking Logic PDF/TXT; extracted text is indexed as reasoning framework, not paper evidence.
-- v32: Thinking Logic PDF/TXT is distilled into compact reasoning rules before indexing. GPT uses it silently without changing the normal Paper_Talk research-mentor answer style.
-- v33: CPU-safe Thinking Logic: old full-PDF logic rows are deleted on import, chat retrieves only the latest compact distilled framework, and normal paper searches exclude Thinking Logic rows.
-- v37: Auto-detects user-requested output formats such as "- - - -", "4 lines", "4줄", or bullet requests and forces the final answer to match that exact format.
-- v38: Thread-aware paper follow-up fix. If a user first provides a paper URL/title and then asks follow-up questions like "Key takeaway" or "전체 논문", GPT reuses the same paper instead of retrieving unrelated papers.
-- v40: Strict active-paper lock. When a URL/title exists in the current thread, follow-up turns use ONLY that exact paper context and block unrelated Vectorize/keyword retrieval from entering the answer.
-- v41: Related-paper exception + truthful full-text access. Active-paper follow-ups stay locked, but requests for similar/related/other papers search Paper_Talk DB using the active paper as the seed. GPT must explain that publisher full text is read only if it is stored in DB or openly fetchable by the Worker; the user browser/IP/institution access is not available to the Worker.
-- v42: Adds Admin Research Paper Full Text PDF/TXT import. Browser-extracted PDF/TXT text is attached to the matched research_knowledge paper as FULL_TEXT_PDF_UPLOAD evidence, reindexed into Vectorize, and preferred before abstracts/metadata in GPT excerpts.
-- v43: Full-text import stores a content hash and skips duplicate PDFs/TXTs already imported into Paper_Talk DB.
-- v44: Full-text PDF/TXT import is chunked into paper_fulltext_chunks for 1000+ PDF scaling; Admin can list/delete stored full text files.
-- v45: GPT retrieval now enriches explicit paper/title matches with paper_fulltext_chunks so uploaded PDFs are used immediately in answers.
-- v46: Large-PDF safe mode. Full-text import stores a smaller bounded chunk set, indexes only a safe subset into Vectorize, and GPT chat skips expensive DB retrieval for ordinary/general questions to prevent Cloudflare 503 HTML responses.
-- v49: Ultra-safe import/chat mode. PDF import skips Vectorize during upload, caps full-text storage to a small D1 chunk set, removes expensive fuzzy DB scans during batch import, and broad research-advice questions bypass retrieval to avoid Worker 500/503 HTML responses.
-- v50: Long-term stable chat path. /api/gpt/chat uses bounded title/file-name retrieval only, never broad full-text scans, and always returns JSON errors instead of Cloudflare HTML whenever the Worker reaches the route.
-- v52: Robust D1 retrieval. Chat searches uploaded full-text chunks by title, file name, keyword tokens, and pasted full-text snippets using bounded LIKE queries, so already-imported PDFs are retrievable without waiting for full batch import or Vectorize.
-- v53: Multilingual automatic retrieval. Query understanding no longer depends on Korean/English stopword lists; it extracts title-like scientific spans, symbols, Unicode tokens, and n-grams, then scores D1 matches across title/file/full-text chunks.
-- v54: Restores richer Paper_Talk mentor answer style and strengthens exact paper-title retrieval. Chat now always tries bounded D1 retrieval first, then falls back to general answers only for truly casual/general questions.
-- v55: Richer friendly mentor style. Paper summaries and research answers are expanded into practical, kind explanations with stronger max_tokens while keeping DB-only evidence rules.
-- v56: Research-purpose GPT routing. Research/literature/validation questions now infer biomedical concepts automatically, search Paper_Talk DB with inferred retrieval queries, and never bypass DB retrieval for broad research-advice questions.
+Paper_Talk Worker v72 compact patch
+- Long version history comments removed to reduce file size.
+- LLM-based intent/domain planning added for literature trend vs research idea routing.
+- Literature/trend questions show actual DB paper titles.
+- Research idea questions produce actionable project-level ideas.
 */
 
 export default {
@@ -1216,8 +1095,6 @@ async function adminDeletePost(request, env) {
 }
 
 
-
-
 async function adminUpdatePost(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
@@ -1354,8 +1231,6 @@ async function adminCreateResearchPaper(request, env) {
     message: "Research paper saved and added to Paper_Talk GPT knowledge base."
   });
 }
-
-
 
 
 async function ensurePaperFullTextTables(env) {
@@ -1729,8 +1604,6 @@ async function adminImportResearchFullText(request, env) {
       : "Full text PDF/TXT was stored as safe D1 chunks. Vectorize indexing is intentionally skipped during batch upload to prevent Worker 500/503 errors."
   });
 }
-
-
 
 
 async function adminListResearchFullText(request, env) {
@@ -4990,7 +4863,6 @@ function trimContextForChat(context) {
 }
 
 
-
 function extractLikelyPaperTitleForSafeLookup(message) {
   // v53 multilingual automatic title/snippet detector.
   // Do not hardcode one language's request words. Instead:
@@ -5146,7 +5018,6 @@ async function safeRetrievePaperContextForChat(message, env) {
 }
 
 
-
 async function callOpenAIGeneralNoRetrieval(userMessage, env) {
   if (!env.OPENAI_API_KEY) return "OPENAI_API_KEY is missing.";
 
@@ -5212,20 +5083,124 @@ Plain text only.`
 }
 
 
+// =============================
+// Paper_Talk v72 semantic routing helpers
+// =============================
+
+function normalizePaperTalkIntentLabel(value) {
+  const v = String(value || "").trim().toUpperCase().replace(/[^A-Z_]/g, "");
+  if (["LITERATURE_REVIEW", "RESEARCH_IDEA", "CONCEPT", "VALIDATION", "COMPARISON", "PAPER_SUMMARY", "SOURCE_TRACE", "GENERAL"].includes(v)) return v;
+  if (v === "LITERATURE" || v === "REVIEW" || v === "TREND" || v === "TRENDS") return "LITERATURE_REVIEW";
+  if (v === "RESEARCH" || v === "RESEARCH_DIRECTION" || v === "RESEARCH_INSIGHT" || v === "IDEA" || v === "PROJECT_IDEA") return "RESEARCH_IDEA";
+  if (v === "METHOD" || v === "EXPLANATION") return "CONCEPT";
+  return "GENERAL";
+}
+
+function normalizePaperTalkDomainLabel(value) {
+  const v = String(value || "").trim().toUpperCase().replace(/[^A-Z_]/g, "");
+  if (["SPATIAL_BIOLOGY", "CANCER_GENOMICS", "SINGLE_CELL", "IMMUNOLOGY", "AGING", "MULTIOMICS", "AI_METHOD", "GENERAL"].includes(v)) return v;
+  if (v.includes("SPATIAL")) return "SPATIAL_BIOLOGY";
+  if (v.includes("CANCER") || v.includes("TUMOR") || v.includes("ONCO")) return "CANCER_GENOMICS";
+  if (v.includes("SINGLE")) return "SINGLE_CELL";
+  if (v.includes("IMMUNE") || v.includes("IMMUNO")) return "IMMUNOLOGY";
+  if (v.includes("OMICS")) return "MULTIOMICS";
+  if (v.includes("AI") || v.includes("DEEP") || v.includes("MODEL")) return "AI_METHOD";
+  return "GENERAL";
+}
+
+function heuristicPaperTalkPlanner(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  let literatureScore = 0;
+  let ideaScore = 0;
+  let validationScore = 0;
+  let comparisonScore = 0;
+  let conceptScore = 0;
+
+  const add = (regex, score, bucket) => { if (regex.test(text)) bucket(score); };
+  add(/(trend|trendy|hot|latest|recent|emerging|state of the art|sota|요즘|최근|최신|트렌드|트렌디|핫한|뜨는|유행|동향|읽어볼|볼 만한|중요한 연구|대표 논문|논문 추천|literature|papers? to read|recommend.*papers?)/i, 3, s => literatureScore += s);
+  add(/(what research|project idea|research idea|future direction|promising|hypothesis|뭘 연구|어떤 연구|연구.*아이디어|연구.*주제|연구.*방향|앞으로|향후|유망|가설|할 수 있을까|하면 좋을까|접목)/i, 3, s => ideaScore += s);
+  add(/(validate|validation|experiment|검증|실험 설계|확인하려면|어떻게 증명)/i, 3, s => validationScore += s);
+  add(/(compare|comparison|versus| vs |차이|비교|다른 점)/i, 3, s => comparisonScore += s);
+  add(/(what is|explain|definition|개념|설명|무엇|뭐야|정의)/i, 2, s => conceptScore += s);
+
+  let paperTalkIntent = "GENERAL";
+  const best = Math.max(literatureScore, ideaScore, validationScore, comparisonScore, conceptScore);
+  if (best > 0) {
+    if (literatureScore === best) paperTalkIntent = "LITERATURE_REVIEW";
+    else if (ideaScore === best) paperTalkIntent = "RESEARCH_IDEA";
+    else if (validationScore === best) paperTalkIntent = "VALIDATION";
+    else if (comparisonScore === best) paperTalkIntent = "COMPARISON";
+    else if (conceptScore === best) paperTalkIntent = "CONCEPT";
+  }
+
+  let primaryDomain = "GENERAL";
+  if (/(spatial|visium|xenium|cosmx|merfish|spatial transcriptomics|공간|공간 전사체|공간전사체)/i.test(text)) primaryDomain = "SPATIAL_BIOLOGY";
+  else if (/(cancer|tumou?r|oncology|clone|clonal|암|종양|항암|전이)/i.test(text)) primaryDomain = "CANCER_GENOMICS";
+  else if (/(single-cell|single cell|scrna|싱글셀|단일세포)/i.test(text)) primaryDomain = "SINGLE_CELL";
+  else if (/(immune|immunology|t cell|b cell|myeloid|면역)/i.test(text)) primaryDomain = "IMMUNOLOGY";
+  else if (/(multiomics|multi-omics|proteomics|epigenomics|멀티오믹스)/i.test(text)) primaryDomain = "MULTIOMICS";
+  else if (/(deep learning|machine learning|foundation model|transformer|gnn|diffusion|딥러닝|머신러닝|파운데이션|트랜스포머)/i.test(text)) primaryDomain = "AI_METHOD";
+
+  return { paperTalkIntent, primaryDomain };
+}
+
+function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
+  const q = String(text || "").trim();
+  const queries = [q];
+  const t = q.toLowerCase();
+
+  if (primaryDomain === "SPATIAL_BIOLOGY" || /spatial|visium|xenium|cosmx|공간/i.test(t)) {
+    queries.push(
+      "spatial transcriptomics tumor microenvironment deep learning",
+      "spatial biology foundation model histology transcriptomics",
+      "spatial multiomics cell cell interaction graph neural network"
+    );
+  }
+
+  if (primaryDomain === "CANCER_GENOMICS" || /cancer|tumor|암|종양/i.test(t)) {
+    queries.push(
+      "cancer genomics tumor evolution immune escape spatial",
+      "drug response prediction tumor microenvironment multiomics"
+    );
+  }
+
+  if (paperTalkIntent === "LITERATURE_REVIEW") {
+    queries.push("recent review trend state of the art important papers");
+  }
+
+  if (paperTalkIntent === "RESEARCH_IDEA") {
+    queries.push("research gap future direction hypothesis validation project idea");
+  }
+
+  return [...new Set(queries.filter(Boolean))].slice(0, 4);
+}
 async function inferPaperTalkResearchIntentForChat(userMessage, env) {
   const text = String(userMessage || "").trim();
+  const heuristic = heuristicPaperTalkPlanner(text);
+  const heuristicQueries = buildPaperTalkRetrievalQueries(text, heuristic.primaryDomain, heuristic.paperTalkIntent);
 
   const fallback = {
-    question_type: isLikelyGeneralQuestionFast(text) ? "GENERAL" : "RESEARCH",
-    answer_style: "calm_research_mentor",
-    should_generate_hypotheses: /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text),
-    should_use_db_evidence: !isLikelyGeneralQuestionFast(text),
-    is_research_related: !isLikelyGeneralQuestionFast(text),
-    interpreted_intent: text.slice(0, 240),
-    primary_domain: "",
+    is_research_related: !isLikelyGeneralQuestionFast(text) || heuristic.paperTalkIntent !== "GENERAL",
+    question_type:
+      heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
+      heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" :
+      heuristic.paperTalkIntent === "VALIDATION" ? "VALIDATION" :
+      heuristic.paperTalkIntent === "COMPARISON" ? "COMPARISON" :
+      heuristic.paperTalkIntent === "CONCEPT" ? "CONCEPT" :
+      (isLikelyGeneralQuestionFast(text) ? "GENERAL" : "RESEARCH"),
+    paper_talk_intent: heuristic.paperTalkIntent,
+    primary_domain: heuristic.primaryDomain,
+    answer_style:
+      heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "paper_recommendation_by_theme" :
+      heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "actionable_project_ideas" :
+      "calm_research_mentor",
+    should_generate_hypotheses: heuristic.paperTalkIntent === "RESEARCH_IDEA" || /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text),
+    should_use_db_evidence: !isLikelyGeneralQuestionFast(text) || heuristic.paperTalkIntent !== "GENERAL",
+    interpreted_intent: text.slice(0, 500),
     key_entities: [],
-    retrieval_queries: [text].filter(Boolean),
-    retrieval_query: text,
+    retrieval_queries: heuristicQueries,
+    retrieval_query: heuristicQueries.join(", "),
     gap_axes: [],
     hypothesis_angle: "",
     validation_angle: ""
@@ -5250,22 +5225,22 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
           {
             role: "system",
             content: [
-              "You are the intent and retrieval planner for Paper_Talk, a DB-grounded biomedical research GPT.",
-              "Infer whether the user is asking a research/literature/scientific/validation/paper-related question.",
-              "Do not rely on one fixed keyword list. Interpret the meaning of the whole question.",
-              "If the question is research-related, create 3-4 concise English biomedical retrieval queries that a paper database can search.",
-              "Queries should include inferred concepts, synonyms, mechanisms, cell types, disease context, assays, methods, and likely adjacent concepts.",
-              "Do not answer the user.",
-              "Return strict JSON only with keys: is_research_related, question_type, answer_style, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, primary_domain, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
+              "You are the semantic intent, domain, and retrieval planner for Paper_Talk, a DB-grounded biomedical research GPT.",
+              "Do not rely on fixed keywords. Interpret the user's actual intent from the full sentence.",
+              "Return strict JSON only.",
+              "paper_talk_intent must be one of: LITERATURE_REVIEW, RESEARCH_IDEA, CONCEPT, VALIDATION, COMPARISON, PAPER_SUMMARY, SOURCE_TRACE, GENERAL.",
+              "Use LITERATURE_REVIEW when the user asks about trends, hot topics, latest studies, important papers, state-of-the-art, what to read, representative papers, or paper recommendations, even if the word paper is not explicit.",
+              "Use RESEARCH_IDEA when the user asks what research can be done, project ideas, future directions, hypotheses, grant ideas, or actionable research topics.",
+              "primary_domain must be one of: SPATIAL_BIOLOGY, CANCER_GENOMICS, SINGLE_CELL, IMMUNOLOGY, AGING, MULTIOMICS, AI_METHOD, GENERAL.",
+              "If spatial/deep learning/cancer genomics appears, infer adjacent concepts such as spatial transcriptomics, histology, tumor microenvironment, multimodal AI, GNN, transformer, foundation model, immune niche, tumor evolution, and drug response.",
+              "Create 3-4 concise English biomedical retrieval_queries for Paper_Talk DB.",
+              "Return keys: is_research_related, question_type, paper_talk_intent, primary_domain, answer_style, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
             ].join(" ")
           },
-          {
-            role: "user",
-            content: text.slice(0, 1000)
-          }
+          { role: "user", content: text.slice(0, 1200) }
         ],
         temperature: 0,
-        max_tokens: 420
+        max_tokens: 520
       })
     });
 
@@ -5274,6 +5249,8 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     raw = raw.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
 
     const parsed = JSON.parse(raw);
+    const paperTalkIntent = normalizePaperTalkIntentLabel(parsed.paper_talk_intent || parsed.question_type || fallback.paper_talk_intent);
+    const primaryDomain = normalizePaperTalkDomainLabel(parsed.primary_domain || fallback.primary_domain);
     const queries = Array.isArray(parsed.retrieval_queries)
       ? parsed.retrieval_queries.map(v => String(v || "").trim()).filter(Boolean)
       : [];
@@ -5281,30 +5258,33 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     const inferred = {
       ...fallback,
       ...parsed,
-      is_research_related: Boolean(parsed.is_research_related),
-      should_use_db_evidence: Boolean(parsed.should_use_db_evidence || parsed.is_research_related),
-      should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses),
-      question_type: parsed.question_type || (parsed.is_research_related ? "RESEARCH" : "GENERAL"),
-      answer_style: parsed.answer_style || "calm_research_mentor",
+      paper_talk_intent: paperTalkIntent,
+      primary_domain: primaryDomain,
+      is_research_related: Boolean(parsed.is_research_related) || paperTalkIntent !== "GENERAL",
+      should_use_db_evidence: Boolean(parsed.should_use_db_evidence || parsed.is_research_related || paperTalkIntent !== "GENERAL"),
+      should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses || paperTalkIntent === "RESEARCH_IDEA"),
+      question_type:
+        paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
+        paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" :
+        paperTalkIntent === "VALIDATION" ? "VALIDATION" :
+        paperTalkIntent === "COMPARISON" ? "COMPARISON" :
+        paperTalkIntent === "CONCEPT" ? "CONCEPT" :
+        (parsed.question_type || fallback.question_type),
+      answer_style: parsed.answer_style || fallback.answer_style,
       key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v || "").trim()).filter(Boolean).slice(0, 12) : [],
-      retrieval_queries: queries.length ? queries.slice(0, 4) : fallback.retrieval_queries,
-      retrieval_query: queries.length ? queries.join(", ") : fallback.retrieval_query,
+      retrieval_queries: queries.length ? queries.slice(0, 4) : buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent),
       gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v || "").trim()).filter(Boolean).slice(0, 8) : [],
       interpreted_intent: String(parsed.interpreted_intent || fallback.interpreted_intent).slice(0, 500),
-      primary_domain: String(parsed.primary_domain || "").slice(0, 200),
       hypothesis_angle: String(parsed.hypothesis_angle || "").slice(0, 500),
       validation_angle: String(parsed.validation_angle || "").slice(0, 500)
     };
 
-    // Research-purpose policy:
-    // If the user is asking anything scientific/research-like, force DB-grounded mode.
-    // The answer generator will not fall back to outside literature if retrieval returns no DB context.
     if (inferred.is_research_related) {
       inferred.should_use_db_evidence = true;
       if (!inferred.retrieval_queries.includes(text)) inferred.retrieval_queries.unshift(text);
       inferred.retrieval_queries = [...new Set(inferred.retrieval_queries)].slice(0, 4);
-      inferred.retrieval_query = inferred.retrieval_queries.join(", ");
     }
+    inferred.retrieval_query = inferred.retrieval_queries.join(", ");
 
     return inferred;
   } catch {
@@ -5418,24 +5398,12 @@ function getRequestedPaperOrdinal(message) {
 }
 
 
-
 function isPaperRecommendationRequest(message) {
-  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
-
-  return (
-    /(논문\s*추천|추천\s*논문|관련\s*논문|트렌디한\s*논문|최신\s*논문|최근\s*논문|핫한\s*논문|읽어볼\s*논문|볼\s*만한\s*논문|좋은\s*논문|paper\s*recommendation|recommend\s*papers?|related\s*papers?|trendy\s*papers?|recent\s*papers?|latest\s*papers?|papers?\s+to\s+read|literature\s+recommendation)/i.test(text)
-  );
+  return heuristicPaperTalkPlanner(message).paperTalkIntent === "LITERATURE_REVIEW";
 }
 
 function isResearchDirectionRequest(message) {
-  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
-
-  // Paper recommendation has absolute priority.
-  if (isPaperRecommendationRequest(text)) return false;
-
-  return (
-    /(유망|앞으로|향후|관련해서\s*어떤\s*연구|간에\s*어떤\s*연구|접목해서\s*연구|어떤게\s*접목|어떤\s*연구를\s*할|어떤\s*연구를\s*하면|연구\s*방향|연구\s*주제|연구\s*아이디어|어떤\s*연구|무슨\s*연구|뭘\s*연구|연구하면\s*좋|할\s*수\s*있을까|gap|knowledge gap|future direction|research direction|promising|hypothesis|가설|아이디어)/i.test(text)
-  );
+  return heuristicPaperTalkPlanner(message).paperTalkIntent === "RESEARCH_IDEA";
 }
 
 
@@ -5872,7 +5840,7 @@ async function gptChat(request, env) {
       }
     }
 
-    const outputStyleForSelection = determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: inferredIntent, hasContext: context.length > 0 });
+    const outputStyleForSelection = forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: inferredIntent, hasContext: context.length > 0 });
     context = selectTopSupportingPapersForAnswer(context, null, outputStyleForSelection);
 
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
@@ -5920,12 +5888,13 @@ async function gptChat(request, env) {
       .replace(/#/g, "")
       .replace(/\*/g, "");
 
-    if (!isSupportingPaperFollowUp(message)) {
+    const finalOutputStyle = forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: autoIntent, hasContext: context.length > 0 });
+
+    if (!isSupportingPaperFollowUp(message) && !["LITERATURE_REVIEW", "RESEARCH_INSIGHT", "RESEARCH_SYNTHESIS"].includes(finalOutputStyle)) {
       assistantText = hideAccidentalPaperListFromNormalAnswer(assistantText);
       assistantText = hideInternalEvidenceLeaksFromNormalAnswer(assistantText);
     }
 
-    const finalOutputStyle = determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: autoIntent, hasContext: context.length > 0 });
 
     if (!isSupportingPaperFollowUp(message)) {
       assistantText = await normalizeFinalAnswerToUserIntentStyle({
@@ -6196,8 +6165,6 @@ async function deleteGptThread(request, env) {
 
   return json({ ok: true });
 }
-
-
 
 
 function buildRobustFullTextSearchTerms(query) {
@@ -6543,8 +6510,6 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
       };
     });
 }
-
-
 
 
 async function getBestFullTextChunksForPaper({ postId, title, query, env, limit = 3 }) {
@@ -7631,7 +7596,6 @@ async function vectorSemanticSearch(query, env) {
 }
 
 
-
 async function directResearchKnowledgeSearch(query, env) {
   const tokens = getImportantSearchTokens(query);
   const cleaned = stripQuestionIntentWords(normalizeSearchText(query));
@@ -8332,8 +8296,6 @@ async function getRecentThreadMessages(threadId, userId, env) {
 }
 
 
-
-
 function isThinkingLogicKnowledgeItem(item) {
   const postId = String(item?.post_id || item?.postId || "").toLowerCase();
   const title = String(item?.title || "").toLowerCase();
@@ -8781,9 +8743,6 @@ function makeFallbackResearchIntent(userMessage) {
 }
 
 
-
-
-
 function hideInternalEvidenceLeaksFromNormalAnswer(answer) {
   let text = String(answer || "");
   text = text.replace(/\s*\/\s*retrieval score:\s*[0-9.]+/gi, "").replace(/retrieval score:\s*[0-9.]+/gi, "");
@@ -9078,7 +9037,6 @@ function convertReportStyleAnswerLocally(answer) {
 }
 
 
-
 function detectStrictUserOutputFormat(userMessage) {
   const text = String(userMessage || "");
   const standaloneDashCount = (text.match(/^\s*-\s*$/gm) || []).length;
@@ -9250,6 +9208,16 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
 }
 
 function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
+  const semanticIntent = normalizePaperTalkIntentLabel(intent?.paper_talk_intent || "");
+
+  if (semanticIntent === "LITERATURE_REVIEW") return "LITERATURE_REVIEW";
+  if (semanticIntent === "RESEARCH_IDEA") return "RESEARCH_INSIGHT";
+  if (semanticIntent === "VALIDATION") return "VALIDATION_PLAN";
+  if (semanticIntent === "COMPARISON") return "COMPARISON";
+  if (semanticIntent === "CONCEPT") return "CONCEPT_EXPLANATION";
+  if (semanticIntent === "PAPER_SUMMARY") return "PAPER_SUMMARY";
+  if (semanticIntent === "SOURCE_TRACE") return "SOURCE_TRACE";
+
   const detectedIntent = detectPaperTalkUserIntent(userMessage, intent);
 
   switch (detectedIntent) {
@@ -9282,245 +9250,74 @@ function buildAdaptiveStyleInstruction({ outputStyle, hasContext }) {
   const common = `
 GENERAL READABILITY RULES
 - Match the user's language.
-- Use short paragraphs.
-- Put a blank line between major ideas.
-- Do not create a wall of text.
+- Use short paragraphs with blank lines.
 - Keep a calm senior cancer-genomics mentor tone.
-- Unless the user explicitly asks for sources, do not expose paper titles, paper labels, author names, journal names, DOI/PMID, URLs, or parenthetical paper citations.
-- The retrieved papers are used only to synthesize the answer.
+- Do not invent papers, authors, years, datasets, biomarkers, or conclusions.
   `.trim();
-
-  if (outputStyle === "RESEARCH_INSIGHT" || outputStyle === "RESEARCH_SYNTHESIS") {
-    return `
-${common}
-
-AUTOMATIC STYLE: RESEARCH INSIGHT
-
-Use this style for questions about:
-- 유망한 연구
-- 앞으로의 연구 방향
-- research direction
-- future direction
-- research gap
-- hypothesis / 가설
-- 어떤 연구가 좋을지
-
-Output format:
-
-현재 Paper_Talk DB 근거들을 종합하면,
-이 주제는 크게 3~5개의 연구 축으로 정리할 수 있습니다.
-
-### 1. [Short theme name]
-
-[Explain what this direction means in 2-3 short sentences.]
-
-[Explain why it is promising in 1-2 short sentences.]
-
-
-### 2. [Short theme name]
-
-[Explain clearly.]
-
-
-정리하면,
-
-[2-3 short lines giving the practical conclusion.]
-
-Rules:
-- Similar research-direction questions must use this same structure.
-- Choose 3~5 themes from the internally selected DB papers.
-- Do NOT mention how many papers were selected.
-- Do NOT mention paper titles.
-- Do NOT mention "논문", "paper", "source", "reference", or "근거 논문" in the normal answer.
-- Do NOT use dense numbered prose like "1. ... 2. ...". Use markdown headings with blank lines.
-    `.trim();
-  }
-
-  if (outputStyle === "VALIDATION_PLAN") {
-    return `
-${common}
-
-AUTOMATIC STYLE: VALIDATION PLAN
-
-Use this structure:
-
-### 핵심 가설
-
-State the hypothesis in 1-2 sentences.
-
-### 1. Computational validation
-
-Explain datasets, analysis, comparison groups, and expected signal.
-
-### 2. Experimental validation
-
-Explain perturbation, assay, model system, and readout.
-
-### 3. Controls and caveats
-
-Explain controls, confounders, and limitations.
-
-### 정리하면
-
-Give the most practical next step.
-    `.trim();
-  }
-
-  if (outputStyle === "CONCEPT_EXPLANATION") {
-    return `
-${common}
-
-AUTOMATIC STYLE: CONCEPT EXPLANATION
-
-Use this structure:
-
-### 핵심 개념
-
-Explain the concept simply.
-
-### 왜 중요한가
-
-Explain why it matters biologically or analytically.
-
-### 연구에서 어떻게 쓰이나
-
-Give practical research relevance.
-
-### 주의할 점
-
-Mention limitations or common misunderstanding.
-    `.trim();
-  }
-
-  if (outputStyle === "COMPARISON") {
-    return `
-${common}
-
-AUTOMATIC STYLE: COMPARISON
-
-Use this structure:
-
-### 핵심 차이
-
-Explain the main difference.
-
-### 공통점
-
-Explain shared mechanisms or shared research relevance.
-
-### 연구적으로 중요한 포인트
-
-Explain what this comparison means for study design.
-
-### 정리하면
-
-Give a short conclusion.
-    `.trim();
-  }
-
-  if (outputStyle === "METHOD_EXPLANATION") {
-    return `
-${common}
-
-AUTOMATIC STYLE: METHOD / ANALYSIS EXPLANATION
-
-Use this structure:
-
-### 분석 목적
-
-Explain what the method is trying to answer.
-
-### 기본 흐름
-
-Explain the workflow step by step.
-
-### 해석 포인트
-
-Explain what results mean biologically.
-
-### 주의할 점
-
-Mention limitations, controls, and common mistakes.
-    `.trim();
-  }
-
-  if (outputStyle === "FOLLOW_UP_MORE") {
-    return `
-${common}
-
-AUTOMATIC STYLE: FOLLOW-UP CONTINUATION
-
-The user is asking for more of the previous answer.
-Use the previous topic and continue from it.
-
-Rules:
-- Do not answer only "물론입니다".
-- Do not ask for clarification unless there is no previous topic.
-- If the previous request was paper recommendation, give more relevant retrieved DB papers or categories.
-- If the previous request was research direction, add additional research directions without repeating the same ones.
-- Keep the same style as the previous task.
-- Hide retrieval scores.
-- Do not use 논문 A/B/C labels.
-    `.trim();
-  }
 
   if (outputStyle === "LITERATURE_REVIEW") {
     return `
 ${common}
 
-AUTOMATIC STYLE: PAPER RECOMMENDATION
+AUTOMATIC STYLE: LITERATURE REVIEW / TREND PAPER RECOMMENDATION
 
-The user asked for papers or paper recommendations.
-Show retrieved Paper_Talk DB paper titles.
+Use this style when the user asks about trends, latest studies, hot topics, representative papers, important papers, or what to read.
 
-Required format:
+Output must show actual retrieved DB paper titles.
+Group by theme.
+For each paper include:
+- Paper title
+- Why it matters
+- Key contribution
+- Trend relevance
 
-현재 Paper_Talk DB에서 이 주제와 관련해 참고할 만한 논문들은 다음과 같습니다.
-
-### 1. [Theme]
-
-- [Exact DB paper title]
-  - 왜 볼 만한지 1문장
-- [Exact DB paper title]
-  - 왜 볼 만한지 1문장
-
-### 2. [Theme]
-
-- [Exact DB paper title]
-  - 왜 볼 만한지 1문장
-
-정리하면,
-
-[Which theme is most useful/trendy.]
-
-Rules:
-- Do not show retrieval scores.
-- Do not use 논문 A/B/C labels.
-- Do not invent papers outside retrieved DB context.
+Do not answer with only a field summary.
+Do not hide paper titles in this mode.
+Do not use retrieval scores or paper A/B/C labels.
     `.trim();
   }
 
-
-  if (outputStyle === "SOURCE_TRACE") {
+  if (outputStyle === "RESEARCH_INSIGHT" || outputStyle === "RESEARCH_SYNTHESIS") {
     return `
 ${common}
 
-AUTOMATIC STYLE: SOURCE TRACE
+AUTOMATIC STYLE: ACTIONABLE RESEARCH IDEAS
 
-The user is asking which papers/sources were used.
-Show the stored or retrieved Paper_Talk DB paper titles clearly.
-Do not add papers from outside the DB.
+Use this style when the user asks what research can be done, future directions, project ideas, hypotheses, or promising directions.
+
+Do not give generic categories such as disease research, cell-cell interaction, data integration, or technical development.
+Generate project-level ideas.
+Each project should include:
+- Project name
+- Input data
+- Deep learning / computational model
+- Research question
+- Expected output
+- Novelty
+- Validation or publication potential
+
+For spatial biology / cancer genomics, prioritize:
+- Spatial foundation models
+- Histology to spatial transcriptomics translation
+- Multimodal spatial AI
+- Tumor ecosystem modeling
+- Spatial multiomics
+- Cell-cell interaction GNN
+- Drug response prediction
+- Tumor evolution modeling
+- 3D spatial atlas or digital twin modeling
     `.trim();
   }
 
-  return `
-${common}
+  if (outputStyle === "VALIDATION_PLAN") {
+    return `${common}\n\nAUTOMATIC STYLE: VALIDATION PLAN\nExplain computational validation, experimental validation, controls, expected results, and caveats.`;
+  }
 
-AUTOMATIC STYLE: STANDARD RESEARCH MENTOR ANSWER
+  if (outputStyle === "COMPARISON") {
+    return `${common}\n\nAUTOMATIC STYLE: COMPARISON\nCompare by clear axes. Use a compact table only if helpful.`;
+  }
 
-Answer directly with readable paragraphs.
-If the answer is research-related, synthesize the DB evidence without exposing paper titles.
-    `.trim();
+  return common;
 }
 
 function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
@@ -9610,7 +9407,6 @@ If the user later asks "어떤 논문 기반이야?", the Worker will show store
 }
 
 
-
 function buildLiteratureRecommendationAnswerFromContext({ context, userMessage }) {
   const items = selectTopSupportingPapersForAnswer(context, 10, "LITERATURE_REVIEW");
   if (!items.length) {
@@ -9677,158 +9473,31 @@ async function normalizeFinalAnswerToUserIntentStyle({ answer, userMessage, outp
   const original = String(answer || "").trim();
   if (!original) return original;
 
-  // Source-trace and literature modes are allowed to expose papers; do not rewrite them into hidden style.
-  if (outputStyle === "SOURCE_TRACE" || outputStyle === "LITERATURE_REVIEW") {
+  if (["SOURCE_TRACE", "LITERATURE_REVIEW", "RESEARCH_INSIGHT", "RESEARCH_SYNTHESIS"].includes(outputStyle)) {
     return formatAnswerForReadability(original, outputStyle);
   }
 
   const cleaned = hideInternalEvidenceLeaksFromNormalAnswer(original);
-  const formatted = formatAnswerForReadability(cleaned, outputStyle);
-
-  // For research-direction questions, enforce the card-like Research Insight style with a second short rewrite.
-  // This is intentionally separate from the main answer generation because otherwise the model may still
-  // produce dense prose or inconsistent numbered paragraphs.
-  if (outputStyle !== "RESEARCH_INSIGHT" && outputStyle !== "RESEARCH_SYNTHESIS") {
-    return formatted;
-  }
-
-  if (!env.OPENAI_API_KEY) {
-    return forceLocalResearchInsightLayout(formatted);
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
-
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `
-You are the final answer style normalizer for Paper_Talk.
-
-Task:
-Rewrite the draft into the exact user-facing style requested below.
-
-CRITICAL:
-- Do NOT add new scientific facts.
-- Do NOT add paper titles.
-- Do NOT mention paper labels such as 논문 A/B/C or Paper A/B/C.
-- Do NOT mention "source", "reference", "paper", "논문", "근거 논문", "출처".
-- Do NOT expose author names, journal names, DOI, PMID, URLs, or retrieval scores.
-- Do NOT write dense numbered prose.
-- Use clean Korean research-mentor style.
-
-Required format for research-direction questions:
-
-현재 Paper_Talk DB 근거들을 종합하면,
-이 주제는 크게 3~5개의 연구 축으로 정리할 수 있습니다.
-
-### 1. [Short theme name]
-
-[2-3 short sentences.]
-
-[1-2 short sentences explaining why this is promising.]
-
-
-### 2. [Short theme name]
-
-[2-3 short sentences.]
-
-[1-2 short sentences explaining why this is promising.]
-
-
-정리하면,
-
-[2-3 short lines.]
-
-Style:
-- Put a blank line between sections.
-- Each section should be readable on a web page.
-- Use 3 to 5 sections depending on the content.
-- Same style for similar questions.
-- Return only the rewritten answer.
-            `.trim()
-          },
-          {
-            role: "user",
-            content: [
-              "User question:",
-              String(userMessage || "").slice(0, 1000),
-              "",
-              "Draft answer to rewrite:",
-              formatted.slice(0, 5000)
-            ].join("\\n")
-          }
-        ],
-        temperature: 0,
-        max_tokens: 1600
-      })
-    });
-
-    const raw = await res.text();
-    let data = {};
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      return forceLocalResearchInsightLayout(formatted);
-    }
-
-    if (!res.ok) return forceLocalResearchInsightLayout(formatted);
-
-    const rewritten = String(data?.choices?.[0]?.message?.content || "").trim();
-    if (!rewritten) return forceLocalResearchInsightLayout(formatted);
-
-    return formatAnswerForReadability(
-      hideInternalEvidenceLeaksFromNormalAnswer(rewritten),
-      outputStyle
-    );
-  } catch {
-    return forceLocalResearchInsightLayout(formatted);
-  } finally {
-    clearTimeout(timeout);
-  }
+  return formatAnswerForReadability(cleaned, outputStyle);
 }
 
 function forceLocalResearchInsightLayout(answer) {
   let text = String(answer || "").trim();
   if (!text) return text;
 
-  text = hideInternalEvidenceLeaksFromNormalAnswer(text);
-
-  // Convert common ordinal or inline numbered prose into sections.
   text = text
-    .replace(/(?:^|\n)\s*1\.\s*/g, "\n\n### 1. ")
-    .replace(/(?:^|\n)\s*2\.\s*/g, "\n\n### 2. ")
-    .replace(/(?:^|\n)\s*3\.\s*/g, "\n\n### 3. ")
-    .replace(/(?:^|\n)\s*4\.\s*/g, "\n\n### 4. ")
-    .replace(/(?:^|\n)\s*5\.\s*/g, "\n\n### 5. ")
-    .replace(/첫 번째로[,，]?\s*/g, "\n\n### 1. ")
-    .replace(/두 번째로[,，]?\s*/g, "\n\n### 2. ")
-    .replace(/세 번째로[,，]?\s*/g, "\n\n### 3. ")
-    .replace(/첫째[,，]?\s*/g, "\n\n### 1. ")
-    .replace(/둘째[,，]?\s*/g, "\n\n### 2. ")
-    .replace(/셋째[,，]?\s*/g, "\n\n### 3. ")
-    .replace(/넷째[,，]?\s*/g, "\n\n### 4. ")
-    .replace(/다섯째[,，]?\s*/g, "\n\n### 5. ");
-
-  if (!/^현재 Paper_Talk DB 근거들을 종합하면/.test(text)) {
-    text = "현재 Paper_Talk DB 근거들을 종합하면,\n이 주제는 몇 가지 연구 축으로 정리할 수 있습니다.\n\n" + text;
-  }
-
-  text = text
-    .replace(/\n{0,2}(#{2,3}\s+[^\n]+)\n{0,2}/g, "\n\n$1\n\n")
-    .replace(/\s*(정리하면[,，]?)/g, "\n\n$1")
     .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\s*[-*]\s*/gm, "- ")
     .trim();
+
+  if (!/Project|프로젝트|Input|입력|Model|모델|Research Question|연구 질문/i.test(text)) {
+    text = [
+      "이 질문은 단순한 분야 요약보다 실제 프로젝트 형태로 정리하는 편이 좋습니다.",
+      "아래 내용은 Paper_Talk DB 근거와 질문 의도를 바탕으로 정리한 연구 아이디어입니다.",
+      "",
+      text
+    ].join("\n");
+  }
 
   return text;
 }
@@ -9870,9 +9539,9 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
           `DB_SOURCE_${index + 1}`,
           `INTERNAL_SOURCE_LABEL_DO_NOT_OUTPUT: ${paperLabel}`,
           `DB_EXCERPT_FOR_SYNTHESIS_ONLY: ${excerpt}`,
-          `INTERNAL_DB_TITLE_DO_NOT_OUTPUT: ${title}`,
-          item.source_url ? `INTERNAL_ARTICLE_URL_DO_NOT_OUTPUT: ${item.source_url}` : "",
-          item.pdf_link ? `INTERNAL_PDF_URL_DO_NOT_OUTPUT: ${item.pdf_link}` : ""
+          `EXACT_DB_TITLE: ${title}`,
+          item.source_url ? `DB_ARTICLE_URL: ${item.source_url}` : "",
+          item.pdf_link ? `DB_PDF_URL: ${item.pdf_link}` : ""
         ].filter(Boolean).join("\n");
       }).join("\n\n---\n\n")
     : "NO_MATCHING_PAPER_TALK_DB_CONTEXT";
@@ -10116,6 +9785,30 @@ ${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
       role: "system",
       content: strictDbRule
     },
+    {
+      role: "system",
+      content: `
+PAPER_TALK V72 OUTPUT OVERRIDE
+
+Detected output style: ${outputStyle}
+Detected semantic intent: ${intent.paper_talk_intent || ""}
+Detected domain: ${intent.primary_domain || ""}
+
+If outputStyle is LITERATURE_REVIEW:
+- Show actual retrieved DB paper titles.
+- Group papers by theme.
+- Explain why each paper matters and why it is trendy/relevant.
+- Do not hide paper titles.
+
+If outputStyle is RESEARCH_INSIGHT or RESEARCH_SYNTHESIS:
+- Produce actionable project-level research ideas.
+- Use Project / Input / Model / Research Question / Expected Output / Novelty / Validation or Publication Potential.
+- Avoid generic categories.
+- For spatial/cancer/AI questions, prioritize spatial foundation models, histology-to-spatial translation, multimodal spatial AI, GNN, transformer, diffusion, tumor evolution, immune escape, and drug-response prediction.
+
+Never answer a paper recommendation request with only a field summary.
+      `.trim()
+    },
     ...(activePaperLockInstruction ? [{
       role: "system",
       content: activePaperLockInstruction
@@ -10199,154 +9892,80 @@ ${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
 function buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext, shouldUseDbEvidence = false, isResearchRelated = false }) {
   if (questionType === "CONCEPT" && !shouldUseDbEvidence) {
     return `
-Selected mode: CONCEPT / friendly educational explanation.
-
-The user is asking for a concept, definition, or overview.
-Do not answer like a formal textbook.
-Explain it as if you are helping a junior colleague understand the idea.
-
-Recommended style:
-- Start with a simple intuitive explanation.
-- Then explain why it matters in cancer genomics, bioinformatics, single-cell, or spatial analysis if relevant.
-- Use a small example if it helps.
-- Explain limitations or common misunderstandings.
-- Do not force research gaps or hypotheses unless the user asks for research ideas.
-- If you mention Paper_Talk DB examples, only use retrieved DB titles and excerpts.
-- Do not invent papers or citations.
-    `.trim();
-  }
-
-  if (questionType === "RESEARCH" || shouldGenerateHypotheses || isResearchRelated) {
-    return `
-Selected mode: ADAPTIVE PAPER_TALK DB-ONLY RESEARCH MENTORING.
-
-The user is asking a research-related question or asked to use Paper_Talk DB.
-You must not mix in outside/general literature as evidence.
-However, you should not sound like a rigid report. Answer like a helpful senior researcher discussing ideas with the user.
-
-If Paper_Talk DB context is available:
-Use the user's uploaded thinking logic silently to decide which DB papers are most relevant. Select up to five papers and label them 논문 A, 논문 B, 논문 C, 논문 D, 논문 E. Then answer the user's question through those selected papers.
-Do not force a cold report template. Use calm explanatory paragraphs, but make the A-E mapping visible so the user can check which paper supports each idea.
-
-For paper-reading or paper-summary requests such as "읽고 요약", "summarize", "explain this paper", or a pasted title:
-- Begin by explaining what the paper appears to be about and what question it is addressing.
-- Then describe the key finding or claim supported by the retrieved excerpt.
-- Explain why that finding matters biologically or methodologically.
-- Add limitations carefully if the excerpt does not include full methods/results.
-- Finish with what the user should pay attention to next, such as validation, mechanism, dataset quality, or possible follow-up experiments.
-- Write this as a friendly mentor explanation, usually 4 to 8 paragraphs, unless the user explicitly requests a short answer.
-
-For broad idea questions such as "뭐하면 좋을까", "연구 주제 추천", "future direction":
-- Start with a calm explanatory recommendation, not a report heading.
-- Use this style: "Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다."
-- Explain why that direction looks promising in 2~4 connected paragraphs.
-- Then show the selected DB evidence as 논문 A/B/C/D/E, each with the exact DB title and one short reason it was selected.
-- After the A-E mapping, synthesize what the selected papers collectively suggest for the user's research question.
-- Suggest concrete research questions as bullets only after the main explanation.
-- Explain novelty, feasibility, expected data, and validation in prose rather than as a rigid checklist.
-
-For paper comparison questions:
-- Briefly explain the comparison axis first.
-- Mention only exact retrieved DB titles.
-- Use a compact table only if the user asks for comparison or it genuinely improves clarity.
-- Do not create a separate "Relevant papers" list before the comparison.
-- Explain similarities, differences, limitations, and what the user can learn from the comparison.
-
-For research gap questions:
-- Explain in natural prose what the retrieved DB evidence already covers.
-- Then identify what is missing without using a rigid "Knowledge gaps" heading.
-- Turn the missing pieces into realistic research questions or hypotheses.
-- Be cautious if the excerpts are thin.
-
-For validation questions:
-- Explain what should be tested.
-- Separate computational validation and experimental validation.
-- Include controls, expected results, and caveats.
-
-For any research answer:
-- Use only the exact retrieved DB titles as paper names.
-- Map retrieved DB titles to 논문 A/B/C/D/E/E when the answer is research-purpose, literature-purpose, validation-purpose, or asks which papers are relevant.
-- Do not include external paper titles.
-- Do not add methods, years, authors, datasets, biomarkers, or mechanisms unless present in the excerpt.
-- If a detail is not in the DB excerpt, say "현재 검색된 Paper_Talk DB excerpt에는 그 부분이 명확하지 않습니다."
-- If the retrieved DB context is relevant but weak, say "강한 결론보다는 방향성 정도로 보는 게 안전합니다."
-- Give enough detail so the user understands the reasoning.
-
-If Paper_Talk DB context is absent:
-- Do not say bluntly "관련 논문이 없습니다."
-- Say warmly: "현재 검색에서는 이 질문과 강하게 매칭되는 Paper_Talk DB 논문을 찾지 못했습니다."
-- Explain possible reasons: keyword mismatch, reindex not done, title/abstract not in research_knowledge, synonym issue.
-- Suggest practical next steps: try synonyms, reindex, check research_knowledge, or add abstract/keywords.
-- You may provide very brief general background, clearly labeled as general background and not DB evidence.
-
-Hard restrictions:
-- Do not cite or mention papers that are not in EXACT_DB_TITLE.
-- Do not use famous external papers from memory.
-- Do not hallucinate evidence.
-- Do not write in a cold database-report tone.
-    `.trim();
-  }
-
-  if (questionType === "VALIDATION") {
-    return `
-Selected mode: FRIENDLY PAPER_TALK DB-ONLY VALIDATION PLANNING.
-
-Answer like you are helping the user design the next experiment or analysis.
-Use retrieved Paper_Talk DB evidence only.
-If DB context is available, base the plan on retrieved excerpts.
-If DB context is absent, say no strong Paper_Talk DB match was retrieved and do not invent external evidence.
-
-Recommended flow:
-- Start with what you would validate first and why.
-- Explain the biological or computational logic in simple terms.
-- Then give computational validation ideas.
-- Then give experimental validation ideas.
-- Mention controls, caveats, and what result would support or weaken the idea.
-- Keep the tone practical, supportive, and detailed.
-
-Hard restriction:
-Do not cite or mention papers not present in the retrieved DB context.
+Selected mode: CONCEPT EXPLANATION.
+Explain clearly in the user's language, like a senior research mentor.
+Use examples when useful.
+Do not force paper lists or research gaps unless asked.
     `.trim();
   }
 
   if (questionType === "LITERATURE") {
     return `
-Selected mode: FRIENDLY PAPER_TALK DB-ONLY LITERATURE DISCUSSION.
+Selected mode: LITERATURE_REVIEW / TREND PAPER RECOMMENDATION.
 
+The user wants papers, trends, hot topics, representative studies, or state-of-the-art direction.
 Use only retrieved Paper_Talk DB sources.
-Do not mix outside literature.
-Do not list papers as a separate section. Explain how the retrieved DB sources relate to the user's question inside a natural explanation.
+Always show actual DB paper titles in this mode.
+Group papers by theme.
+For each paper, explain:
+- why it matters,
+- key contribution,
+- why it is relevant to the current trend.
+Do not provide only a summary of the field.
+Do not use retrieval scores or anonymous 논문 A/B/C labels.
+    `.trim();
+  }
 
-Recommended style:
-- Start with a natural overview of what the retrieved DB evidence collectively suggests.
-- Mention specific Paper_Talk DB titles only when they help support a point.
-- Do not create sections named "Relevant papers", "Retrieved papers", or "Paper-by-paper findings".
-- Synthesize shared themes and differences in prose.
-- Explain mechanisms, methods, and biological meaning when supported by the excerpt.
-- Explain limitations of the current DB excerpts.
-- End with a clear take-home message and, when useful, one or two practical next research directions.
+  if (questionType === "RESEARCH" || shouldGenerateHypotheses || isResearchRelated) {
+    return `
+Selected mode: ACTIONABLE RESEARCH IDEA / DB-GROUNDED RESEARCH MENTORING.
 
-Hard restrictions:
-- Only use exact retrieved titles.
-- Do not invent papers, authors, years, methods, datasets, or findings.
-- If the retrieved excerpts are limited, say so clearly and kindly.
+The user wants research directions, project ideas, hypotheses, or practical next studies.
+Use only retrieved Paper_Talk DB evidence when making evidence-based claims.
+Do not mix outside papers as evidence.
+
+Avoid generic answers such as:
+- disease research,
+- cell-cell interaction analysis,
+- data integration,
+- technical development.
+
+Instead generate concrete project-level ideas. For each major idea include:
+- Project name,
+- Input data,
+- Deep learning / computational model,
+- Research question,
+- Expected output,
+- Novelty,
+- Validation or publication potential.
+
+For spatial biology, cancer genomics, single-cell, or multiomics questions, prioritize:
+- Spatial foundation models,
+- Histology to spatial transcriptomics translation,
+- Multimodal spatial AI,
+- Tumor ecosystem modeling,
+- Spatial multiomics,
+- Cell-cell interaction GNN,
+- Drug response prediction,
+- Tumor evolution modeling,
+- 3D spatial atlas or digital twin modeling.
+
+If Paper_Talk DB context is absent, say that no strong DB match was retrieved, then give only a clearly labeled general brainstorming answer.
+    `.trim();
+  }
+
+  if (questionType === "VALIDATION") {
+    return `
+Selected mode: VALIDATION PLAN.
+Explain what to test, computational validation, experimental validation, controls, expected results, and caveats.
+Use only retrieved DB evidence for paper-based claims.
     `.trim();
   }
 
   return `
-Selected mode: GENERAL / warm helpful answer.
-
-Answer naturally and conversationally.
-Do not over-structure.
-If the question becomes research-related or asks for Paper_Talk DB, switch to DB-only mode:
-- use retrieved Paper_Talk DB context only,
-- do not mix outside papers,
-- do not invent citations.
-
-Even in general mode:
-- Be friendly and clear.
-- Explain enough for the user to understand.
-- Avoid blunt one-line answers unless the user clearly asks for a short answer.
+Selected mode: GENERAL.
+Answer naturally and clearly.
+If the question is research-related, stay DB-grounded and do not invent citations.
   `.trim();
 }
 
