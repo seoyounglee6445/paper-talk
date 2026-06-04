@@ -1,4 +1,12 @@
 /*
+v69 additions:
+- Follow-up requests such as "더 주세요", "추가로", "1개가 끝인가요?", "다른 것도" reuse the previous user topic/assistant context.
+- These continuation requests do NOT trigger source-trace mode.
+- Source-trace mode is reserved only for explicit "어떤 논문 기반?", "근거 논문?", "출처?", "references?" questions.
+- Paper recommendation follow-ups continue the previous recommendation task and retrieve more DB papers.
+- Retrieval score and 논문 A/B/C labels are hidden from normal recommendation answers.
+*/
+/*
 v68 additions:
 - Style is not left to the first GPT answer.
 - After answer generation, Worker detects the user intent deterministically and rewrites/formats the final answer into the correct style.
@@ -47,7 +55,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v68 update - enforced final answer style normalization:
+Paper_Talk v69 update - follow-up continuation retrieval + safer source-trace routing:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -5372,12 +5380,7 @@ function selectTopSupportingPapersForAnswer(context, limit = null, outputStyle =
 }
 
 function isSupportingPaperFollowUp(message) {
-  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
-
-  return (
-    /(어떤|무슨|기반|근거|출처|reference|source|paper|papers|논문|문헌|citation|cite)/i.test(text) &&
-    /(논문|문헌|paper|papers|reference|source|citation|근거|출처|기반)/i.test(text)
-  ) || /(논문\s*[a-e1-5]|paper\s*[a-e1-5]|[1-5]\s*번째\s*논문|첫\s*번째\s*논문|두\s*번째\s*논문|세\s*번째\s*논문|네\s*번째\s*논문|다섯\s*번째\s*논문)/i.test(text);
+  return isExplicitSourceTraceRequest(message);
 }
 
 function getRequestedPaperOrdinal(message) {
@@ -5396,6 +5399,92 @@ function getRequestedPaperOrdinal(message) {
   if (/다섯\s*번째/.test(text)) return 4;
 
   return null;
+}
+
+
+function isContinuationMoreRequest(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  return (
+    /(더\s*주세요|더\s*줘|더\s*알려|추가로|추가\s*추천|다른\s*것도|다른\s*논문|더\s*많이|몇\s*개\s*더|[0-9]+\s*개\s*더|끝인가요|끝이야|더\s*있|more|more papers|give me more|another|additional)/i.test(text)
+  );
+}
+
+function isExplicitSourceTraceRequest(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  // Only explicit evidence/source tracing should enter SOURCE_TRACE.
+  // "더 주세요", "다른 논문", "추가 추천" should NOT match this.
+  return (
+    /(어떤\s*논문\s*기반|무슨\s*논문\s*기반|어떤\s*논문을\s*기반|근거\s*논문|참고\s*논문|사용한\s*논문|기반으로\s*한\s*논문|출처|레퍼런스|reference|references|source|sources|citation|cite|based on which papers|which papers did you use)/i.test(text)
+  );
+}
+
+async function getRecentThreadMessagesForContinuation({ threadId, userId, env, limit = 8 }) {
+  if (!threadId || !userId || threadId === "guest") return [];
+
+  const rows = await env.DB.prepare(`
+    SELECT role, content, created_at
+    FROM gpt_messages
+    WHERE thread_id = ?
+      AND user_id = ?
+    ORDER BY datetime(created_at) DESC
+    LIMIT ?
+  `).bind(threadId, userId, limit).all();
+
+  return (rows.results || []).reverse();
+}
+
+function buildContinuationQuestionFromHistory({ currentMessage, recentMessages }) {
+  const current = String(currentMessage || "").trim();
+  const messages = Array.isArray(recentMessages) ? recentMessages : [];
+
+  const previousUserMessages = messages
+    .filter(m => m.role === "user")
+    .map(m => String(m.content || "").trim())
+    .filter(Boolean);
+
+  const previousAssistantMessages = messages
+    .filter(m => m.role === "assistant")
+    .map(m => String(m.content || "").trim())
+    .filter(Boolean);
+
+  const lastUser = previousUserMessages.length
+    ? previousUserMessages[previousUserMessages.length - 1]
+    : "";
+
+  // Use the previous substantial user question as the topic.
+  const topicUser = [...previousUserMessages].reverse().find(v =>
+    v.length >= 8 &&
+    !isContinuationMoreRequest(v) &&
+    !isExplicitSourceTraceRequest(v)
+  ) || lastUser;
+
+  const lastAssistant = previousAssistantMessages.length
+    ? previousAssistantMessages[previousAssistantMessages.length - 1].slice(0, 1800)
+    : "";
+
+  return [
+    topicUser ? `이전 사용자의 주제: ${topicUser}` : "",
+    lastAssistant ? `직전 답변 요약/context: ${lastAssistant}` : "",
+    `현재 사용자의 follow-up 요청: ${current}`,
+    "",
+    "요청 해석: 사용자는 같은 주제에서 추가 후보/추가 설명을 원합니다. 이전 답변을 반복하지 말고, 같은 주제의 Paper_Talk DB 근거를 더 활용해 이어서 답하세요."
+  ].filter(Boolean).join("\\n");
+}
+
+function inferContinuationOutputStyle({ currentMessage, previousTopic, previousAssistant, fallbackStyle }) {
+  const combined = [currentMessage, previousTopic, previousAssistant].join(" ").toLowerCase();
+
+  if (/(논문\s*추천|관련\s*논문|트렌디한\s*논문|paper|papers|literature|문헌|추천)/i.test(combined)) {
+    return "LITERATURE_REVIEW";
+  }
+
+  if (/(유망|앞으로|연구\s*방향|future direction|promising|research direction|아이디어|가설|gap)/i.test(combined)) {
+    return "RESEARCH_INSIGHT";
+  }
+
+  return fallbackStyle || "RESEARCH_SYNTHESIS";
 }
 
 async function getLastSupportingPapersForThread({ threadId, userId, env }) {
@@ -5448,7 +5537,7 @@ function formatStoredSupportingPapersAnswer(rows, userMessage = "") {
   if (target) {
     const label = target.paper_label || `논문 ${String.fromCharCode(65 + Number(target.rank_index || requestedIndex))}`;
     return [
-      `${label}: ${target.title}`,
+      `${target.title}`,
       target.source_url ? `Article URL: ${target.source_url}` : "",
       target.pdf_link ? `PDF URL: ${target.pdf_link}` : "",
       target.evidence_excerpt ? `이 답변에서 사용한 DB excerpt: ${String(target.evidence_excerpt).slice(0, 900)}` : "",
@@ -5462,13 +5551,10 @@ function formatStoredSupportingPapersAnswer(rows, userMessage = "") {
     "",
     ...papers.map((paper, index) => {
       const label = paper.paper_label || `논문 ${String.fromCharCode(65 + index)}`;
-      const score = paper.similarity_score !== null && paper.similarity_score !== undefined
-        ? ` / retrieval score: ${Number(paper.similarity_score).toFixed(3)}`
-        : "";
       const links = [paper.source_url ? `Article: ${paper.source_url}` : "", paper.pdf_link ? `PDF: ${paper.pdf_link}` : ""]
         .filter(Boolean)
         .join(" | ");
-      return `${index + 1}. ${label}: ${paper.title}${score}${links ? "\n   " + links : ""}`;
+      return `${index + 1}. ${paper.title}${links ? "\n   " + links : ""}`;
     })
   ].join("\n");
 }
@@ -5637,6 +5723,42 @@ async function gptChat(request, env) {
       threadId = "guest";
     }
 
+    let recentMessagesForContinuation = [];
+    let effectiveMessage = message;
+    let forcedOutputStyle = "";
+
+    if (!isGuest && isContinuationMoreRequest(message)) {
+      recentMessagesForContinuation = await getRecentThreadMessagesForContinuation({
+        threadId,
+        userId: user.id,
+        env,
+        limit: 8
+      });
+
+      effectiveMessage = buildContinuationQuestionFromHistory({
+        currentMessage: message,
+        recentMessages: recentMessagesForContinuation
+      });
+
+      const previousTopic = recentMessagesForContinuation
+        .filter(m => m.role === "user")
+        .map(m => String(m.content || "").trim())
+        .reverse()
+        .find(v => v && !isContinuationMoreRequest(v) && !isExplicitSourceTraceRequest(v)) || "";
+
+      const previousAssistant = recentMessagesForContinuation
+        .filter(m => m.role === "assistant")
+        .map(m => String(m.content || "").trim())
+        .reverse()[0] || "";
+
+      forcedOutputStyle = inferContinuationOutputStyle({
+        currentMessage: message,
+        previousTopic,
+        previousAssistant,
+        fallbackStyle: ""
+      });
+    }
+
     if (!isGuest && isSupportingPaperFollowUp(message)) {
       const rows = await getLastSupportingPapersForThread({ threadId, userId: user.id, env });
       const sourceAnswer = formatStoredSupportingPapersAnswer(rows, message);
@@ -5678,7 +5800,7 @@ async function gptChat(request, env) {
       });
     }
 
-    const inferredIntent = await inferPaperTalkResearchIntentForChat(message, env);
+    const inferredIntent = await inferPaperTalkResearchIntentForChat(effectiveMessage, env);
     const generalOrBroad = isLikelyGeneralQuestionFast(message) && !inferredIntent.is_research_related;
     let context = [];
 
@@ -5690,7 +5812,7 @@ async function gptChat(request, env) {
     // was retrieved instead of answering from outside literature.
     if (!generalOrBroad || inferredIntent.should_use_db_evidence) {
       try {
-        context = await retrievePaperTalkDbForResearchIntent(message, inferredIntent, env);
+        context = await retrievePaperTalkDbForResearchIntent(effectiveMessage, inferredIntent, env);
       } catch {
         context = [];
       }
@@ -5699,7 +5821,7 @@ async function gptChat(request, env) {
     // Extra exact-title retry for multilingual instruction wrappers.
     if (!context.length && !generalOrBroad) {
       try {
-        const titleCandidate = extractLikelyPaperTitleForSafeLookup(message);
+        const titleCandidate = extractLikelyPaperTitleForSafeLookup(effectiveMessage);
         if (titleCandidate && titleCandidate !== message) {
           context = await retrievePaperTalkDbForResearchIntent(titleCandidate, inferredIntent, env);
         }
@@ -5708,7 +5830,7 @@ async function gptChat(request, env) {
       }
     }
 
-    const outputStyleForSelection = determinePaperTalkOutputStyle({ userMessage: message, intent: inferredIntent, hasContext: context.length > 0 });
+    const outputStyleForSelection = determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: inferredIntent, hasContext: context.length > 0 });
     context = selectTopSupportingPapersForAnswer(context, null, outputStyleForSelection);
 
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
@@ -5716,7 +5838,7 @@ async function gptChat(request, env) {
     let assistantText = (generalOrBroad && !context.length)
       ? await callOpenAIGeneralNoRetrieval(message, env)
       : await callOpenAIForPaperTalk({
-          userMessage: message,
+          userMessage: effectiveMessage,
           context,
           thinkingLogicFrameworks: [],
           pastFrameworks: [],
@@ -5761,12 +5883,12 @@ async function gptChat(request, env) {
       assistantText = hideInternalEvidenceLeaksFromNormalAnswer(assistantText);
     }
 
-    const finalOutputStyle = determinePaperTalkOutputStyle({ userMessage: message, intent: autoIntent, hasContext: context.length > 0 });
+    const finalOutputStyle = determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: autoIntent, hasContext: context.length > 0 });
 
     if (!isSupportingPaperFollowUp(message)) {
       assistantText = await normalizeFinalAnswerToUserIntentStyle({
         answer: assistantText,
-        userMessage: message,
+        userMessage: effectiveMessage,
         outputStyle: finalOutputStyle,
         env
       });
@@ -9034,8 +9156,12 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
   const questionType = normalizeQuestionType(intent?.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent?.answer_style || "concise_answer");
 
+  if (isContinuationMoreRequest(raw)) {
+    return "FOLLOW_UP_MORE";
+  }
+
   // 1. Source tracing must be first: only this mode can reveal supporting papers.
-  if (/(어떤\s*논문|무슨\s*논문|근거\s*논문|참고\s*논문|사용한\s*논문|기반\s*논문|출처|레퍼런스|reference|references|source|sources|citation|cite|paper list|논문\s*목록)/i.test(raw)) {
+  if (isExplicitSourceTraceRequest(raw)) {
     return "SOURCE_TRACE";
   }
 
@@ -9084,6 +9210,8 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
   switch (detectedIntent) {
     case "SOURCE_TRACE":
       return "SOURCE_TRACE";
+    case "FOLLOW_UP_MORE":
+      return "FOLLOW_UP_MORE";
     case "LITERATURE_REVIEW":
       return "LITERATURE_REVIEW";
     case "RESEARCH_DIRECTION":
@@ -9271,6 +9399,26 @@ Mention limitations, controls, and common mistakes.
     `.trim();
   }
 
+  if (outputStyle === "FOLLOW_UP_MORE") {
+    return `
+${common}
+
+AUTOMATIC STYLE: FOLLOW-UP CONTINUATION
+
+The user is asking for more of the previous answer.
+Use the previous topic and continue from it.
+
+Rules:
+- Do not answer only "물론입니다".
+- Do not ask for clarification unless there is no previous topic.
+- If the previous request was paper recommendation, give more relevant retrieved DB papers or categories.
+- If the previous request was research direction, add additional research directions without repeating the same ones.
+- Keep the same style as the previous task.
+- Hide retrieval scores.
+- Do not use 논문 A/B/C labels.
+    `.trim();
+  }
+
   if (outputStyle === "LITERATURE_REVIEW") {
     return `
 ${common}
@@ -9287,7 +9435,9 @@ Summarize the shared direction across retrieved DB papers.
 
 ### 주요 근거
 
-List only retrieved Paper_Talk DB titles if useful.
+Recommend several retrieved Paper_Talk DB papers when available, preferably grouped by theme.
+Do not show retrieval scores.
+Do not use 논문 A/B/C labels.
 Do not invent external papers.
 
 ### 연구적으로 보이는 gap
