@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+
+<title>Specialist GPT Admin | Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
+
+<style>
+.admin-hero {
+  margin-top: 32px;
+  margin-bottom: 28px;
+}
+
+.admin-hero p {
+  max-width: 820px;
+  line-height: 1.7;
+}
+
+.specialist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.specialist-card {
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  border-radius: 22px;
+  padding: 22px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
+}
+
+.specialist-card h3 {
+  margin-top: 0;
+  margin-bottom: 8px;
+  color: #1428a0;
+}
+
+.specialist-card.active {
+  outline: 3px solid #1428a0;
+}
+
+.specialist-card.disabled {
+  opacity: 0.72;
+}
+
+.tag {
+  display: inline-block;
+  margin-bottom: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #e8f0ff;
+  color: #1428a0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.coming-tag {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.upload-box {
+  margin-top: 24px;
+}
+
+.full-row {
+  grid-column: 1 / -1;
+}
+
+.small-note {
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.result-box {
+  margin-top: 16px;
+}
+
+.result-box p {
+  margin: 8px 0;
+}
+
+.locked {
+  background: white;
+  border: 1px solid #b9c7ff;
+  border-radius: 22px;
+  padding: 24px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
+}
+
+@media (max-width: 720px) {
+  .specialist-card {
+    padding: 18px;
+  }
+}
+</style>
+</head>
+
+<body>
+<header class="header">
+  <nav class="nav">
+    <a href="/" class="logo">Paper_Talk Admin</a>
+    <a href="/">Home</a>
+    <a href="/admin.html">Site Admin</a>
+    <a href="/admin-gpt.html">GPT Usage</a>
+    <a href="/specialist-gpts.html">Specialist GPTs</a>
+    <a href="/research.html">Research Paper</a>
+    <a href="/study.html">Study Materials</a>
+  </nav>
+</header>
+
+<main class="container">
+
+  <section class="admin-hero">
+    <h1>Specialist GPT Admin</h1>
+    <p>
+      Upload PDF or TXT knowledge separately for each Specialist GPT.
+      Each upload is saved with its own GPT key so Neuroscience GPT, Mitochondria GPT,
+      Single-cell GPT, Spatial Biology GPT, and Cancer Genomics GPT do not share the same knowledge base.
+    </p>
+  </section>
+
+  <section class="locked">
+    <h2>Specialist Admin Access</h2>
+    <p class="small-note">
+      This page uses a separate Specialist Admin Key.
+      It should be different from the main Paper_Talk site admin key.
+    </p>
+
+    <label>Specialist Admin Key</label>
+    <input id="specialistAdminKey" type="password" placeholder="Enter specialist admin key">
+
+    <button onclick="saveSpecialistAdminKey()">Save Key</button>
+    <button class="danger-btn" onclick="clearSpecialistAdminKey()">Clear Key</button>
+
+    <p id="specialistAdminStatus"></p>
+  </section>
+
+  <div id="specialistAdminContent" style="display:none;">
+
+    <section class="card">
+      <h2>Specialist GPT Knowledge Bases</h2>
+      <p class="small-note">
+        Select one Specialist GPT below, then upload PDFs/TXT files only for that GPT.
+      </p>
+
+      <div class="specialist-grid">
+
+        <article class="specialist-card active" data-gpt-card="neuroscience">
+          <span class="tag">Available</span>
+          <h3>🧠 Neuroscience GPT</h3>
+          <p class="small-note">
+            Upload neuroscience papers, reviews, methods, and curated literature.
+          </p>
+          <button onclick="selectSpecialistGpt('neuroscience')">Select</button>
+        </article>
+
+        <article class="specialist-card disabled" data-gpt-card="mitochondria">
+          <span class="tag coming-tag">Coming Soon</span>
+          <h3>Coming Soon</h3>
+          <p class="small-note">Separate knowledge upload slot reserved.</p>
+          <button onclick="selectSpecialistGpt('mitochondria')">Select Slot</button>
+        </article>
+
+        <article class="specialist-card disabled" data-gpt-card="single_cell">
+          <span class="tag coming-tag">Coming Soon</span>
+          <h3>Coming Soon</h3>
+          <p class="small-note">Separate knowledge upload slot reserved.</p>
+          <button onclick="selectSpecialistGpt('single_cell')">Select Slot</button>
+        </article>
+
+        <article class="specialist-card disabled" data-gpt-card="spatial_biology">
+          <span class="tag coming-tag">Coming Soon</span>
+          <h3>Coming Soon</h3>
+          <p class="small-note">Separate knowledge upload slot reserved.</p>
+          <button onclick="selectSpecialistGpt('spatial_biology')">Select Slot</button>
+        </article>
+
+        <article class="specialist-card disabled" data-gpt-card="cancer_genomics">
+          <span class="tag coming-tag">Coming Soon</span>
+          <h3>Coming Soon</h3>
+          <p class="small-note">Separate knowledge upload slot reserved.</p>
+          <button onclick="selectSpecialistGpt('cancer_genomics')">Select Slot</button>
+        </article>
+
+      </div>
+    </section>
+
+    <section class="card write-form upload-box">
+      <h2 id="uploadTitle">Upload Knowledge to Neuroscience GPT</h2>
+      <p id="selectedGptText" class="small-note">
+        Selected GPT key: neuroscience
+      </p>
+
+      <form onsubmit="importSpecialistFullTextFile(event)">
+        <div class="full-row">
+          <label>Optional Paper Title or Article URL to Match</label>
+          <input id="specialistFullTextMatch" placeholder="Optional. Leave blank to use each PDF file name.">
+        </div>
+
+        <div class="full-row">
+          <label>Optional PDF Link</label>
+          <input id="specialistFullTextPdfLink" placeholder="Optional PDF/file link">
+        </div>
+
+        <div class="full-row">
+          <label>Specialist GPT PDF / TXT File(s)</label>
+          <input type="file" id="specialistFullTextFiles" accept=".pdf,.txt,text/plain,application/pdf" multiple required>
+          <p class="small-note">
+            Text-based PDFs work best. If a scanned PDF has no readable text, OCR it first.
+          </p>
+        </div>
+
+        <button type="submit">Upload to Selected Specialist GPT</button>
+        <p id="specialistFullTextStatus"></p>
+        <div id="specialistFullTextResultList" class="result-box"></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Stored Specialist Full Text Files</h2>
+      <p class="small-note">
+        Load stored files for the selected Specialist GPT only.
+      </p>
+
+      <button onclick="loadStoredSpecialistFullTextFiles()">Load Stored Files for Selected GPT</button>
+      <p id="storedSpecialistFullTextStatus"></p>
+      <div id="storedSpecialistFullTextList"></div>
+    </section>
+
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+const SPECIALIST_ADMIN_KEY_STORAGE = "paperTalkSpecialistAdminKey";
+const SPECIALIST_ADMIN_KEY_EXPIRES = "paperTalkSpecialistAdminKeyExpires";
+const ONE_HOUR = 60 * 60 * 1000;
+
+let selectedGptKey = "neuroscience";
+
+const GPT_LABELS = {
+  neuroscience: "Neuroscience GPT",
+  mitochondria: "Coming Soon",
+  single_cell: "Coming Soon",
+  spatial_biology: "Coming Soon",
+  cancer_genomics: "Coming Soon"
+};
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function getSpecialistAdminKey() {
+  const key = localStorage.getItem(SPECIALIST_ADMIN_KEY_STORAGE) || "";
+  const expires = Number(localStorage.getItem(SPECIALIST_ADMIN_KEY_EXPIRES) || 0);
+
+  if (!key || Date.now() > expires) {
+    clearSpecialistAdminKey(false);
+    return "";
+  }
+
+  return key;
+}
+
+function requireSpecialistAdminKey() {
+  const key = getSpecialistAdminKey();
+
+  if (!key) {
+    alert("Please save your Specialist Admin Key first.");
+    return "";
+  }
+
+  return key;
+}
+
+function updateSpecialistAdminVisibility() {
+  const content = document.getElementById("specialistAdminContent");
+  if (!content) return;
+
+  const key = localStorage.getItem(SPECIALIST_ADMIN_KEY_STORAGE) || "";
+  const expires = Number(localStorage.getItem(SPECIALIST_ADMIN_KEY_EXPIRES) || 0);
+
+  content.style.display = key && Date.now() <= expires ? "block" : "none";
+}
+
+function updateSpecialistAdminStatus() {
+  const status = document.getElementById("specialistAdminStatus");
+  if (!status) return;
+
+  const key = localStorage.getItem(SPECIALIST_ADMIN_KEY_STORAGE) || "";
+  const expires = Number(localStorage.getItem(SPECIALIST_ADMIN_KEY_EXPIRES) || 0);
+
+  if (!key || Date.now() > expires) {
+    status.textContent = "Specialist admin key is not saved.";
+    updateSpecialistAdminVisibility();
+    return;
+  }
+
+  const minutesLeft = Math.max(Math.ceil((expires - Date.now()) / 60000), 0);
+  status.textContent = `Specialist admin key saved. Expires in about ${minutesLeft} minutes.`;
+  updateSpecialistAdminVisibility();
+}
+
+async function checkSpecialistAdminKeyWithServer(key) {
+  try {
+    const res = await fetch("/api/admin/specialist/check", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Specialist-Admin-Key": key
+      },
+      cache: "no-store"
+    });
+
+    const data = await res.json().catch(() => ({}));
+    return Boolean(res.ok && data.ok && data.authenticated);
+  } catch {
+    return false;
+  }
+}
+
+async function saveSpecialistAdminKey() {
+  const input = document.getElementById("specialistAdminKey");
+  const key = input.value.trim();
+
+  if (!key) {
+    alert("Please enter specialist admin key.");
+    return;
+  }
+
+  const status = document.getElementById("specialistAdminStatus");
+  if (status) status.textContent = "Checking specialist admin key...";
+
+  const valid = await checkSpecialistAdminKeyWithServer(key);
+
+  if (!valid) {
+    localStorage.removeItem(SPECIALIST_ADMIN_KEY_STORAGE);
+    localStorage.removeItem(SPECIALIST_ADMIN_KEY_EXPIRES);
+    input.value = "";
+    updateSpecialistAdminStatus();
+    alert("Invalid specialist admin key.");
+    return;
+  }
+
+  localStorage.setItem(SPECIALIST_ADMIN_KEY_STORAGE, key);
+  localStorage.setItem(SPECIALIST_ADMIN_KEY_EXPIRES, String(Date.now() + ONE_HOUR));
+
+  updateSpecialistAdminStatus();
+  alert("Specialist admin key saved for 1 hour.");
+}
+
+function clearSpecialistAdminKey(showAlert = true) {
+  localStorage.removeItem(SPECIALIST_ADMIN_KEY_STORAGE);
+  localStorage.removeItem(SPECIALIST_ADMIN_KEY_EXPIRES);
+
+  const input = document.getElementById("specialistAdminKey");
+  if (input) input.value = "";
+
+  updateSpecialistAdminStatus();
+
+  if (showAlert) alert("Specialist admin key cleared.");
+}
+
+function selectSpecialistGpt(gptKey) {
+  selectedGptKey = gptKey;
+
+  document.querySelectorAll("[data-gpt-card]").forEach(card => {
+    card.classList.toggle("active", card.getAttribute("data-gpt-card") === gptKey);
+  });
+
+  const label = GPT_LABELS[gptKey] || gptKey;
+  document.getElementById("uploadTitle").textContent = `Upload Knowledge to ${label}`;
+  document.getElementById("selectedGptText").textContent = `Selected GPT key: ${gptKey}`;
+
+  document.getElementById("storedSpecialistFullTextStatus").textContent = "";
+  document.getElementById("storedSpecialistFullTextList").innerHTML = "";
+}
+
+async function extractPdfTextFromFile(file) {
+  if (!window.pdfjsLib) {
+    throw new Error("PDF reader library did not load. Please refresh the page and try again.");
+  }
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const maxPages = Math.min(pdf.numPages, 500);
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items
+      .map(item => item.str || "")
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (pageText) {
+      pages.push(`Page ${pageNumber}\n${pageText}`);
+    }
+  }
+
+  return pages.join("\n\n");
+}
+
+function prepareFullTextForUpload(text) {
+  return String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim()
+    .slice(0, 12000);
+}
+
+function titleFromFullTextFileName(fileName) {
+  return String(fileName || "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function sha256Text(value) {
+  const buffer = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(String(value || ""))
+  );
+
+  return Array.from(new Uint8Array(buffer))
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function parseApiJsonOrText(res) {
+  const raw = await res.text();
+
+  try {
+    return JSON.parse(raw || "{}");
+  } catch {
+    return {
+      ok: false,
+      error: `Server returned non-JSON response. HTTP ${res.status}. ${raw.replace(/\s+/g, " ").slice(0, 300)}`
+    };
+  }
+}
+
+async function uploadSpecialistFullTextPayloadWithRetries({ key, payload }) {
+  const baseText = String(payload.text || "");
+  const title = String(payload.title || payload.fileName || "Uploaded specialist paper").trim();
+
+  const fallbackText = [
+    "Paper_Talk Specialist GPT PDF metadata-only fallback",
+    `GPT key: ${payload.gptKey || ""}`,
+    `Title: ${title}`,
+    payload.sourceUrl ? `Article link: ${payload.sourceUrl}` : "",
+    payload.pdfLink ? `PDF link: ${payload.pdfLink}` : "",
+    payload.fileName ? `File name: ${payload.fileName}` : "",
+    baseText ? `Extracted preview: ${baseText.slice(0, 1200)}` : ""
+  ].filter(Boolean).join("\n");
+
+  const attempts = [
+    { label: "bounded", text: baseText.slice(0, 12000) },
+    { label: "small", text: baseText.slice(0, 4000) },
+    { label: "metadata_only", text: fallbackText.slice(0, 1800) }
+  ];
+
+  let lastResult = { ok: false, error: "Upload did not run." };
+
+  for (const attempt of attempts) {
+    const res = await fetch("/api/admin/specialist/fulltext/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Specialist-Admin-Key": key
+      },
+      body: JSON.stringify({
+        ...payload,
+        text: attempt.text,
+        importMode: attempt.label
+      })
+    });
+
+    const result = await parseApiJsonOrText(res);
+    result._httpOk = res.ok;
+    result._attempt = attempt.label;
+    lastResult = result;
+
+    if (res.ok && result.ok) return result;
+
+    const msg = String(result.error || result.message || "");
+    const retryable = /non-JSON response|HTTP 500|HTTP 502|HTTP 503|HTTP 504|Worker|timeout/i.test(msg) || [500, 502, 503, 504].includes(res.status);
+    if (!retryable) return result;
+
+    await new Promise(resolve => setTimeout(resolve, 2500));
+  }
+
+  return lastResult;
+}
+
+async function importSpecialistFullTextFile(e) {
+  e.preventDefault();
+
+  const key = requireSpecialistAdminKey();
+  if (!key) return;
+
+  const matchInput = document.getElementById("specialistFullTextMatch");
+  const pdfLinkInput = document.getElementById("specialistFullTextPdfLink");
+  const fileInput = document.getElementById("specialistFullTextFiles");
+  const status = document.getElementById("specialistFullTextStatus");
+  const resultList = document.getElementById("specialistFullTextResultList");
+
+  const globalMatchValue = (matchInput.value || "").trim();
+  const pdfLink = (pdfLinkInput.value || "").trim();
+  const files = Array.from(fileInput.files || []);
+
+  if (!files.length) {
+    alert("Please select one or more PDF or TXT files.");
+    return;
+  }
+
+  if (status) status.textContent = `Starting import to ${selectedGptKey} for ${files.length} file(s)...`;
+  if (resultList) resultList.innerHTML = "";
+
+  const seenHashes = new Map();
+  const results = [];
+
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const fileName = file.name || `specialist-full-text-${index + 1}`;
+    const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
+
+    try {
+      if (status) status.textContent = `Reading ${index + 1}/${files.length}: ${fileName}`;
+
+      const extractedText = isPdf
+        ? await extractPdfTextFromFile(file)
+        : await file.text();
+
+      const cleanText = String(extractedText || "").trim();
+
+      if (!cleanText || cleanText.length < 20) {
+        results.push({
+          fileName,
+          status: "failed",
+          message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version."
+        });
+        continue;
+      }
+
+      const uploadText = prepareFullTextForUpload(cleanText);
+      const textHash = await sha256Text(`${selectedGptKey}:${uploadText.replace(/\s+/g, " ")}`);
+
+      if (seenHashes.has(textHash)) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Duplicate in this batch. Same as: ${seenHashes.get(textHash)}`
+        });
+        continue;
+      }
+
+      seenHashes.set(textHash, fileName);
+
+      const matchValue = globalMatchValue || titleFromFullTextFileName(fileName);
+      const isUrl = /^https?:\/\//i.test(matchValue);
+
+      if (status) status.textContent = `Uploading ${index + 1}/${files.length}: ${fileName}`;
+
+      const result = await uploadSpecialistFullTextPayloadWithRetries({
+        key,
+        payload: {
+          gptKey: selectedGptKey,
+          title: isUrl ? "" : matchValue,
+          sourceUrl: isUrl ? matchValue : "",
+          pdfLink,
+          fileName,
+          sourceType: isPdf ? "pdf" : "text",
+          text: uploadText
+        }
+      });
+
+      if (!result._httpOk || !result.ok) {
+        results.push({
+          fileName,
+          status: "failed",
+          message: result.error || result.message || "Specialist full text import failed."
+        });
+        continue;
+      }
+
+      if (result.duplicate) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Already imported to ${result.gptKey || selectedGptKey}: ${result.duplicateTitle || result.title || "existing file"}`
+        });
+        continue;
+      }
+
+      results.push({
+        fileName,
+        status: "imported",
+        message: `${result.title || "paper"} → ${result.gptKey || selectedGptKey} (${result.fullTextCharacters || 0} characters, ${result.chunks || 0} chunks)`
+      });
+    } catch (error) {
+      results.push({
+        fileName,
+        status: "failed",
+        message: error?.message || String(error)
+      });
+    }
+
+    if (resultList) resultList.innerHTML = renderSpecialistFullTextResults(results);
+    await new Promise(resolve => setTimeout(resolve, 3500));
+  }
+
+  const imported = results.filter(r => r.status === "imported").length;
+  const skipped = results.filter(r => r.status === "skipped").length;
+  const failed = results.filter(r => r.status === "failed").length;
+
+  if (status) {
+    status.textContent = `Import complete for ${selectedGptKey}. Imported: ${imported}, Skipped: ${skipped}, Failed: ${failed}.`;
+  }
+
+  if (resultList) resultList.innerHTML = renderSpecialistFullTextResults(results);
+
+  alert(`Specialist GPT import complete.\nGPT: ${selectedGptKey}\nImported: ${imported}\nSkipped: ${skipped}\nFailed: ${failed}`);
+
+  if (imported > 0) {
+    e.target.reset();
+  }
+}
+
+function renderSpecialistFullTextResults(results) {
+  if (!results || !results.length) return "";
+
+  return `
+    <div style="margin-top:14px;">
+      <h3>Specialist Full Text Import Results</h3>
+      ${results.map(row => {
+        const icon = row.status === "imported" ? "✅" : row.status === "skipped" ? "⏭️" : "❌";
+        return `
+          <p style="margin:6px 0;">
+            ${icon} <strong>${escapeHtml(row.fileName)}</strong><br>
+            <span>${escapeHtml(row.message)}</span>
+          </p>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+async function loadStoredSpecialistFullTextFiles() {
+  const key = requireSpecialistAdminKey();
+  if (!key) return;
+
+  const status = document.getElementById("storedSpecialistFullTextStatus");
+  const list = document.getElementById("storedSpecialistFullTextList");
+
+  if (status) status.textContent = `Loading stored files for ${selectedGptKey}...`;
+  if (list) list.innerHTML = "";
+
+  const params = new URLSearchParams({ gptKey: selectedGptKey });
+
+  const res = await fetch("/api/admin/specialist/fulltext/list?" + params.toString(), {
+    method: "GET",
+    headers: { "X-Specialist-Admin-Key": key }
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok || !data.ok) {
+    if (status) status.textContent = data.error || data.message || "Failed to load stored specialist files.";
+    return;
+  }
+
+  const files = data.files || [];
+  if (status) status.textContent = `Stored files for ${selectedGptKey}: ${files.length}`;
+
+  if (!files.length) {
+    if (list) list.innerHTML = "<p>No stored files found for this Specialist GPT.</p>";
+    return;
+  }
+
+  list.innerHTML = files.map(file => {
+    const postId = encodeURIComponent(file.post_id || "");
+    const fileName = encodeURIComponent(file.file_name || "");
+    const contentHash = encodeURIComponent(file.content_hash || "");
+
+    return `
+      <article class="post-card">
+        <h3>${escapeHtml(file.title || "Untitled paper")}</h3>
+        <p><strong>GPT key:</strong> ${escapeHtml(file.gpt_key || selectedGptKey)}</p>
+        <p><strong>File:</strong> ${escapeHtml(file.file_name || "")}</p>
+        <p><strong>Chunks:</strong> ${escapeHtml(file.chunks || 0)} · <strong>Characters:</strong> ${escapeHtml(file.characters || 0)}</p>
+        <p class="post-meta">Uploaded: ${escapeHtml(file.created_at || "")}</p>
+        <button class="danger-btn" onclick="deleteStoredSpecialistFullTextFile('${postId}', '${fileName}', '${contentHash}')">
+          Delete Stored Full Text
+        </button>
+      </article>
+    `;
+  }).join("");
+}
+
+async function deleteStoredSpecialistFullTextFile(encodedPostId, encodedFileName, encodedContentHash) {
+  const postId = decodeURIComponent(encodedPostId);
+  const fileName = decodeURIComponent(encodedFileName);
+  const contentHash = decodeURIComponent(encodedContentHash);
+
+  if (!confirm(`Delete stored full text from ${selectedGptKey}?\n\n${fileName}`)) return;
+
+  const key = requireSpecialistAdminKey();
+  if (!key) return;
+
+  const res = await fetch("/api/admin/specialist/fulltext/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Specialist-Admin-Key": key
+    },
+    body: JSON.stringify({
+      gptKey: selectedGptKey,
+      postId,
+      fileName,
+      contentHash
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok || !data.ok) {
+    alert(data.error || data.message || "Delete failed.");
+    return;
+  }
+
+  alert(data.message || "Stored specialist full text deleted.");
+  loadStoredSpecialistFullTextFiles();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  updateSpecialistAdminStatus();
+  selectSpecialistGpt("neuroscience");
+});
+</script>
+</body>
+</html>
