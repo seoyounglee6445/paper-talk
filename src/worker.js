@@ -39,6 +39,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v33: CPU-safe Thinking Logic: old full-PDF logic rows are deleted on import, chat retrieves only the latest compact distilled framework, and normal paper searches exclude Thinking Logic rows.
 - v37: Auto-detects user-requested output formats such as "- - - -", "4 lines", "4줄", or bullet requests and forces the final answer to match that exact format.
 - v38: Thread-aware paper follow-up fix. If a user first provides a paper URL/title and then asks follow-up questions like "Key takeaway" or "전체 논문", GPT reuses the same paper instead of retrieving unrelated papers.
+- v40: Strict active-paper lock. When a URL/title exists in the current thread, follow-up turns use ONLY that exact paper context and block unrelated Vectorize/keyword retrieval from entering the answer.
 */
 
 export default {
@@ -4082,6 +4083,77 @@ function buildThreadRetrievalAnchor(recentMessages, currentMessage) {
   return '';
 }
 
+
+function scoreExplicitPaperForActiveLock(item, explicitText) {
+  const source = normalizeSearchText(`${item?.source_url || ""} ${item?.pdf_link || ""}`);
+  const title = normalizeSearchText(item?.title || "");
+  const content = normalizeSearchText(item?.content || "");
+  const query = String(explicitText || "");
+  const urls = extractUrlsFromQuestion(query).flatMap(makeUrlSearchVariants).map(normalizeSearchText).filter(Boolean);
+  const doi = normalizeSearchText(extractDoiFromTextOrUrl(query) || "");
+  const titles = extractLikelyPaperTitlesFromQuestion(query).map(normalizeSearchText).filter(Boolean);
+  const tokens = getImportantSearchTokens(query).slice(0, 10).map(normalizeSearchText).filter(Boolean);
+
+  let score = 0;
+  for (const url of urls) {
+    if (url && source.includes(url)) score += 240;
+    else if (url && content.includes(url)) score += 100;
+    const compactUrl = url.replace(/[^a-z0-9]/g, "");
+    if (compactUrl.length >= 12) {
+      const compactSource = source.replace(/[^a-z0-9]/g, "");
+      const compactContent = content.replace(/[^a-z0-9]/g, "");
+      if (compactSource.includes(compactUrl.slice(-18))) score += 260;
+      else if (compactContent.includes(compactUrl.slice(-18))) score += 120;
+    }
+  }
+  if (doi) {
+    if (source.includes(doi)) score += 220;
+    else if (content.includes(doi)) score += 120;
+  }
+  for (const t of titles) {
+    if (t && title.includes(t.slice(0, 80))) score += 180;
+    else if (t && content.includes(t.slice(0, 80))) score += 80;
+  }
+  const tokenHitsInTitle = tokens.filter(t => t.length >= 4 && title.includes(t)).length;
+  const tokenHitsInContent = tokens.filter(t => t.length >= 4 && content.includes(t)).length;
+  score += tokenHitsInTitle * 18 + Math.min(tokenHitsInContent * 4, 40);
+  if (item?.from_explicit_url_or_identifier_search) score += 100;
+  if (item?.from_explicit_title_search) score += 70;
+  if (item?.from_explicit_title_token_search) score += 45;
+  if (item?.from_user_provided_url_fetch) score += 30;
+  if (item?.from_stored_url_live_fetch) score += 12;
+  return score;
+}
+
+async function getStrictActivePaperContext({ message, recentMessages, env }) {
+  const current = String(message || "").trim();
+  const currentHasExplicitPaper =
+    extractUrlsFromQuestion(current).length > 0 ||
+    Boolean(extractDoiFromTextOrUrl(current)) ||
+    extractLikelyPaperTitlesFromQuestion(current).length > 0;
+
+  const anchor = buildThreadRetrievalAnchor(recentMessages || [], current);
+  const explicitText = currentHasExplicitPaper ? current : anchor;
+  if (!explicitText) return { activePaperContext: [], activePaperQuery: "", activePaperLocked: false };
+
+  let matches = [];
+  try { matches = await findExplicitPaperMatchesFromQuestion(explicitText, env); } catch { matches = []; }
+  if (!matches.length) return { activePaperContext: [], activePaperQuery: explicitText, activePaperLocked: false };
+
+  const ranked = matches
+    .filter(item => !isThinkingLogicKnowledgeItem(item))
+    .map(item => ({ item, score: scoreExplicitPaperForActiveLock(item, explicitText) }))
+    .sort((a, b) => b.score - a.score);
+
+  const best = ranked[0];
+  if (!best || best.score < 60) return { activePaperContext: [], activePaperQuery: explicitText, activePaperLocked: false };
+
+  let enriched = [best.item];
+  try { enriched = await enrichExplicitPaperMatchesWithStoredUrls([best.item], env); } catch { enriched = [best.item]; }
+  const locked = mergeKnowledgeResults(enriched).slice(0, 1);
+  return { activePaperContext: locked, activePaperQuery: explicitText, activePaperLocked: locked.length > 0 };
+}
+
 async function gptChat(request, env) {
   const user = await getSession(request, env);
   const isGuest = !user;
@@ -4185,35 +4257,42 @@ async function gptChat(request, env) {
     ? []
     : await getRecentUserMessagesForRetrieval(threadId, user.id, env, 8);
 
-  const threadRetrievalAnchor = buildThreadRetrievalAnchor(recentMessages, message);
+  const strictActivePaper = await getStrictActivePaperContext({
+    message,
+    recentMessages,
+    env
+  });
+
+  const threadRetrievalAnchor = strictActivePaper.activePaperLocked
+    ? strictActivePaper.activePaperQuery
+    : buildThreadRetrievalAnchor(recentMessages, message);
+
+  const recentMessagesForAnswer = strictActivePaper.activePaperLocked ? [] : recentMessages;
 
   const autoIntent = await inferUserResearchIntent({
     userMessage: message,
-    recentMessages
+    recentMessages: recentMessagesForAnswer
   }, env);
 
-  const retrievalMessage = [
-    threadRetrievalAnchor,
-    message,
-    autoIntent?.retrieval_query
-      ? `Auto-inferred research retrieval query:
+  let context = [];
+
+  if (strictActivePaper.activePaperLocked) {
+    // v40 strict active-paper lock:
+    // Follow-up turns must use only the exact paper selected by URL/title.
+    // Do not merge broad Vectorize/keyword retrieval results, because that can pull unrelated papers.
+    context = strictActivePaper.activePaperContext;
+  } else {
+    const retrievalMessage = [
+      threadRetrievalAnchor,
+      message,
+      autoIntent?.retrieval_query
+        ? `Auto-inferred research retrieval query:
 ${autoIntent.retrieval_query}`
-      : ""
-  ].filter(Boolean).join("
+        : ""
+    ].filter(Boolean).join("\n\n");
 
-");
-
-  let context = (await searchResearchKnowledge(retrievalMessage, env))
-    .filter(item => !isThinkingLogicKnowledgeItem(item));
-
-  // Safety guard: if this is clearly a follow-up to an earlier paper, do not let broad
-  // keyword retrieval pull unrelated papers into the answer. Keep the explicit paper rows first.
-  if (threadRetrievalAnchor && !extractUrlsFromQuestion(message).length) {
-    const anchored = await searchResearchKnowledge(threadRetrievalAnchor, env);
-    const anchoredClean = anchored.filter(item => !isThinkingLogicKnowledgeItem(item));
-    if (anchoredClean.length) {
-      context = mergeKnowledgeResults([...anchoredClean, ...context]).slice(0, 6);
-    }
+    context = (await searchResearchKnowledge(retrievalMessage, env))
+      .filter(item => !isThinkingLogicKnowledgeItem(item));
   }
   const thinkingLogicFrameworks = await retrieveThinkingLogicFrameworks({
     userMessage: message
@@ -4225,8 +4304,9 @@ ${autoIntent.retrieval_query}`
     thinkingLogicFrameworks,
     pastFrameworks: [],
     generatedFramework: "",
-    recentMessages,
-    autoIntent
+    recentMessages: recentMessagesForAnswer,
+    autoIntent,
+    strictActivePaperLocked: strictActivePaper.activePaperLocked
   }, env);
 
   // v27:
@@ -5619,8 +5699,8 @@ function mergeKnowledgeResults(items) {
     const aContent = `${a?.title || ""}\n${a?.content || ""}\n${a?.matched_chunk || ""}`;
     const bContent = `${b?.title || ""}\n${b?.content || ""}\n${b?.matched_chunk || ""}`;
 
-    const aExact = a?.from_exact_phrase_search ? 20 : 0;
-    const bExact = b?.from_exact_phrase_search ? 20 : 0;
+    const aExact = (a?.from_explicit_url_or_identifier_search ? 120 : 0) + (a?.from_explicit_title_search ? 90 : 0) + (a?.from_explicit_title_token_search ? 60 : 0) + (a?.from_user_provided_url_fetch ? 50 : 0) + (a?.from_exact_phrase_search ? 20 : 0);
+    const bExact = (b?.from_explicit_url_or_identifier_search ? 120 : 0) + (b?.from_explicit_title_search ? 90 : 0) + (b?.from_explicit_title_token_search ? 60 : 0) + (b?.from_user_provided_url_fetch ? 50 : 0) + (b?.from_exact_phrase_search ? 20 : 0);
     const aAuto = a?.from_auto_keyword_search ? 16 : 0;
     const bAuto = b?.from_auto_keyword_search ? 16 : 0;
     const aDirect = a?.from_direct_db_search ? 12 : 0;
@@ -6863,7 +6943,7 @@ function enforceStrictUserOutputFormat(answer, userMessage) {
     .join("\n");
 }
 
-async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null }, env) {
+async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env) {
   context = mergeKnowledgeResults(Array.isArray(context) ? context : [])
     .filter(item => !isThinkingLogicKnowledgeItem(item))
     .slice(0, 12);
@@ -6966,6 +7046,21 @@ For research-related answers:
 5. You may give only a very brief general conceptual clarification if needed, but label it as general background, not DB evidence.
     `.trim();
 
+  const activePaperLockInstruction = strictActivePaperLocked
+    ? `
+STRICT ACTIVE PAPER LOCK
+
+The current conversation is locked to ONE explicit paper selected from the user's URL/title.
+Use ONLY DB_SOURCE_1 as the paper context.
+Do NOT retrieve, mention, infer from, or answer using any other paper.
+If the user asks whether the full paper was read, answer honestly:
+- You are using the Paper_Talk DB stored excerpt/content and any readable metadata fetched from the stored URL.
+- Do not claim full publisher full text was read unless the retrieved context explicitly contains full text.
+If the user asks where a statement came from and the statement is not supported by DB_SOURCE_1, say it was not supported by the active paper context and correct it using DB_SOURCE_1.
+For follow-up requests such as key takeaway, 1 line, 3 lines, why important, or clinical meaning, answer from DB_SOURCE_1 only.
+    `.trim()
+    : "";
+
   const messages = [
     {
       role: "system",
@@ -7057,6 +7152,10 @@ ${thinkingLogicContext.slice(0, 3500)}
       role: "system",
       content: strictDbRule
     },
+    ...(activePaperLockInstruction ? [{
+      role: "system",
+      content: activePaperLockInstruction
+    }] : []),
     {
       role: "system",
       content: modeInstruction
