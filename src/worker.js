@@ -44,6 +44,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v42: Adds Admin Research Paper Full Text PDF/TXT import. Browser-extracted PDF/TXT text is attached to the matched research_knowledge paper as FULL_TEXT_PDF_UPLOAD evidence, reindexed into Vectorize, and preferred before abstracts/metadata in GPT excerpts.
 - v43: Full-text import stores a content hash and skips duplicate PDFs/TXTs already imported into Paper_Talk DB.
 - v44: Full-text PDF/TXT import is chunked into paper_fulltext_chunks for 1000+ PDF scaling; Admin can list/delete stored full text files.
+- v45: GPT retrieval now enriches explicit paper/title matches with paper_fulltext_chunks so uploaded PDFs are used immediately in answers.
 */
 
 export default {
@@ -4806,7 +4807,14 @@ async function getStrictActivePaperContext({ message, recentMessages, env }) {
 
   let enriched = [best.item];
   try { enriched = await enrichExplicitPaperMatchesWithStoredUrls([best.item], env); } catch { enriched = [best.item]; }
-  const locked = mergeKnowledgeResults(enriched).slice(0, 1);
+
+  try {
+    enriched = await enrichKnowledgeItemsWithFullTextChunks(enriched, explicitText, env);
+  } catch {
+    // Keep stored metadata if full-text chunk retrieval fails.
+  }
+
+  const locked = mergeKnowledgeResults(enriched).slice(0, 3);
   return { activePaperContext: locked, activePaperQuery: explicitText, activePaperLocked: locked.length > 0 };
 }
 
@@ -5430,6 +5438,151 @@ async function searchPaperFullTextChunks(query, env, limit = 10) {
 }
 
 
+
+
+async function getBestFullTextChunksForPaper({ postId, title, query, env, limit = 6 }) {
+  try {
+    await ensurePaperFullTextTables(env);
+  } catch {
+    return [];
+  }
+
+  const safePostId = String(postId || "").trim();
+  const safeTitle = cleanBibtexText(title || "").trim();
+  const userQuery = String(query || "").trim();
+
+  const tokens = [
+    ...getImportantSearchTokens(userQuery),
+    ...getImportantSearchTokens(safeTitle)
+  ]
+    .map(v => String(v || "").toLowerCase())
+    .filter(v => v.length >= 4);
+
+  const uniqueTokens = [...new Set(tokens)].slice(0, 10);
+
+  let rows = [];
+
+  try {
+    if (safePostId) {
+      const result = await env.DB.prepare(`
+        SELECT post_id, title, source_url, pdf_link, file_name, chunk_index, text, text_length, created_at
+        FROM paper_fulltext_chunks
+        WHERE post_id = ?
+        ORDER BY
+          CASE
+            WHEN chunk_index <= 3 THEN 0
+            ELSE 1
+          END,
+          chunk_index ASC
+        LIMIT ?
+      `).bind(safePostId, Math.max(limit * 3, 12)).all();
+
+      rows = result.results || [];
+    }
+  } catch {
+    rows = [];
+  }
+
+  if (!rows.length && safeTitle) {
+    try {
+      const titleTokens = getImportantSearchTokens(safeTitle).slice(0, 8);
+      if (titleTokens.length >= 3) {
+        const clauses = titleTokens.map(() => `LOWER(title) LIKE ?`).join(" AND ");
+        const params = titleTokens.map(t => `%${t.toLowerCase()}%`);
+
+        const result = await env.DB.prepare(`
+          SELECT post_id, title, source_url, pdf_link, file_name, chunk_index, text, text_length, created_at
+          FROM paper_fulltext_chunks
+          WHERE ${clauses}
+          ORDER BY chunk_index ASC
+          LIMIT ?
+        `).bind(...params, Math.max(limit * 3, 12)).all();
+
+        rows = result.results || [];
+      }
+    } catch {
+      rows = [];
+    }
+  }
+
+  if (!rows.length) return [];
+
+  const scored = rows.map(row => {
+    const hay = normalizeSearchText(`${row.title || ""} ${row.file_name || ""} ${row.text || ""}`);
+    const score =
+      uniqueTokens.reduce((sum, token) => sum + (hay.includes(token) ? 3 : 0), 0) +
+      (Number(row.chunk_index || 0) <= 3 ? 4 : 0) +
+      (/abstract|introduction|result|discussion|conclusion|malignan|tumou?r|cancer|pancreatic|ductal|carcinoma|epithelial/i.test(row.text || "") ? 3 : 0);
+
+    return { row, score };
+  }).sort((a, b) => b.score - a.score || Number(a.row.chunk_index || 0) - Number(b.row.chunk_index || 0));
+
+  return scored.slice(0, limit).map(({ row }) => ({
+    post_id: row.post_id,
+    title: cleanBibtexText(row.title),
+    source_url: row.source_url || "",
+    pdf_link: row.pdf_link || "",
+    content: [
+      "Paper_Talk DB Research Paper",
+      "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
+      `Title: ${row.title || ""}`,
+      row.file_name ? `Full text file: ${row.file_name}` : "",
+      `Chunk index: ${row.chunk_index}`,
+      "",
+      row.text || ""
+    ].filter(Boolean).join("\n"),
+    matched_chunk: cleanBibtexText(row.text || ""),
+    from_fulltext_chunk_search: true,
+    from_direct_db_search: true
+  }));
+}
+
+async function enrichKnowledgeItemsWithFullTextChunks(items, query, env) {
+  const output = [];
+
+  for (const item of (items || [])) {
+    if (!item) continue;
+
+    if (item.from_fulltext_chunk_search) {
+      output.push(item);
+      continue;
+    }
+
+    const chunks = await getBestFullTextChunksForPaper({
+      postId: item.post_id || "",
+      title: item.title || "",
+      query,
+      env,
+      limit: 5
+    });
+
+    if (chunks.length) {
+      const chunkText = chunks
+        .map(chunk => chunk.matched_chunk || "")
+        .filter(Boolean)
+        .join("\n\n--- Full-text chunk ---\n\n");
+
+      output.push({
+        ...item,
+        content: [
+          item.content || "",
+          "",
+          "Paper_Talk retrieved uploaded full-text chunks for this paper:",
+          chunkText
+        ].filter(Boolean).join("\n\n").slice(0, 52000),
+        matched_chunk: chunkText.slice(0, 6000),
+        from_fulltext_chunk_enriched: true
+      });
+
+      output.push(...chunks);
+    } else {
+      output.push(item);
+    }
+  }
+
+  return output;
+}
+
 async function searchResearchKnowledge(query, env) {
   const userQuery = String(query || "").trim();
 
@@ -5449,7 +5602,8 @@ async function searchResearchKnowledge(query, env) {
     const explicitMatches = await findExplicitPaperMatchesFromQuestion(userQuery, env);
     if (explicitMatches.length > 0) {
       const enriched = await enrichExplicitPaperMatchesWithStoredUrls(explicitMatches, env);
-      return mergeKnowledgeResults(enriched).slice(0, 12);
+      const enrichedWithFullText = await enrichKnowledgeItemsWithFullTextChunks(enriched, userQuery, env);
+      return mergeKnowledgeResults(enrichedWithFullText).slice(0, 12);
     }
   } catch {
     // Continue with normal retrieval.
@@ -5649,7 +5803,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env) {
     const like = `%${value.toLowerCase()}%`;
     try {
       const found = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content, updated_at
+        SELECT post_id, title, source_url, pdf_link, content, updated_at
         FROM research_knowledge
         WHERE status = 'indexed'
           AND post_id NOT LIKE 'thinking_logic_%'
@@ -5692,7 +5846,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env) {
     try {
       const exactLike = `%${normalizedTitle.slice(0, 180)}%`;
       let found = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content, updated_at
+        SELECT post_id, title, source_url, pdf_link, content, updated_at
         FROM research_knowledge
         WHERE status = 'indexed'
           AND post_id NOT LIKE 'thinking_logic_%'
@@ -5725,7 +5879,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env) {
         ];
 
         found = await env.DB.prepare(`
-          SELECT title, source_url, pdf_link, content, updated_at
+          SELECT post_id, title, source_url, pdf_link, content, updated_at
           FROM research_knowledge
           WHERE status = 'indexed'
             AND post_id NOT LIKE 'thinking_logic_%'
