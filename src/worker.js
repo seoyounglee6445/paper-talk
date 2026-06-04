@@ -45,6 +45,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v43: Full-text import stores a content hash and skips duplicate PDFs/TXTs already imported into Paper_Talk DB.
 - v44: Full-text PDF/TXT import is chunked into paper_fulltext_chunks for 1000+ PDF scaling; Admin can list/delete stored full text files.
 - v45: GPT retrieval now enriches explicit paper/title matches with paper_fulltext_chunks so uploaded PDFs are used immediately in answers.
+- v46: Large-PDF safe mode. Full-text import stores a smaller bounded chunk set, indexes only a safe subset into Vectorize, and GPT chat skips expensive DB retrieval for ordinary/general questions to prevent Cloudflare 503 HTML responses.
 */
 
 export default {
@@ -1321,7 +1322,7 @@ async function ensurePaperFullTextTables(env) {
   }
 }
 
-function chunkFullTextForStorage(text, chunkSize = 2800, overlap = 350) {
+function chunkFullTextForStorage(text, chunkSize = 3500, overlap = 300) {
   const clean = String(text || "")
     .replace(/\r/g, "\n")
     .replace(/[ \t]+/g, " ")
@@ -1348,7 +1349,7 @@ function chunkFullTextForStorage(text, chunkSize = 2800, overlap = 350) {
       }
     }
 
-    if (chunk.length >= 300) chunks.push(chunk);
+    if (chunk.length >= 120) chunks.push(chunk);
 
     if (end >= clean.length) break;
     start = Math.max(end - overlap, start + 1);
@@ -1357,7 +1358,7 @@ function chunkFullTextForStorage(text, chunkSize = 2800, overlap = 350) {
   // Safety cap:
   // 160 chunks x ~2.8k chars is enough for most biomedical full texts
   // and prevents Cloudflare Worker / D1 / Vectorize burst failures.
-  return chunks.slice(0, 160);
+  return chunks.slice(0, PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS);
 }
 
 async function upsertFullTextChunkVectors({ postId, title, sourceUrl, pdfLink, fileName, contentHash, chunks }, env) {
@@ -1366,9 +1367,10 @@ async function upsertFullTextChunkVectors({ postId, title, sourceUrl, pdfLink, f
   }
 
   const pending = [];
+  const chunksForVector = (chunks || []).slice(0, PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT);
 
-  for (let i = 0; i < chunks.length; i++) {
-    const text = chunks[i];
+  for (let i = 0; i < chunksForVector.length; i++) {
+    const text = chunksForVector[i];
     const vectorId = `${postId}:fulltext:${String(contentHash || "").slice(0, 16)}:${i}`;
 
     const embedding = await createEmbedding(text, env);
@@ -1565,7 +1567,7 @@ async function adminImportResearchFullText(request, env) {
     }, 400);
   }
 
-  if (!rawText || rawText.length < 500) {
+  if (!rawText || rawText.length < 120) {
     return json({
       ok: false,
       error: "Full text is too short. If this PDF is scanned images, use a text-based PDF or OCR it first."
@@ -1839,7 +1841,7 @@ function cleanUploadedFullText(text) {
   // Keep enough full text for retrieval while avoiding D1/Worker prompt and CPU failures.
   // For very large PDFs, the first 350k characters usually preserves abstract, intro,
   // methods, results, discussion, figure legends, and references.
-  return cleaned.slice(0, 350000);
+  return cleaned.slice(0, 210000);
 }
 
 function makeFullTextPreferredExcerpt(content) {
@@ -4868,6 +4870,59 @@ function isSameKnowledgePaper(a, b) {
   return false;
 }
 
+
+const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 60;
+const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 24;
+const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 6;
+const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 7000;
+const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 1800;
+const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 1500;
+
+function isLikelyGeneralQuestionFast(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+
+  const lower = text.toLowerCase();
+
+  const explicitResearchSignal = /paper_talk|db|논문|연구|literature|paper|papers|abstract|doi|pubmed|pmid|reindex|full\s*text|pdf|암|cancer|tumou?r|genomics|single[-\s]?cell|spatial|rna[-\s]?seq|scrna|transcriptomics|proteomics|multi[-\s]?omics|trajectory|velocity|scvelo|velocyto|visium|xenium|cosmx|mutation|variant|biomarker|immunotherapy|checkpoint|t\s*cell|b\s*cell|myeloid|macrophage|fibroblast|pancreatic|melanoma|glioma|breast|lung|colon|metastasis|organoid|crispr|sequencing/i;
+  if (explicitResearchSignal.test(text)) return false;
+
+  const casualOrUtility = /^(hi|hello|hey|thanks|thank you|고마워|안녕|안녕하세요|테스트|test|오늘 날씨|몇 시|who are you|너 누구|help|도움말|뭐 할 수 있어|무엇을 할 수)/i;
+  if (casualOrUtility.test(lower)) return true;
+
+  if (text.length <= 80 && !/[?？].*(논문|연구|paper|cancer|omics)/i.test(text)) {
+    return true;
+  }
+
+  return false;
+}
+
+function makeEmptyStrictActivePaperContext() {
+  return {
+    activePaperLocked: false,
+    activePaperQuery: '',
+    activePaperContext: []
+  };
+}
+
+function trimKnowledgeItemForChat(item) {
+  if (!item) return item;
+  const content = String(item.content || '').slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM + 1200);
+  const matched = String(item.matched_chunk || makeBestEvidenceExcerpt(item.content || '') || '').slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM);
+  return {
+    ...item,
+    content,
+    matched_chunk: matched
+  };
+}
+
+function trimContextForChat(context) {
+  return mergeKnowledgeResults(Array.isArray(context) ? context : [])
+    .filter(item => !isThinkingLogicKnowledgeItem(item))
+    .slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS)
+    .map(trimKnowledgeItemForChat);
+}
+
 async function gptChat(request, env) {
   const user = await getSession(request, env);
   const isGuest = !user;
@@ -4967,32 +5022,43 @@ async function gptChat(request, env) {
   // must stay attached to the paper URL/title the user mentioned earlier in the same chat.
   // We therefore use recent user messages only for retrieval anchoring.
   // The final answer still focuses on the current user message and requested output format.
-  const recentMessages = isGuest
-    ? []
-    : await getRecentUserMessagesForRetrieval(threadId, user.id, env, 8);
+  const fastGeneralMode = isLikelyGeneralQuestionFast(message);
 
-  const strictActivePaper = await getStrictActivePaperContext({
-    message,
-    recentMessages,
-    env
-  });
+  const recentMessages = fastGeneralMode || isGuest
+    ? []
+    : await getRecentUserMessagesForRetrieval(threadId, user.id, env, 6);
+
+  const strictActivePaper = fastGeneralMode
+    ? makeEmptyStrictActivePaperContext()
+    : await getStrictActivePaperContext({
+        message,
+        recentMessages,
+        env
+      });
 
   const threadRetrievalAnchor = strictActivePaper.activePaperLocked
     ? strictActivePaper.activePaperQuery
     : buildThreadRetrievalAnchor(recentMessages, message);
 
-  const recentMessagesForAnswer = strictActivePaper.activePaperLocked ? [] : recentMessages;
+  const recentMessagesForAnswer = fastGeneralMode || strictActivePaper.activePaperLocked ? [] : recentMessages;
 
-  const autoIntent = await inferUserResearchIntent({
-    userMessage: message,
-    recentMessages: recentMessagesForAnswer
-  }, env);
+  const autoIntent = fastGeneralMode
+    ? makeFallbackResearchIntent(message)
+    : await inferUserResearchIntent({
+        userMessage: message,
+        recentMessages: recentMessagesForAnswer
+      }, env);
 
   let context = [];
 
   const relatedPaperDiscoveryRequest = strictActivePaper.activePaperLocked && isRelatedPaperDiscoveryRequest(message, autoIntent);
 
-  if (strictActivePaper.activePaperLocked && !relatedPaperDiscoveryRequest) {
+  if (fastGeneralMode) {
+    // Large-PDF safe mode:
+    // Ordinary/general questions should not scan D1 full-text chunks, call retrieval expansion,
+    // or load thinking-logic rows. This prevents Cloudflare Worker 503 HTML responses.
+    context = [];
+  } else if (strictActivePaper.activePaperLocked && !relatedPaperDiscoveryRequest) {
     // v40 strict active-paper lock:
     // Follow-up turns must use only the exact paper selected by URL/title.
     // Do not merge broad Vectorize/keyword retrieval results, because that can pull unrelated papers.
@@ -5022,9 +5088,14 @@ async function gptChat(request, env) {
     context = (await searchResearchKnowledge(retrievalMessage, env))
       .filter(item => !isThinkingLogicKnowledgeItem(item));
   }
-  const thinkingLogicFrameworks = await retrieveThinkingLogicFrameworks({
-    userMessage: message
-  }, env);
+
+  context = trimContextForChat(context);
+
+  const thinkingLogicFrameworks = fastGeneralMode
+    ? []
+    : await retrieveThinkingLogicFrameworks({
+        userMessage: message
+      }, env);
 
   let assistantText = await callOpenAIForPaperTalk({
     userMessage: message,
@@ -5352,7 +5423,7 @@ async function deleteGptThread(request, env) {
 }
 
 
-async function searchPaperFullTextChunks(query, env, limit = 10) {
+async function searchPaperFullTextChunks(query, env, limit = 6) {
   const userQuery = String(query || "").trim();
   if (!userQuery) return [];
 
@@ -5362,16 +5433,16 @@ async function searchPaperFullTextChunks(query, env, limit = 10) {
     return [];
   }
 
-  const tokens = getImportantSearchTokens(userQuery).slice(0, 8);
+  const tokens = getImportantSearchTokens(userQuery).slice(0, 5);
   const phrases = [
     ...extractScientificKeyPhrases(userQuery),
     ...extractAutoResearchKeywords(userQuery)
   ]
     .map(v => cleanRetrievalPhrase(v))
     .filter(v => v.length >= 3)
-    .slice(0, 10);
+    .slice(0, 6);
 
-  const terms = [...new Set([...phrases, ...tokens])].slice(0, 12);
+  const terms = [...new Set([...phrases, ...tokens])].slice(0, 7);
 
   if (!terms.length) return [];
 
@@ -5440,7 +5511,7 @@ async function searchPaperFullTextChunks(query, env, limit = 10) {
 
 
 
-async function getBestFullTextChunksForPaper({ postId, title, query, env, limit = 6 }) {
+async function getBestFullTextChunksForPaper({ postId, title, query, env, limit = 3 }) {
   try {
     await ensurePaperFullTextTables(env);
   } catch {
@@ -5475,7 +5546,7 @@ async function getBestFullTextChunksForPaper({ postId, title, query, env, limit 
           END,
           chunk_index ASC
         LIMIT ?
-      `).bind(safePostId, Math.max(limit * 3, 12)).all();
+      `).bind(safePostId, Math.max(limit * 2, 6)).all();
 
       rows = result.results || [];
     }
@@ -5496,7 +5567,7 @@ async function getBestFullTextChunksForPaper({ postId, title, query, env, limit 
           WHERE ${clauses}
           ORDER BY chunk_index ASC
           LIMIT ?
-        `).bind(...params, Math.max(limit * 3, 12)).all();
+        `).bind(...params, Math.max(limit * 2, 6)).all();
 
         rows = result.results || [];
       }
@@ -5553,7 +5624,7 @@ async function enrichKnowledgeItemsWithFullTextChunks(items, query, env) {
       title: item.title || "",
       query,
       env,
-      limit: 5
+      limit: 2
     });
 
     if (chunks.length) {
@@ -5569,8 +5640,8 @@ async function enrichKnowledgeItemsWithFullTextChunks(items, query, env) {
           "",
           "Paper_Talk retrieved uploaded full-text chunks for this paper:",
           chunkText
-        ].filter(Boolean).join("\n\n").slice(0, 52000),
-        matched_chunk: chunkText.slice(0, 6000),
+        ].filter(Boolean).join("\n\n").slice(0, 14000),
+        matched_chunk: chunkText.slice(0, 4000),
         from_fulltext_chunk_enriched: true
       });
 
@@ -6404,7 +6475,7 @@ async function expandQuestionForResearchRetrieval(userQuery, env) {
   if (!env.OPENAI_API_KEY) return "";
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 8000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -7461,7 +7532,7 @@ async function inferUserResearchIntent({ userMessage, recentMessages = [] }, env
     : "";
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 8000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -7953,9 +8024,7 @@ function enforceStrictUserOutputFormat(answer, userMessage) {
 }
 
 async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env) {
-  context = mergeKnowledgeResults(Array.isArray(context) ? context : [])
-    .filter(item => !isThinkingLogicKnowledgeItem(item))
-    .slice(0, 12);
+  context = trimContextForChat(context);
   const hasContext = context.length > 0;
 
   const intent = autoIntent || makeFallbackResearchIntent(userMessage);
@@ -7979,9 +8048,9 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const requestedFormatInstruction = buildUserRequestedFormatInstruction(userMessage);
 
   const contextText = hasContext
-    ? context.slice(0, 10).map((item, index) => {
+    ? context.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS).map((item, index) => {
         const title = cleanBibtexText(item.title || "");
-        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 2600);
+        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM);
 
         return [
           `DB_SOURCE_${index + 1}`,
@@ -8152,7 +8221,7 @@ Do not answer about the framework itself.
 Do not change the final answer into a textbook-style explanation.
 The final answer must keep the existing Paper_Talk style: warm Korean research mentor, natural paragraphs, practical research suggestions, and concrete examples.
 
-${thinkingLogicContext.slice(0, 3500)}
+${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
       `.trim()
     },
     {
@@ -8173,7 +8242,7 @@ ${thinkingLogicContext.slice(0, 3500)}
     },
     {
       role: "system",
-      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, 10000)}`
+      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_TEXT)}`
     },
     {
       role: "system",
@@ -8190,7 +8259,7 @@ ${thinkingLogicContext.slice(0, 3500)}
       })),
     {
       role: "user",
-      content: String(userMessage || "").slice(0, 1500)
+      content: String(userMessage || "").slice(0, 1200)
     }
   ];
 
@@ -8199,7 +8268,7 @@ ${thinkingLogicContext.slice(0, 3500)}
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 110000);
+  const timeout = setTimeout(() => controller.abort(), 70000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -8213,7 +8282,7 @@ ${thinkingLogicContext.slice(0, 3500)}
         model: env.OPENAI_MODEL || "gpt-4o-mini",
         messages,
         temperature: isResearchRelated ? 0 : 0.1,
-        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 1400 : 2200
+        max_tokens: questionType === "CONCEPT" && !shouldUseDbEvidence ? 900 : 1400
       })
     });
 
@@ -8233,7 +8302,7 @@ ${thinkingLogicContext.slice(0, 3500)}
     return data?.choices?.[0]?.message?.content || "No answer was generated.";
   } catch (error) {
     if (error && error.name === "AbortError") {
-      return "OpenAI API timeout after 110 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
+      return "OpenAI API timeout after 70 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
     }
 
     return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
