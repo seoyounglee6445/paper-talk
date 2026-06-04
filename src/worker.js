@@ -49,6 +49,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v49: Ultra-safe import/chat mode. PDF import skips Vectorize during upload, caps full-text storage to a small D1 chunk set, removes expensive fuzzy DB scans during batch import, and broad research-advice questions bypass retrieval to avoid Worker 500/503 HTML responses.
 - v50: Long-term stable chat path. /api/gpt/chat uses bounded title/file-name retrieval only, never broad full-text scans, and always returns JSON errors instead of Cloudflare HTML whenever the Worker reaches the route.
 - v52: Robust D1 retrieval. Chat searches uploaded full-text chunks by title, file name, keyword tokens, and pasted full-text snippets using bounded LIKE queries, so already-imported PDFs are retrievable without waiting for full batch import or Vectorize.
+- v53: Multilingual automatic retrieval. Query understanding no longer depends on Korean/English stopword lists; it extracts title-like scientific spans, symbols, Unicode tokens, and n-grams, then scores D1 matches across title/file/full-text chunks.
 */
 
 export default {
@@ -4905,23 +4906,66 @@ function trimContextForChat(context) {
 }
 
 
-function extractLikelyPaperTitleForSafeLookup(message) {
-  const raw = String(message || '').replace(/\.pdf\b/ig, ' ').trim();
-  const lines = raw.split(/\n+/).map(v => v.trim()).filter(Boolean);
-  const englishLines = lines.filter(line => /[A-Za-z]{6,}/.test(line));
-  let candidate = englishLines[0] || lines[0] || raw;
 
-  candidate = candidate
-    .replace(/^(please\s+)?(read|summari[sz]e|explain|review)\s+/i, '')
-    .replace(/(를|을)?\s*(읽고|요약|정리|설명|분석|해주세요|해줘|줘|부탁).*$/g, '')
-    .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/[_]+/g, ' ')
-    .replace(/\s+/g, ' ')
+function extractLikelyPaperTitleForSafeLookup(message) {
+  // v53 multilingual automatic title/snippet detector.
+  // Do not hardcode one language's request words. Instead:
+  // - Prefer quoted text.
+  // - Prefer long scientific Latin/digit spans, which cover most paper titles.
+  // - Fall back to the longest line after removing URLs/PDF suffixes.
+  const raw = String(message || "")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/\.pdf\b/gi, " ")
+    .replace(/[_]+/g, " ")
+    .replace(/[‐‑‒–—]/g, "-")
+    .replace(/\s+/g, " ")
     .trim();
 
-  if (candidate.length > 180) candidate = candidate.slice(0, 180);
-  return candidate;
+  if (!raw) return "";
+
+  const quoted = raw.match(/["“”'`「『《](.{8,220}?)[“”"'`」』》]/);
+  if (quoted && quoted[1]) {
+    return quoted[1].replace(/\s+/g, " ").trim().slice(0, 180);
+  }
+
+  const lines = String(message || "")
+    .split(/\n+/)
+    .map(v => v.replace(/https?:\/\/\S+/gi, " ").replace(/\.pdf\b/gi, " ").replace(/[_]+/g, " ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  const candidates = [];
+
+  for (const line of [raw, ...lines]) {
+    // Long title-like scientific span. This naturally stops before/after Korean,
+    // Japanese, Chinese, French, Spanish, etc. instruction words when the paper
+    // title itself is in English, without needing language-specific stopwords.
+    const spans = line.match(/[A-Za-z0-9][A-Za-z0-9+\-:;,/() ]{10,220}[A-Za-z0-9)]/g) || [];
+    for (const span of spans) {
+      const cleaned = span
+        .replace(/\b(?:pdf|txt)\b/ig, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const scientificTokens = cleaned.match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || [];
+      if (scientificTokens.length >= 3 && cleaned.length >= 12) candidates.push(cleaned);
+    }
+
+    if (line.length >= 8) candidates.push(line.slice(0, 220));
+  }
+
+  if (!candidates.length) return raw.slice(0, 180);
+
+  candidates.sort((a, b) => {
+    const sciA = (a.match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || []).length;
+    const sciB = (b.match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || []).length;
+    const scoreA = sciA * 20 + Math.min(a.length, 180);
+    const scoreB = sciB * 20 + Math.min(b.length, 180);
+    return scoreB - scoreA;
+  });
+
+  return candidates[0].replace(/\s+/g, " ").trim().slice(0, 180);
 }
+
 
 function makeSafeLikePattern(value, maxLen = 70) {
   const safe = String(value || '')
@@ -5439,94 +5483,108 @@ async function deleteGptThread(request, env) {
 
 
 
+
 function buildRobustFullTextSearchTerms(query) {
+  // v53 multilingual automatic retrieval.
+  // Principle: do NOT rely on a Korean-only or English-only stopword list.
+  // The retrieval layer extracts scientific/title-like signals and lets scoring
+  // decide relevance. Instruction words in any language rarely appear in titles
+  // or chunks, so they naturally get low/no score.
   const raw = String(query || "")
     .replace(/https?:\/\/\S+/gi, " ")
     .replace(/\.pdf\b/gi, " ")
     .replace(/[_]+/g, " ")
     .replace(/[‐‑‒–—]/g, "-")
-    .trim();
-
-  const titleCandidate = extractLikelyPaperTitleForSafeLookup(raw);
-  const stripped = stripQuestionIntentWords(raw)
-    .replace(/(를|을)?\s*(읽고|요약|요약해줘|요약해주세요|정리|정리해줘|설명|분석|추천|찾아줘|찾아|해줘|해주세요|줘|부탁).*$/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
   const terms = [];
+  const seen = new Set();
 
-  function addTerm(value) {
+  function addTerm(value, maxLen = 110) {
     let term = String(value || "")
       .toLowerCase()
       .replace(/[“”"'`]/g, " ")
       .replace(/[‐‑‒–—]/g, "-")
-      .replace(/[^a-z0-9가-힣+\-\s]/g, " ")
+      .replace(/[%_]/g, " ")
+      .replace(/[^\p{L}\p{N}+\-\s:/()]/gu, " ")
       .replace(/\s+/g, " ")
       .trim();
 
     if (!term) return;
     if (term.length < 2) return;
 
-    // Keep LIKE patterns bounded. Very long full-text pastes should become keywords,
-    // not one giant LIKE query.
-    if (term.length > 90) term = term.slice(0, 90).trim();
-    if (term.length >= 2) terms.push(term);
+    // Avoid a whole pasted paragraph as one LIKE pattern.
+    if (term.length > maxLen) term = term.slice(0, maxLen).trim();
+    if (!term || seen.has(term)) return;
+
+    seen.add(term);
+    terms.push(term);
   }
 
-  addTerm(titleCandidate);
-  addTerm(stripped);
+  // 1) The most likely paper-title span.
+  addTerm(extractLikelyPaperTitleForSafeLookup(raw), 130);
 
-  for (const phrase of extractScientificKeyPhrases(raw)) addTerm(phrase);
-  for (const phrase of extractAutoResearchKeywords(raw)) addTerm(phrase);
+  // 2) Quoted phrases across languages.
+  const quoted = raw.match(/["“”'`「『《](.{4,180}?)[“”"'`」』》]/g) || [];
+  for (const q of quoted) addTerm(q.replace(/^["“”'`「『《]|["“”'`」』》]$/g, ""), 120);
 
-  const normalized = String(raw || "")
-    .toLowerCase()
-    .replace(/[‐‑‒–—]/g, "-");
+  // 3) Long scientific English/Latin spans. Most biomedical titles are here,
+  // even when the surrounding request is Korean/French/Spanish/Japanese/etc.
+  const titleSpans = raw.match(/[A-Za-z0-9][A-Za-z0-9+\-:;,/() ]{8,220}[A-Za-z0-9)]/g) || [];
+  for (const span of titleSpans) {
+    const scientificTokens = span.match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || [];
+    if (scientificTokens.length >= 2) addTerm(span, 130);
+  }
 
-  const tokenMatches = normalized.match(/[a-z0-9가-힣]+(?:[-+][a-z0-9가-힣]+)*/gi) || [];
-  const stop = new Set([
-    "the","and","for","with","from","into","onto","this","that","these","those",
-    "paper","papers","article","study","studies","research","please","summary","summarize","summarise",
-    "read","reading","review","explain","about","what","which","where","when","how","why","can","could","would","should",
-    "논문","연구","관련","자료","정보","요약","요약해줘","요약해주세요","정리","정리해줘","알려줘","해주세요","읽고","있는","대한","해당","추천"
-  ]);
+  // 4) Scientific symbols and biomedical abbreviations.
+  const symbols = raw.match(/\b(?:[A-Z]{2,}[A-Z0-9-]*|[A-Za-z]+-?\d+[A-Za-z]*|\d+[A-Za-z]+|CD\d+\+?|PD-?1|CTLA-?4|TCR|Treg|IFN-?\w*|TNF|IL-?\d+|RNA|DNA|scRNA-?seq|snRNA-?seq|ATAC|CNV|GWAS|SPP1|SOCS1|MHC|HLA)\b/gi) || [];
+  for (const symbol of symbols) addTerm(symbol, 40);
 
-  const tokens = tokenMatches
+  // 5) Unicode tokens from any language. No language-specific stopword list:
+  // short generic words simply will not score unless they appear in DB text.
+  const unicodeTokens = raw.match(/[\p{L}\p{N}]+(?:[-+][\p{L}\p{N}]+)*/gu) || [];
+  const usefulTokens = unicodeTokens
     .map(v => v.toLowerCase().trim())
-    .filter(v => v && !stop.has(v))
-    .filter(v => v.length >= 3 || /\d/.test(v) || /^[a-z]{1,3}-\d+$/i.test(v))
-    .slice(0, 18);
+    .filter(Boolean)
+    .filter(v => {
+      if (/\d/.test(v)) return true;
+      if (/[A-Za-z]/.test(v) && v.length >= 3) return true;
+      if (!/[A-Za-z]/.test(v) && v.length >= 2) return true;
+      return false;
+    })
+    .slice(0, 28);
 
-  // Add useful adjacent phrases first. These are important for title matching:
-  // "inhibitory pd-1 axis", "stem-like cd8", "single cell", etc.
-  for (let n = Math.min(5, tokens.length); n >= 2; n--) {
-    for (let i = 0; i <= tokens.length - n; i++) {
-      const phrase = tokens.slice(i, i + n).join(" ");
-      if (phrase.length >= 6 && phrase.length <= 80) addTerm(phrase);
+  // Adjacent n-grams make title retrieval robust:
+  // "inhibitory pd-1 axis", "stem-like cd8", "spatial transcriptomics", etc.
+  for (let n = Math.min(6, usefulTokens.length); n >= 2; n--) {
+    for (let i = 0; i <= usefulTokens.length - n; i++) {
+      const phrase = usefulTokens.slice(i, i + n).join(" ");
+      if (phrase.length >= 5 && phrase.length <= 110) addTerm(phrase, 110);
     }
   }
 
-  for (const token of tokens) addTerm(token);
+  for (const token of usefulTokens) addTerm(token, 40);
 
-  // Preserve common biomedical symbols that normalizeSearchText may split.
-  const explicitSymbols = raw.match(/\b(?:PD-?1|CD\d+|TCR|Treg|M1|M2|SPP1|SOCS1|IFN|RNA|DNA|CNV|GWAS|scRNA-?seq)\b/gi) || [];
-  for (const symbol of explicitSymbols) addTerm(symbol);
+  // 6) Existing domain-specific expanders if present.
+  try {
+    for (const phrase of extractScientificKeyPhrases(raw)) addTerm(phrase, 90);
+  } catch {}
+  try {
+    for (const phrase of extractAutoResearchKeywords(raw)) addTerm(phrase, 90);
+  } catch {}
 
-  const unique = [];
-  const seen = new Set();
-
-  for (const term of terms) {
-    const key = term.toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    unique.push(term);
-  }
-
-  // Prefer longer phrases, but keep a few short biological tokens too.
-  return unique
-    .sort((a, b) => b.length - a.length)
-    .slice(0, 12);
+  return terms
+    .sort((a, b) => {
+      const aHasDigit = /\d/.test(a) ? 15 : 0;
+      const bHasDigit = /\d/.test(b) ? 15 : 0;
+      const aSci = /[A-Za-z]/.test(a) ? 8 : 0;
+      const bSci = /[A-Za-z]/.test(b) ? 8 : 0;
+      return (b.length + bHasDigit + bSci) - (a.length + aHasDigit + aSci);
+    })
+    .slice(0, 16);
 }
+
 
 function scoreFullTextChunkRow(row, terms) {
   const title = String(row.title || "").toLowerCase();
@@ -5672,7 +5730,8 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
         matched_chunk: cleanBibtexText(chunkText).slice(0, 4000),
         similarity_score: group.score,
         from_fulltext_chunk_search: true,
-        from_direct_db_search: true
+        from_direct_db_search: true,
+        from_explicit_title_search: true
       };
     });
 }
