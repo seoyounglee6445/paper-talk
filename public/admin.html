@@ -851,7 +851,7 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
     }
 
     if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await new Promise(resolve => setTimeout(resolve, 1200));
   }
 
   if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
@@ -1020,7 +1020,7 @@ async function importResearchFullTextFile(e) {
     return;
   }
 
-  if (status) status.textContent = `Starting full-text import for ${files.length} file(s)...`;
+  if (status) status.textContent = `Starting full-text import for ${files.length} file(s)... Large batches are paced to reduce Worker 500/503 errors.`;
   if (resultList) resultList.innerHTML = "";
 
   const seenHashes = new Map();
@@ -1120,7 +1120,7 @@ async function importResearchFullTextFile(e) {
       resultList.innerHTML = renderResearchFullTextResults(results);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await new Promise(resolve => setTimeout(resolve, 1200));
   }
 
   const imported = results.filter(r => r.status === "imported").length;
