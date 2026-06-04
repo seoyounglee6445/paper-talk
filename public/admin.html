@@ -786,7 +786,8 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
         continue;
       }
 
-      const textHash = await sha256Text(cleanText.replace(/\s+/g, " ").slice(0, 350000));
+      const uploadText = prepareFullTextForUpload(cleanText);
+      const textHash = await sha256Text(uploadText.replace(/\s+/g, " "));
 
       if (seenHashes.has(textHash)) {
         results.push({
@@ -813,7 +814,7 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
           pdfLink,
           fileName,
           sourceType: isPdf ? "pdf" : "text",
-          text: cleanText
+          text: uploadText
         })
       });
 
@@ -995,6 +996,22 @@ function titleFromFullTextFileName(fileName) {
     .trim();
 }
 
+
+function prepareFullTextForUpload(text) {
+  // Long-term stable import policy:
+  // Do not send hundreds of thousands of characters to the Worker in one JSON body.
+  // Large JSON bodies were causing Cloudflare HTML 500/503 responses before the Worker
+  // could return a normal JSON error. The Worker stores bounded D1 chunks anyway, so
+  // sending the first 28k characters is enough for title/abstract/introduction/results
+  // level retrieval and keeps batch uploads reliable.
+  return String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim()
+    .slice(0, 28000);
+}
+
 async function importResearchFullTextFile(e) {
   e.preventDefault();
 
@@ -1047,7 +1064,8 @@ async function importResearchFullTextFile(e) {
         continue;
       }
 
-      const textHash = await sha256Text(cleanText.replace(/\s+/g, " ").slice(0, 350000));
+      const uploadText = prepareFullTextForUpload(cleanText);
+      const textHash = await sha256Text(uploadText.replace(/\s+/g, " "));
 
       if (seenHashes.has(textHash)) {
         results.push({
@@ -1079,7 +1097,7 @@ async function importResearchFullTextFile(e) {
           pdfLink,
           fileName,
           sourceType: isPdf ? "pdf" : "text",
-          text: cleanText
+          text: uploadText
         })
       });
 
