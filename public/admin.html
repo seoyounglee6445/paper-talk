@@ -720,7 +720,7 @@ async function createResearchPaper(e) {
     body: JSON.stringify(data)
   });
 
-  const result = await res.json().catch(() => ({}));
+  const result = await parseApiJsonOrText(res);
 
   if (!res.ok || !result.ok) {
     const message = result.error || result.message || "Save failed";
@@ -781,8 +781,8 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
 
       const cleanText = String(extractedText || "").trim();
 
-      if (!cleanText || cleanText.length < 120) {
-        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version." });
+      if (!cleanText || cleanText.length < 20) {
+        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version. Extracted text was under 20 characters." });
         continue;
       }
 
@@ -817,7 +817,7 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
         })
       });
 
-      const result = await res.json().catch(() => ({}));
+      const result = await parseApiJsonOrText(res);
 
       if (!res.ok || !result.ok) {
         results.push({
@@ -975,6 +975,18 @@ async function sha256Text(value) {
     .join("");
 }
 
+async function parseApiJsonOrText(res) {
+  const raw = await res.text();
+  try {
+    return JSON.parse(raw || "{}");
+  } catch {
+    return {
+      ok: false,
+      error: `Server returned non-JSON response. HTTP ${res.status}. ${raw.replace(/\s+/g, " ").slice(0, 300)}`
+    };
+  }
+}
+
 function titleFromFullTextFileName(fileName) {
   return String(fileName || "")
     .replace(/\.[^.]+$/, "")
@@ -1030,8 +1042,8 @@ async function importResearchFullTextFile(e) {
 
       const cleanText = String(extractedText || "").trim();
 
-      if (!cleanText || cleanText.length < 120) {
-        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version." });
+      if (!cleanText || cleanText.length < 20) {
+        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version. Extracted text was under 20 characters." });
         continue;
       }
 
@@ -1071,7 +1083,7 @@ async function importResearchFullTextFile(e) {
         })
       });
 
-      const result = await res.json().catch(() => ({}));
+      const result = await parseApiJsonOrText(res);
 
       if (!res.ok || !result.ok) {
         results.push({
@@ -1303,7 +1315,7 @@ async function importThinkingLogicFile(e) {
       })
     });
 
-    const result = await res.json().catch(() => ({}));
+    const result = await parseApiJsonOrText(res);
 
     if (!res.ok || !result.ok) {
       const message = result.error || result.message || "Thinking logic import failed.";
@@ -1345,7 +1357,7 @@ async function deleteThinkingLogic() {
       body: JSON.stringify({ deleteAll: true })
     });
 
-    const result = await res.json().catch(() => ({}));
+    const result = await parseApiJsonOrText(res);
 
     if (!res.ok || !result.ok) {
       const message = result.error || result.message || "Delete thinking logic failed.";
