@@ -1,11 +1,12 @@
 /*
-v63 additions:
-- Normal research answers are written as readable mentor-style synthesis: core insight -> why it matters -> promising directions.
-- Paper titles, paper labels, and parenthetical citations are fully hidden unless the user explicitly asks for sources.
-- The model must not write "(논문 A: ...)", "(논문 B: ...)", or any paper-title citation inside normal answers.
+v64 additions:
+- The answer style is chosen automatically from the user's actual intent.
+- Research-direction questions use readable insight sections with spacing and short paragraphs.
+- Concept questions use educational explanation style.
+- Validation questions use practical validation-plan style.
+- Literature/source questions may show papers only when the user explicitly asks for papers/sources.
+- Normal research answers hide paper titles, paper labels, and parenthetical paper citations.
 - Supporting papers are stored silently in gpt_message_sources and shown only when the user asks for evidence/sources.
-- The number of internal supporting papers is chosen adaptively between 3 and 10 based on available DB evidence strength.
-- Follow-up questions such as "어떤 논문 기반이야?", "근거 논문 보여줘", "논문 2 설명해줘" reuse the previous answer's stored sources.
 */
 /*
 Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titles:
@@ -13,7 +14,7 @@ Paper_Talk v59 update - five-paper DB evidence synthesis with visible exact titl
 - v58: The A-E labels are answer labels only; the underlying paper titles must still come only from retrieved Paper_Talk DB context.
 - v59: Research answers must not write anonymous labels such as only 논문 A or 논문 B. Each selected label must include the exact DB title, and the answer should be based on about five selected papers when available.
 
-Paper_Talk v63 update - readable synthesis style with fully hidden paper titles:
+Paper_Talk v64 update - automatic user-adaptive answer style:
 - Reindex still includes legacy LinkedIn/BibTeX rows stored directly in research_knowledge.
 - Fixes recursive content growth where "Original imported content" kept embedding previous reindex output.
 - Legacy title-only rows are cleaned to a stable title, then learned via DOI/title using Crossref, Europe PMC, Semantic Scholar, and OpenAlex.
@@ -5719,6 +5720,11 @@ async function gptChat(request, env) {
       assistantText = hideAccidentalPaperListFromNormalAnswer(assistantText);
     }
 
+    assistantText = formatAnswerForReadability(
+      assistantText,
+      determinePaperTalkOutputStyle({ userMessage: message, intent: autoIntent, hasContext: context.length > 0 })
+    );
+
     assistantText = enforceStrictUserOutputFormat(assistantText, message);
 
     if (!isGuest) {
@@ -8896,11 +8902,246 @@ function enforceStrictUserOutputFormat(answer, userMessage) {
     .join("\n");
 }
 
+
+function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
+  const message = String(userMessage || "").toLowerCase();
+  const questionType = normalizeQuestionType(intent?.question_type || "GENERAL");
+  const answerStyle = normalizeAnswerStyle(intent?.answer_style || "concise_answer");
+
+  const asksSources =
+    /(어떤\s*논문|무슨\s*논문|근거\s*논문|참고\s*논문|출처|source|sources|reference|references|citation|cite|paper list|논문\s*목록)/i.test(message);
+
+  const asksPaperReview =
+    /(논문\s*정리|논문\s*요약|문헌\s*리뷰|literature review|paper review|related papers|관련\s*논문|논문\s*추천|papers?\s+about)/i.test(message);
+
+  const asksResearchDirection =
+    /(연구\s*방향|유망|앞으로|future direction|promising|research direction|연구\s*주제|아이디어|gap|knowledge gap|가설|hypothesis|뭘\s*연구|어떤\s*연구)/i.test(message);
+
+  const asksValidation =
+    /(검증|validation|validate|실험|experiment|protocol|control|대조군|분석\s*방법|어떻게\s*확인|how to test|test this)/i.test(message);
+
+  const asksConcept =
+    /(개념|정의|뜻|뭐야|무엇|설명|overview|explain|what is|define|meaning|mechanism|메커니즘|기전)/i.test(message);
+
+  if (asksSources) return "SOURCE_TRACE";
+  if (questionType === "LITERATURE" || asksPaperReview) return "LITERATURE_REVIEW";
+  if (questionType === "VALIDATION" || asksValidation) return "VALIDATION_PLAN";
+  if (questionType === "RESEARCH" || answerStyle === "hypothesis_generation" || asksResearchDirection) return "RESEARCH_INSIGHT";
+  if (questionType === "CONCEPT" || answerStyle === "educational_overview" || asksConcept) return "CONCEPT_EXPLANATION";
+  if (hasContext) return "RESEARCH_SYNTHESIS";
+  return "STANDARD";
+}
+
+function buildAdaptiveStyleInstruction({ outputStyle, hasContext }) {
+  const common = `
+GENERAL READABILITY RULES
+- Match the user's language.
+- Use short paragraphs.
+- Put a blank line between major ideas.
+- Do not create a wall of text.
+- Keep a calm senior cancer-genomics mentor tone.
+- Unless the user explicitly asks for sources, do not expose paper titles, paper labels, or parenthetical paper citations.
+  `.trim();
+
+  if (outputStyle === "RESEARCH_INSIGHT") {
+    return `
+${common}
+
+AUTOMATIC STYLE: RESEARCH INSIGHT REPORT
+
+Use this structure:
+
+1. Start with 1-2 synthesis sentences.
+Example:
+"검색된 Paper_Talk DB 근거들을 종합하면,
+현재 이 주제는 크게 3~5개의 연구 축으로 정리할 수 있습니다."
+
+2. Then create 3~5 sections with markdown headings:
+### 1. [Short theme name]
+### 2. [Short theme name]
+### 3. [Short theme name]
+
+3. Under each heading, write 2 short paragraphs:
+- what the direction means
+- why it matters / why it is promising
+
+4. End with:
+"정리하면,"
+followed by 2-3 short lines.
+
+5. Never write:
+- 논문 A/B/C
+- Paper A/B/C
+- paper titles
+- "(논문 A: title)"
+- "이 논문에서는"
+- "근거 논문:"
+    `.trim();
+  }
+
+  if (outputStyle === "VALIDATION_PLAN") {
+    return `
+${common}
+
+AUTOMATIC STYLE: VALIDATION PLAN
+
+Use this structure:
+
+### 핵심 가설
+
+State the hypothesis in 1-2 sentences.
+
+### 1. Computational validation
+
+Explain datasets, analysis, comparison groups, and expected signal.
+
+### 2. Experimental validation
+
+Explain perturbation, assay, model system, and readout.
+
+### 3. Controls and caveats
+
+Explain controls, confounders, and limitations.
+
+### 정리하면
+
+Give the most practical next step.
+
+Do not expose paper titles unless the user asks for sources.
+    `.trim();
+  }
+
+  if (outputStyle === "CONCEPT_EXPLANATION") {
+    return `
+${common}
+
+AUTOMATIC STYLE: CONCEPT EXPLANATION
+
+Use this structure:
+
+### 핵심 개념
+
+Explain the concept simply.
+
+### 왜 중요한가
+
+Explain why it matters biologically or analytically.
+
+### 연구에서 어떻게 쓰이나
+
+Give practical research relevance.
+
+### 주의할 점
+
+Mention limitations or common misunderstanding.
+
+Do not expose paper titles unless the user asks for sources.
+    `.trim();
+  }
+
+  if (outputStyle === "LITERATURE_REVIEW") {
+    return `
+${common}
+
+AUTOMATIC STYLE: LITERATURE REVIEW
+
+The user is asking for literature/papers, so it is allowed to show paper titles.
+
+Use this structure:
+
+### 전체 흐름
+
+Summarize the shared direction across retrieved DB papers.
+
+### 주요 근거
+
+List only retrieved Paper_Talk DB titles if useful.
+Do not invent external papers.
+
+### 연구적으로 보이는 gap
+
+Explain what is still missing.
+
+### 정리하면
+
+Give a short synthesis.
+
+If retrieved DB context is empty, say that no matching Paper_Talk DB source was retrieved.
+    `.trim();
+  }
+
+  if (outputStyle === "SOURCE_TRACE") {
+    return `
+${common}
+
+AUTOMATIC STYLE: SOURCE TRACE
+
+The user is asking which papers/sources were used.
+Show the stored or retrieved Paper_Talk DB paper titles clearly.
+Do not add papers from outside the DB.
+    `.trim();
+  }
+
+  return `
+${common}
+
+AUTOMATIC STYLE: STANDARD RESEARCH MENTOR ANSWER
+
+Answer directly with readable paragraphs.
+If the answer is research-related, synthesize the DB evidence without exposing paper titles.
+    `.trim();
+}
+
+function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
+  let text = String(answer || "").trim();
+  if (!text) return text;
+
+  // Normalize excessive spaces but preserve paragraphing.
+  text = text
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // If model used ordinal prose for research insight, create readable sections.
+  if (outputStyle === "RESEARCH_INSIGHT" || outputStyle === "RESEARCH_SYNTHESIS") {
+    const replacements = [
+      [/첫째[,，]?\s*/g, "\n\n### 1. "],
+      [/둘째[,，]?\s*/g, "\n\n### 2. "],
+      [/셋째[,，]?\s*/g, "\n\n### 3. "],
+      [/넷째[,，]?\s*/g, "\n\n### 4. "],
+      [/다섯째[,，]?\s*/g, "\n\n### 5. "],
+      [/마지막으로[,，]?\s*/g, "\n\n### 마지막으로 "]
+    ];
+
+    for (const [pattern, value] of replacements) {
+      text = text.replace(pattern, value);
+    }
+  }
+
+  // Ensure headings have blank lines around them.
+  text = text
+    .replace(/\n{0,2}(#{2,3}\s+[^\n]+)\n{0,2}/g, "\n\n$1\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // Add spacing before final summary markers.
+  text = text
+    .replace(/\s*(정리하면[,，]?)/g, "\n\n$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return text;
+}
+
 async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env) {
   context = trimContextForChat(context);
   const hasContext = context.length > 0;
 
   const intent = autoIntent || makeFallbackResearchIntent(userMessage);
+  const outputStyle = determinePaperTalkOutputStyle({ userMessage, intent, hasContext });
+  const adaptiveStyleInstruction = buildAdaptiveStyleInstruction({ outputStyle, hasContext });
   const questionType = normalizeQuestionType(intent.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent.answer_style || "concise_answer");
   const shouldGenerateHypotheses = Boolean(intent.should_generate_hypotheses);
@@ -8940,6 +9181,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const intentText = [
     `Question type: ${questionType}`,
     `Answer style: ${answerStyle}`,
+    `Chosen output style: ${outputStyle}`,
     `Should generate hypotheses: ${shouldGenerateHypotheses ? "yes" : "no"}`,
     `Should use DB evidence: ${shouldUseDbEvidence ? "yes" : "no"}`,
     `Research-related mode: ${isResearchRelated ? "yes" : "no"}`,
@@ -9012,11 +9254,12 @@ v63 readable hidden-source behavior:
   "사용한 논문", "근거 논문", "참고 논문", "Relevant papers", "Sources"
 - Do NOT organize by paper. Organize by synthesized insight.
 - Write in readable Korean with short paragraphs.
-- Preferred structure:
+- For research-direction questions, use the Research Insight Report style automatically:
   1) Start with one concise synthesis sentence.
-  2) Explain 3 to 5 promising research directions.
-  3) For each direction, explain why it matters biologically.
-  4) End with a practical recommendation or candidate research angle.
+  2) Use markdown headings such as "### 1. Immunosenescence".
+  3) Explain 3 to 5 promising research directions with blank lines between sections.
+  4) For each direction, explain why it matters biologically.
+  5) End with "정리하면," and a short 2-3 line summary.
 - Use phrases like:
   "검색된 Paper_Talk DB 근거들을 종합하면..."
   "여러 연구에서 공통적으로 보이는 흐름은..."
