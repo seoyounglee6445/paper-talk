@@ -5162,7 +5162,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
   if (!text || !env.OPENAI_API_KEY) return fallback;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 9000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -5181,7 +5181,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
               "You are the intent and retrieval planner for Paper_Talk, a DB-grounded biomedical research GPT.",
               "Infer whether the user is asking a research/literature/scientific/validation/paper-related question.",
               "Do not rely on one fixed keyword list. Interpret the meaning of the whole question.",
-              "If the question is research-related, create 4-8 concise English biomedical retrieval queries that a paper database can search.",
+              "If the question is research-related, create 3-4 concise English biomedical retrieval queries that a paper database can search.",
               "Queries should include inferred concepts, synonyms, mechanisms, cell types, disease context, assays, methods, and likely adjacent concepts.",
               "Do not answer the user.",
               "Return strict JSON only with keys: is_research_related, question_type, answer_style, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, primary_domain, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
@@ -5189,11 +5189,11 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
           },
           {
             role: "user",
-            content: text.slice(0, 1600)
+            content: text.slice(0, 1000)
           }
         ],
         temperature: 0,
-        max_tokens: 700
+        max_tokens: 420
       })
     });
 
@@ -5215,7 +5215,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
       question_type: parsed.question_type || (parsed.is_research_related ? "RESEARCH" : "GENERAL"),
       answer_style: parsed.answer_style || "calm_research_mentor",
       key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v || "").trim()).filter(Boolean).slice(0, 12) : [],
-      retrieval_queries: queries.length ? queries.slice(0, 8) : fallback.retrieval_queries,
+      retrieval_queries: queries.length ? queries.slice(0, 4) : fallback.retrieval_queries,
       retrieval_query: queries.length ? queries.join(", ") : fallback.retrieval_query,
       gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v || "").trim()).filter(Boolean).slice(0, 8) : [],
       interpreted_intent: String(parsed.interpreted_intent || fallback.interpreted_intent).slice(0, 500),
@@ -5230,7 +5230,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     if (inferred.is_research_related) {
       inferred.should_use_db_evidence = true;
       if (!inferred.retrieval_queries.includes(text)) inferred.retrieval_queries.unshift(text);
-      inferred.retrieval_queries = [...new Set(inferred.retrieval_queries)].slice(0, 8);
+      inferred.retrieval_queries = [...new Set(inferred.retrieval_queries)].slice(0, 4);
       inferred.retrieval_query = inferred.retrieval_queries.join(", ");
     }
 
@@ -5243,39 +5243,57 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
 }
 
 async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent, env) {
+  // v57 safe DB-grounded retrieval:
+  // Research questions should always consult Paper_Talk DB, but the chat path must stay bounded.
+  // Do NOT call the older broad retrieval stack here, because it can trigger many D1/Vectorize/OpenAI
+  // calls and Cloudflare may return an HTML 503 page before our JSON catch can run.
   const text = String(userMessage || "").trim();
-  const queries = [
+  if (!text) return [];
+
+  const rawQueries = [
     text,
     ...(Array.isArray(inferredIntent?.retrieval_queries) ? inferredIntent.retrieval_queries : []),
-    inferredIntent?.retrieval_query || ""
+    ...(Array.isArray(inferredIntent?.key_entities) ? inferredIntent.key_entities : []),
+    inferredIntent?.primary_domain || ""
   ]
     .map(v => String(v || "").trim())
     .filter(Boolean);
 
-  const uniqueQueries = [...new Set(queries)].slice(0, 8);
+  // Keep only a few short, meaningful queries. This is the key CPU/subrequest guard.
+  const uniqueQueries = [...new Set(rawQueries)]
+    .map(q => q.slice(0, 180))
+    .filter(q => q.length >= 2)
+    .slice(0, 4);
+
   const all = [];
 
-  // First: cheap chat-safe lookup on the original message so exact titles, URLs, and pasted snippets win.
-  try {
-    all.push(...await safeRetrievePaperContextForChat(text, env));
-  } catch {}
-
-  // Second: full Paper_Talk research retrieval with automatically inferred concepts.
-  // This uses the existing DB retrieval stack: explicit match, full-text chunks, D1 title/content,
-  // OpenAI query expansion, keyword fallback, research posts, and Vectorize if available.
   for (const query of uniqueQueries) {
     try {
-      all.push(...await searchResearchKnowledge(query, env));
-    } catch {}
+      const items = await safeRetrievePaperContextForChat(query, env);
+      if (Array.isArray(items) && items.length) all.push(...items);
+    } catch {
+      // Keep the route alive. Retrieval failure should not turn into an HTML 503 response.
+    }
 
+    // Stop early once we already have enough DB evidence for answer generation.
+    if (mergeKnowledgeResults(all).length >= PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS) break;
+  }
+
+  const merged = trimContextForChat(mergeKnowledgeResults(all));
+
+  // Optional tiny fallback: if inferred English queries missed Korean/mixed-language text,
+  // retry once with the likely title/scientific span. Still safe and bounded.
+  if (!merged.length) {
     try {
-      all.push(...await safeRetrievePaperContextForChat(query, env));
+      const titleCandidate = extractLikelyPaperTitleForSafeLookup(text);
+      if (titleCandidate && titleCandidate !== text) {
+        return trimContextForChat(await safeRetrievePaperContextForChat(titleCandidate, env));
+      }
     } catch {}
   }
 
-  return trimContextForChat(mergeKnowledgeResults(all));
+  return merged;
 }
-
 
 async function gptChat(request, env) {
   try {
