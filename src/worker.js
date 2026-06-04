@@ -5647,39 +5647,12 @@ function isThinkingLogicKnowledgeItem(item) {
 }
 
 async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
-  // Runtime-safe retrieval:
-  // Do NOT run broad LIKE searches over the whole thinking-logic PDF content.
-  // Large uploaded books can make D1 scans slow and may cause Cloudflare 503 errors.
-  // We only load the latest compact distilled framework, which was already summarized at import time.
-  try {
-    if (!env.DB) return [];
-
-    const recent = await env.DB.prepare(`
-      SELECT title, content, updated_at
-      FROM research_knowledge
-      WHERE status = 'indexed'
-        AND (
-          post_id LIKE 'thinking_logic_%'
-          OR title LIKE '[Thinking Logic]%'
-          OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
-          OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
-        )
-      ORDER BY datetime(updated_at) DESC
-      LIMIT 1
-    `).all();
-
-    const rows = recent.results || [];
-
-    return rows.map(row => ({
-      title: cleanBibtexText(row.title || 'Scientific Thinking Logic').slice(0, 240),
-      content: extractDistilledThinkingLogicOnly(row.content || '').slice(0, 2200),
-      updated_at: row.updated_at || ''
-    }));
-  } catch (error) {
-    return [];
-  }
+  // TEMPORARILY DISABLED to prevent Cloudflare CPU time limit errors.
+  // The uploaded Thinking Logic PDF is kept in the DB, but it is NOT retrieved during chat.
+  // This restores normal logged-in GPT chat behavior.
+  // Later, this can be re-enabled only after storing a very small pre-distilled framework.
+  return [];
 }
-
 function extractDistilledThinkingLogicOnly(content) {
   const text = cleanBibtexText(content || '');
   const marker = 'Distilled scientific reasoning framework:';
