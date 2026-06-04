@@ -47,6 +47,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v45: GPT retrieval now enriches explicit paper/title matches with paper_fulltext_chunks so uploaded PDFs are used immediately in answers.
 - v46: Large-PDF safe mode. Full-text import stores a smaller bounded chunk set, indexes only a safe subset into Vectorize, and GPT chat skips expensive DB retrieval for ordinary/general questions to prevent Cloudflare 503 HTML responses.
 - v49: Ultra-safe import/chat mode. PDF import skips Vectorize during upload, caps full-text storage to a small D1 chunk set, removes expensive fuzzy DB scans during batch import, and broad research-advice questions bypass retrieval to avoid Worker 500/503 HTML responses.
+- v50: Long-term stable chat path. /api/gpt/chat uses bounded title/file-name retrieval only, never broad full-text scans, and always returns JSON errors instead of Cloudflare HTML whenever the Worker reaches the route.
 */
 
 export default {
@@ -4899,232 +4900,259 @@ function trimContextForChat(context) {
     .map(trimKnowledgeItemForChat);
 }
 
-async function gptChat(request, env) {
-  const user = await getSession(request, env);
-  const isGuest = !user;
 
-  if (!env.OPENAI_API_KEY) {
-    return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
-  }
+function extractLikelyPaperTitleForSafeLookup(message) {
+  const raw = String(message || '').replace(/\.pdf\b/ig, ' ').trim();
+  const lines = raw.split(/\n+/).map(v => v.trim()).filter(Boolean);
+  const englishLines = lines.filter(line => /[A-Za-z]{6,}/.test(line));
+  let candidate = englishLines[0] || lines[0] || raw;
 
-  const data = await request.json().catch(() => ({}));
-  const message = String(data.message || "").trim();
-  let threadId = String(data.threadId || "").trim();
+  candidate = candidate
+    .replace(/^(please\s+)?(read|summari[sz]e|explain|review)\s+/i, '')
+    .replace(/(를|을)?\s*(읽고|요약|정리|설명|분석|해주세요|해줘|줘|부탁).*$/g, '')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  if (!message) {
-    return json({ ok: false, error: "Message is required." }, 400);
-  }
+  if (candidate.length > 180) candidate = candidate.slice(0, 180);
+  return candidate;
+}
 
-  const quotaBefore = isGuest
-    ? await getGuestGptQuota(request, env)
-    : await getMonthlyGptQuota(user.id, env, user);
+function makeSafeLikePattern(value, maxLen = 70) {
+  const safe = String(value || '')
+    .toLowerCase()
+    .replace(/[%_]/g, ' ')
+    .replace(/[^a-z0-9가-힣\s\-–:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen)
+    .trim();
+  return safe ? `%${safe}%` : '';
+}
 
-  if (quotaBefore.used >= quotaBefore.limit) {
-    return json({
-      ok: false,
-      guest: isGuest,
-      signupRequired: isGuest,
-      signupUrl: isGuest ? "/auth/google" : null,
-      error: isGuest
-        ? "You have used all 3 free guest questions today. Please sign up for free with Google to continue with 20 questions per month."
-        : "Monthly limit reached. You have used all 20 questions for this month. Your quota will reset automatically next month.",
-      message: isGuest
-        ? "Free signup required. Sign up with Google to keep using Paper_Talk Vision GPT."
-        : "Monthly limit reached.",
-      quota: {
-        used: quotaBefore.used,
-        limit: quotaBefore.limit,
-        remaining: 0,
-        monthKey: quotaBefore.monthKey || null,
-        date: quotaBefore.todayKey || null,
-        resetsAt: quotaBefore.resetsAt
+async function safeRetrievePaperContextForChat(message, env) {
+  // Long-term stable retrieval policy:
+  // 1) Never scan full text broadly during chat.
+  // 2) Match by paper title/file name first.
+  // 3) Load only a tiny number of chunks.
+  // This keeps /api/gpt/chat stable after thousands of PDFs.
+  await ensurePaperFullTextTables(env);
+
+  const titleCandidate = extractLikelyPaperTitleForSafeLookup(message);
+  const like = makeSafeLikePattern(titleCandidate);
+  const items = [];
+
+  if (like && titleCandidate.length >= 10) {
+    const chunkRows = await env.DB.prepare(`
+      SELECT post_id, title, source_url, pdf_link, file_name, text, chunk_index
+      FROM paper_fulltext_chunks
+      WHERE LOWER(title) LIKE ?
+         OR LOWER(file_name) LIKE ?
+      ORDER BY datetime(created_at) DESC, chunk_index ASC
+      LIMIT 3
+    `).bind(like, like).all();
+
+    const grouped = new Map();
+    for (const row of (chunkRows.results || [])) {
+      const key = row.post_id || row.title || row.file_name || crypto.randomUUID();
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          post_id: row.post_id || '',
+          title: row.title || row.file_name || titleCandidate,
+          source_url: row.source_url || '',
+          pdf_link: row.pdf_link || '',
+          content: '',
+          matched_chunk: '',
+          similarity_score: null
+        });
       }
-    }, 429);
+      const item = grouped.get(key);
+      const piece = String(row.text || '').slice(0, 1200);
+      item.content = [item.content, piece].filter(Boolean).join('\n\n');
+      if (!item.matched_chunk) item.matched_chunk = piece;
+    }
+
+    items.push(...Array.from(grouped.values()));
   }
 
-  if (!isGuest) {
-    if (!threadId) {
-      threadId = crypto.randomUUID();
+  if (!items.length && like && titleCandidate.length >= 10) {
+    const rows = await env.DB.prepare(`
+      SELECT post_id, title, source_url, pdf_link, content
+      FROM research_knowledge
+      WHERE status = 'indexed'
+        AND post_id NOT LIKE 'thinking_logic_%'
+        AND title NOT LIKE '[Thinking Logic]%'
+        AND LOWER(title) LIKE ?
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 2
+    `).bind(like).all();
+
+    for (const row of (rows.results || [])) {
+      items.push({
+        post_id: row.post_id || '',
+        title: row.title || titleCandidate,
+        source_url: row.source_url || '',
+        pdf_link: row.pdf_link || '',
+        content: String(row.content || '').slice(0, 1800),
+        matched_chunk: makeBestEvidenceExcerpt(row.content || '').slice(0, 1000),
+        similarity_score: null
+      });
+    }
+  }
+
+  return trimContextForChat(items).slice(0, 2);
+}
+
+async function gptChat(request, env) {
+  try {
+    const user = await getSession(request, env);
+    const isGuest = !user;
+
+    if (!env.OPENAI_API_KEY) {
+      return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
+    }
+
+    const data = await request.json().catch(() => ({}));
+    const message = String(data.message || "").trim();
+    let threadId = String(data.threadId || "").trim();
+
+    if (!message) {
+      return json({ ok: false, error: "Message is required." }, 400);
+    }
+
+    const quotaBefore = isGuest
+      ? await getGuestGptQuota(request, env)
+      : await getMonthlyGptQuota(user.id, env, user);
+
+    if (quotaBefore.used >= quotaBefore.limit) {
+      return json({
+        ok: false,
+        guest: isGuest,
+        signupRequired: isGuest,
+        signupUrl: isGuest ? "/auth/google" : null,
+        error: isGuest
+          ? "You have used all 3 free guest questions today. Please sign up for free with Google to continue with 20 questions per month."
+          : "Monthly limit reached. You have used all 20 questions for this month. Your quota will reset automatically next month.",
+        quota: {
+          used: quotaBefore.used,
+          limit: quotaBefore.limit,
+          remaining: 0,
+          monthKey: quotaBefore.monthKey || null,
+          date: quotaBefore.todayKey || null,
+          resetsAt: quotaBefore.resetsAt
+        }
+      }, 429);
+    }
+
+    if (!isGuest) {
+      if (!threadId) {
+        threadId = crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO gpt_threads (id, user_id, title, created_at, updated_at)
+          VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `).bind(threadId, user.id, message.slice(0, 60) || 'New chat').run();
+      } else {
+        const thread = await env.DB.prepare(`
+          SELECT id FROM gpt_threads WHERE id = ? AND user_id = ?
+        `).bind(threadId, user.id).first();
+        if (!thread) return json({ ok: false, error: "Thread not found." }, 404);
+      }
 
       await env.DB.prepare(`
-        INSERT INTO gpt_threads (
-          id,
-          user_id,
-          title,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).bind(
-        threadId,
-        user.id,
-        message.slice(0, 60)
-      ).run();
+        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, created_at)
+        VALUES (?, ?, ?, 'user', ?, CURRENT_TIMESTAMP)
+      `).bind(crypto.randomUUID(), threadId, user.id, message).run();
     } else {
-      const thread = await env.DB.prepare(`
-        SELECT *
-        FROM gpt_threads
-        WHERE id = ?
-          AND user_id = ?
-      `).bind(threadId, user.id).first();
+      threadId = "guest";
+    }
 
-      if (!thread) {
-        return json({ ok: false, error: "Thread not found." }, 404);
+    const generalOrBroad = isLikelyGeneralQuestionFast(message) || isBroadResearchAdviceQuestionFast(message);
+    let context = [];
+
+    if (!generalOrBroad) {
+      try {
+        context = await safeRetrievePaperContextForChat(message, env);
+      } catch {
+        context = [];
       }
     }
 
-    await env.DB.prepare(`
-      INSERT INTO gpt_messages (
-        id,
-        thread_id,
-        user_id,
-        role,
-        content,
-        created_at
-      )
-      VALUES (?, ?, ?, 'user', ?, CURRENT_TIMESTAMP)
-    `).bind(
-      crypto.randomUUID(),
-      threadId,
-      user.id,
-      message
-    ).run();
-  } else {
-    threadId = "guest";
-  }
+    const autoIntent = makeFallbackResearchIntent(message);
 
-  // v38 thread-aware retrieval:
-  // Follow-up questions such as "Key takeaway", "전체 논문을 읽고 주는거죠?", or "4줄로 줘"
-  // must stay attached to the paper URL/title the user mentioned earlier in the same chat.
-  // We therefore use recent user messages only for retrieval anchoring.
-  // The final answer still focuses on the current user message and requested output format.
-  const fastGeneralMode = isLikelyGeneralQuestionFast(message) || isBroadResearchAdviceQuestionFast(message);
-
-  const recentMessages = fastGeneralMode || isGuest
-    ? []
-    : await getRecentUserMessagesForRetrieval(threadId, user.id, env, 6);
-
-  const strictActivePaper = fastGeneralMode
-    ? makeEmptyStrictActivePaperContext()
-    : await getStrictActivePaperContext({
-        message,
-        recentMessages,
-        env
-      });
-
-  const threadRetrievalAnchor = strictActivePaper.activePaperLocked
-    ? strictActivePaper.activePaperQuery
-    : buildThreadRetrievalAnchor(recentMessages, message);
-
-  const recentMessagesForAnswer = fastGeneralMode || strictActivePaper.activePaperLocked ? [] : recentMessages;
-
-  const autoIntent = fastGeneralMode
-    ? makeFallbackResearchIntent(message)
-    : await inferUserResearchIntent({
-        userMessage: message,
-        recentMessages: recentMessagesForAnswer
-      }, env);
-
-  let context = [];
-
-  const relatedPaperDiscoveryRequest = strictActivePaper.activePaperLocked && isRelatedPaperDiscoveryRequest(message, autoIntent);
-
-  if (fastGeneralMode) {
-    // Large-PDF safe mode:
-    // Ordinary/general questions should not scan D1 full-text chunks, call retrieval expansion,
-    // or load thinking-logic rows. This prevents Cloudflare Worker 503 HTML responses.
-    context = [];
-  } else if (strictActivePaper.activePaperLocked && !relatedPaperDiscoveryRequest) {
-    // v40 strict active-paper lock:
-    // Follow-up turns must use only the exact paper selected by URL/title.
-    // Do not merge broad Vectorize/keyword retrieval results, because that can pull unrelated papers.
-    context = strictActivePaper.activePaperContext;
-  } else if (strictActivePaper.activePaperLocked && relatedPaperDiscoveryRequest) {
-    // v41 related-paper exception:
-    // The active paper remains the seed, but the user explicitly wants similar/related/other papers.
-    // In that case, allow Paper_Talk DB retrieval again and keep the active paper first.
-    const relatedQuery = buildRelatedPaperDiscoveryQuery(strictActivePaper.activePaperContext, message, autoIntent);
-    const relatedContext = (await searchResearchKnowledge(relatedQuery, env))
-      .filter(item => !isThinkingLogicKnowledgeItem(item))
-      .filter(item => !isSameKnowledgePaper(item, strictActivePaper.activePaperContext[0]));
-
-    context = mergeKnowledgeResults([
-      ...strictActivePaper.activePaperContext,
-      ...relatedContext
-    ]).slice(0, 7);
-  } else {
-    const retrievalMessage = [
-      threadRetrievalAnchor,
-      message,
-      autoIntent?.retrieval_query
-        ? `Auto-inferred research retrieval query:\n${autoIntent.retrieval_query}`
-        : ""
-    ].filter(Boolean).join("\n\n");
-
-    context = (await searchResearchKnowledge(retrievalMessage, env))
-      .filter(item => !isThinkingLogicKnowledgeItem(item));
-  }
-
-  context = trimContextForChat(context);
-
-  const thinkingLogicFrameworks = fastGeneralMode
-    ? []
-    : await retrieveThinkingLogicFrameworks({
-        userMessage: message
-      }, env);
-
-  let assistantText = await callOpenAIForPaperTalk({
-    userMessage: message,
-    context,
-    thinkingLogicFrameworks,
-    pastFrameworks: [],
-    generatedFramework: "",
-    recentMessages: recentMessagesForAnswer,
-    autoIntent,
-    strictActivePaperLocked: strictActivePaper.activePaperLocked && !relatedPaperDiscoveryRequest
-  }, env);
-
-  // v27:
-  // Some older prompts or model behavior may still produce rigid report-style answers
-  // such as "1. Direct answer / 2. Relevant papers / 3. Paper-by-paper findings".
-  // If that happens, rewrite the answer into the preferred calm explanatory research style
-  // before saving it or showing it to the user.
-  if (!detectStrictUserOutputFormat(message).strict) {
-    assistantText = await rewriteReportStyleAnswerIfNeeded({
-      originalAnswer: assistantText,
+    let assistantText = await callOpenAIForPaperTalk({
       userMessage: message,
       context,
-      env
-    });
-  }
+      thinkingLogicFrameworks: [],
+      pastFrameworks: [],
+      generatedFramework: "",
+      recentMessages: [],
+      autoIntent,
+      strictActivePaperLocked: false
+    }, env);
 
-  assistantText = assistantText
-    .replace(/\*\*/g, "")
-    .replace(/__/g, "")
-    .replace(/#/g, "")
-    .replace(/\*/g, "");
+    const assistantFailed =
+      /^OpenAI API timeout/i.test(assistantText) ||
+      /^OpenAI API request failed/i.test(assistantText) ||
+      /^OpenAI answer-generation request/i.test(assistantText) ||
+      /returned non-JSON response/i.test(assistantText);
 
-  assistantText = enforceStrictUserOutputFormat(assistantText, message);
+    if (assistantFailed) {
+      return json({
+        ok: false,
+        guest: isGuest,
+        threadId,
+        error: assistantText,
+        quota: {
+          used: quotaBefore.used,
+          limit: quotaBefore.limit,
+          remaining: quotaBefore.remaining,
+          monthKey: quotaBefore.monthKey || null,
+          date: quotaBefore.todayKey || null,
+          resetsAt: quotaBefore.resetsAt
+        },
+        sources: []
+      }, 502);
+    }
 
-  const assistantFailed =
-    /^OpenAI API timeout/i.test(assistantText) ||
-    /^OpenAI API request failed/i.test(assistantText) ||
-    /^OpenAI answer-generation request/i.test(assistantText) ||
-    /returned non-JSON response/i.test(assistantText);
+    assistantText = String(assistantText || '')
+      .replace(/\*\*/g, "")
+      .replace(/__/g, "")
+      .replace(/#/g, "")
+      .replace(/\*/g, "");
 
-  if (assistantFailed) {
+    assistantText = enforceStrictUserOutputFormat(assistantText, message);
+
+    if (!isGuest) {
+      await env.DB.prepare(`
+        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, created_at)
+        VALUES (?, ?, ?, 'assistant', ?, CURRENT_TIMESTAMP)
+      `).bind(crypto.randomUUID(), threadId, user.id, assistantText).run();
+
+      await env.DB.prepare(`
+        UPDATE gpt_threads
+        SET updated_at = CURRENT_TIMESTAMP,
+            title = CASE WHEN title = 'New chat' THEN ? ELSE title END
+        WHERE id = ? AND user_id = ?
+      `).bind(message.slice(0, 60), threadId, user.id).run();
+    }
+
+    const quotaAfter = isGuest
+      ? await incrementGuestGptUsage(request, env)
+      : await incrementMonthlyGptUsage(user.id, env);
+
     return json({
-      ok: false,
+      ok: true,
       guest: isGuest,
       threadId,
-      error: assistantText,
+      answer: assistantText,
       quota: {
-        used: quotaBefore.used,
-        limit: quotaBefore.limit,
-        remaining: quotaBefore.remaining,
-        monthKey: quotaBefore.monthKey || null,
-        date: quotaBefore.todayKey || null,
-        resetsAt: quotaBefore.resetsAt
+        used: quotaAfter.used,
+        limit: quotaAfter.limit,
+        remaining: quotaAfter.remaining,
+        monthKey: quotaAfter.monthKey || null,
+        date: quotaAfter.todayKey || null,
+        resetsAt: quotaAfter.resetsAt
       },
       sources: context.map(item => ({
         title: item.title,
@@ -5132,70 +5160,13 @@ async function gptChat(request, env) {
         pdf_link: item.pdf_link,
         similarity_score: item.similarity_score || null
       }))
-    }, 502);
+    });
+  } catch (error) {
+    return json({
+      ok: false,
+      error: `GPT chat failed safely: ${error?.message || error}`
+    }, 500);
   }
-
-  if (!isGuest) {
-    await env.DB.prepare(`
-      INSERT INTO gpt_messages (
-        id,
-        thread_id,
-        user_id,
-        role,
-        content,
-        created_at
-      )
-      VALUES (?, ?, ?, 'assistant', ?, CURRENT_TIMESTAMP)
-    `).bind(
-      crypto.randomUUID(),
-      threadId,
-      user.id,
-      assistantText
-    ).run();
-
-    await env.DB.prepare(`
-      UPDATE gpt_threads
-      SET updated_at = CURRENT_TIMESTAMP,
-          title = CASE
-            WHEN title = 'New chat' THEN ?
-            ELSE title
-          END
-      WHERE id = ?
-        AND user_id = ?
-    `).bind(
-      message.slice(0, 60),
-      threadId,
-      user.id
-    ).run();
-  }
-
-  // Count exactly one successful GPT answer against the quota.
-  // Signed-in users get 20 questions per month.
-  // Guest users get 3 questions per day per hashed IP address.
-  const quotaAfter = isGuest
-    ? await incrementGuestGptUsage(request, env)
-    : await incrementMonthlyGptUsage(user.id, env);
-
-  return json({
-    ok: true,
-    guest: isGuest,
-    threadId,
-    answer: assistantText,
-    quota: {
-      used: quotaAfter.used,
-      limit: quotaAfter.limit,
-      remaining: quotaAfter.remaining,
-      monthKey: quotaAfter.monthKey || null,
-      date: quotaAfter.todayKey || null,
-      resetsAt: quotaAfter.resetsAt
-    },
-    sources: context.map(item => ({
-      title: item.title,
-      source_url: item.source_url,
-      pdf_link: item.pdf_link,
-      similarity_score: item.similarity_score || null
-    }))
-  });
 }
 
 function getCurrentMonthKey(date = new Date()) {
