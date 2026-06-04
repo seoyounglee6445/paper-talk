@@ -48,6 +48,7 @@ Paper_Talk v27 update - forced removal of report-style GPT answers + calm resear
 - v46: Large-PDF safe mode. Full-text import stores a smaller bounded chunk set, indexes only a safe subset into Vectorize, and GPT chat skips expensive DB retrieval for ordinary/general questions to prevent Cloudflare 503 HTML responses.
 - v49: Ultra-safe import/chat mode. PDF import skips Vectorize during upload, caps full-text storage to a small D1 chunk set, removes expensive fuzzy DB scans during batch import, and broad research-advice questions bypass retrieval to avoid Worker 500/503 HTML responses.
 - v50: Long-term stable chat path. /api/gpt/chat uses bounded title/file-name retrieval only, never broad full-text scans, and always returns JSON errors instead of Cloudflare HTML whenever the Worker reaches the route.
+- v52: Robust D1 retrieval. Chat searches uploaded full-text chunks by title, file name, keyword tokens, and pasted full-text snippets using bounded LIKE queries, so already-imported PDFs are retrievable without waiting for full batch import or Vectorize.
 */
 
 export default {
@@ -4934,78 +4935,88 @@ function makeSafeLikePattern(value, maxLen = 70) {
   return safe ? `%${safe}%` : '';
 }
 
+
 async function safeRetrievePaperContextForChat(message, env) {
-  // Long-term stable retrieval policy:
-  // 1) Never scan full text broadly during chat.
-  // 2) Match by paper title/file name first.
-  // 3) Load only a tiny number of chunks.
-  // This keeps /api/gpt/chat stable after thousands of PDFs.
-  await ensurePaperFullTextTables(env);
+  // v52 robust bounded D1 retrieval:
+  // - title, file name, keyword, and pasted full-text snippets should all retrieve papers.
+  // - no broad full-table scan
+  // - no Vectorize during chat
+  // - bounded rows and bounded context to avoid Cloudflare 500/503
+  const userQuery = String(message || "").trim();
+  if (!userQuery) return [];
 
-  const titleCandidate = extractLikelyPaperTitleForSafeLookup(message);
-  const like = makeSafeLikePattern(titleCandidate);
-  const items = [];
+  const allItems = [];
 
-  if (like && titleCandidate.length >= 10) {
-    const chunkRows = await env.DB.prepare(`
-      SELECT post_id, title, source_url, pdf_link, file_name, text, chunk_index
-      FROM paper_fulltext_chunks
-      WHERE LOWER(title) LIKE ?
-         OR LOWER(file_name) LIKE ?
-      ORDER BY datetime(created_at) DESC, chunk_index ASC
-      LIMIT 3
-    `).bind(like, like).all();
+  try {
+    allItems.push(...await searchPaperFullTextChunks(userQuery, env, 6));
+  } catch {
+    // Continue to metadata fallback.
+  }
 
-    const grouped = new Map();
-    for (const row of (chunkRows.results || [])) {
-      const key = row.post_id || row.title || row.file_name || crypto.randomUUID();
-      if (!grouped.has(key)) {
-        grouped.set(key, {
-          post_id: row.post_id || '',
-          title: row.title || row.file_name || titleCandidate,
-          source_url: row.source_url || '',
-          pdf_link: row.pdf_link || '',
-          content: '',
-          matched_chunk: '',
-          similarity_score: null
+  const terms = buildRobustFullTextSearchTerms(userQuery).slice(0, 8);
+
+  if (terms.length) {
+    const clauses = [];
+    const params = [];
+
+    for (const term of terms) {
+      clauses.push(`(
+        LOWER(title) LIKE ?
+        OR LOWER(content) LIKE ?
+        OR LOWER(source_url) LIKE ?
+        OR LOWER(pdf_link) LIKE ?
+      )`);
+      const like = `%${String(term || "").toLowerCase()}%`;
+      params.push(like, like, like, like);
+    }
+
+    try {
+      const rows = await env.DB.prepare(`
+        SELECT post_id, title, source_url, pdf_link, content, updated_at
+        FROM research_knowledge
+        WHERE status = 'indexed'
+          AND post_id NOT LIKE 'thinking_logic_%'
+          AND title NOT LIKE '[Thinking Logic]%'
+          AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+          AND (${clauses.join(" OR ")})
+        ORDER BY datetime(updated_at) DESC
+        LIMIT 20
+      `).bind(...params).all();
+
+      const scored = (rows.results || [])
+        .map(row => {
+          const hay = `${row.title || ""}\n${row.content || ""}\n${row.source_url || ""}\n${row.pdf_link || ""}`.toLowerCase();
+          const score = terms.reduce((sum, term) => sum + (hay.includes(String(term || "").toLowerCase()) ? Math.min(80, 12 + String(term).length) : 0), 0);
+          return { row, score };
+        })
+        .filter(item => item.score > 0)
+        .sort((a, b) => b.score - a.score);
+
+      for (const { row, score } of scored.slice(0, 4)) {
+        allItems.push({
+          post_id: row.post_id || "",
+          title: cleanBibtexText(row.title || ""),
+          source_url: row.source_url || "",
+          pdf_link: row.pdf_link || "",
+          content: String(row.content || "").slice(0, 3000),
+          matched_chunk: makeBestEvidenceExcerpt(row.content || "").slice(0, 1600),
+          similarity_score: score,
+          from_research_knowledge_search: true
         });
       }
-      const item = grouped.get(key);
-      const piece = String(row.text || '').slice(0, 1200);
-      item.content = [item.content, piece].filter(Boolean).join('\n\n');
-      if (!item.matched_chunk) item.matched_chunk = piece;
-    }
-
-    items.push(...Array.from(grouped.values()));
-  }
-
-  if (!items.length && like && titleCandidate.length >= 10) {
-    const rows = await env.DB.prepare(`
-      SELECT post_id, title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE status = 'indexed'
-        AND post_id NOT LIKE 'thinking_logic_%'
-        AND title NOT LIKE '[Thinking Logic]%'
-        AND LOWER(title) LIKE ?
-      ORDER BY datetime(updated_at) DESC
-      LIMIT 2
-    `).bind(like).all();
-
-    for (const row of (rows.results || [])) {
-      items.push({
-        post_id: row.post_id || '',
-        title: row.title || titleCandidate,
-        source_url: row.source_url || '',
-        pdf_link: row.pdf_link || '',
-        content: String(row.content || '').slice(0, 1800),
-        matched_chunk: makeBestEvidenceExcerpt(row.content || '').slice(0, 1000),
-        similarity_score: null
-      });
+    } catch {
+      // Continue.
     }
   }
 
-  return trimContextForChat(items).slice(0, 2);
+  const merged = mergeKnowledgeResults(allItems)
+    .filter(item => !isThinkingLogicKnowledgeItem(item))
+    .slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS)
+    .map(trimKnowledgeItemForChat);
+
+  return merged;
 }
+
 
 
 async function callOpenAIGeneralNoRetrieval(userMessage, env) {
@@ -5122,7 +5133,7 @@ async function gptChat(request, env) {
       threadId = "guest";
     }
 
-    const generalOrBroad = isLikelyGeneralQuestionFast(message) || isBroadResearchAdviceQuestionFast(message);
+    const generalOrBroad = isLikelyGeneralQuestionFast(message);
     let context = [];
 
     if (!generalOrBroad) {
@@ -5427,6 +5438,127 @@ async function deleteGptThread(request, env) {
 }
 
 
+
+function buildRobustFullTextSearchTerms(query) {
+  const raw = String(query || "")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/\.pdf\b/gi, " ")
+    .replace(/[_]+/g, " ")
+    .replace(/[‐‑‒–—]/g, "-")
+    .trim();
+
+  const titleCandidate = extractLikelyPaperTitleForSafeLookup(raw);
+  const stripped = stripQuestionIntentWords(raw)
+    .replace(/(를|을)?\s*(읽고|요약|요약해줘|요약해주세요|정리|정리해줘|설명|분석|추천|찾아줘|찾아|해줘|해주세요|줘|부탁).*$/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const terms = [];
+
+  function addTerm(value) {
+    let term = String(value || "")
+      .toLowerCase()
+      .replace(/[“”"'`]/g, " ")
+      .replace(/[‐‑‒–—]/g, "-")
+      .replace(/[^a-z0-9가-힣+\-\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!term) return;
+    if (term.length < 2) return;
+
+    // Keep LIKE patterns bounded. Very long full-text pastes should become keywords,
+    // not one giant LIKE query.
+    if (term.length > 90) term = term.slice(0, 90).trim();
+    if (term.length >= 2) terms.push(term);
+  }
+
+  addTerm(titleCandidate);
+  addTerm(stripped);
+
+  for (const phrase of extractScientificKeyPhrases(raw)) addTerm(phrase);
+  for (const phrase of extractAutoResearchKeywords(raw)) addTerm(phrase);
+
+  const normalized = String(raw || "")
+    .toLowerCase()
+    .replace(/[‐‑‒–—]/g, "-");
+
+  const tokenMatches = normalized.match(/[a-z0-9가-힣]+(?:[-+][a-z0-9가-힣]+)*/gi) || [];
+  const stop = new Set([
+    "the","and","for","with","from","into","onto","this","that","these","those",
+    "paper","papers","article","study","studies","research","please","summary","summarize","summarise",
+    "read","reading","review","explain","about","what","which","where","when","how","why","can","could","would","should",
+    "논문","연구","관련","자료","정보","요약","요약해줘","요약해주세요","정리","정리해줘","알려줘","해주세요","읽고","있는","대한","해당","추천"
+  ]);
+
+  const tokens = tokenMatches
+    .map(v => v.toLowerCase().trim())
+    .filter(v => v && !stop.has(v))
+    .filter(v => v.length >= 3 || /\d/.test(v) || /^[a-z]{1,3}-\d+$/i.test(v))
+    .slice(0, 18);
+
+  // Add useful adjacent phrases first. These are important for title matching:
+  // "inhibitory pd-1 axis", "stem-like cd8", "single cell", etc.
+  for (let n = Math.min(5, tokens.length); n >= 2; n--) {
+    for (let i = 0; i <= tokens.length - n; i++) {
+      const phrase = tokens.slice(i, i + n).join(" ");
+      if (phrase.length >= 6 && phrase.length <= 80) addTerm(phrase);
+    }
+  }
+
+  for (const token of tokens) addTerm(token);
+
+  // Preserve common biomedical symbols that normalizeSearchText may split.
+  const explicitSymbols = raw.match(/\b(?:PD-?1|CD\d+|TCR|Treg|M1|M2|SPP1|SOCS1|IFN|RNA|DNA|CNV|GWAS|scRNA-?seq)\b/gi) || [];
+  for (const symbol of explicitSymbols) addTerm(symbol);
+
+  const unique = [];
+  const seen = new Set();
+
+  for (const term of terms) {
+    const key = term.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(term);
+  }
+
+  // Prefer longer phrases, but keep a few short biological tokens too.
+  return unique
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 12);
+}
+
+function scoreFullTextChunkRow(row, terms) {
+  const title = String(row.title || "").toLowerCase();
+  const fileName = String(row.file_name || "").toLowerCase();
+  const text = String(row.text || "").toLowerCase();
+  const chunkIndex = Number(row.chunk_index || 0);
+
+  let score = 0;
+
+  for (const term of terms) {
+    const t = String(term || "").toLowerCase();
+    if (!t) continue;
+
+    if (title.includes(t)) score += Math.min(120, 40 + t.length);
+    if (fileName.includes(t)) score += Math.min(100, 32 + t.length);
+    if (text.includes(t)) score += Math.min(40, 8 + Math.min(t.length, 24));
+
+    const pieces = t.split(/\s+/).filter(Boolean);
+    if (pieces.length >= 2) {
+      const titleHits = pieces.filter(p => title.includes(p)).length;
+      const fileHits = pieces.filter(p => fileName.includes(p)).length;
+      const textHits = pieces.filter(p => text.includes(p)).length;
+      score += titleHits * 10 + fileHits * 8 + textHits * 2;
+    }
+  }
+
+  if (chunkIndex === 0) score += 8;
+  if (chunkIndex > 0 && chunkIndex <= 3) score += 4;
+
+  return score;
+}
+
 async function searchPaperFullTextChunks(query, env, limit = 6) {
   const userQuery = String(query || "").trim();
   if (!userQuery) return [];
@@ -5437,80 +5569,114 @@ async function searchPaperFullTextChunks(query, env, limit = 6) {
     return [];
   }
 
-  const tokens = getImportantSearchTokens(userQuery).slice(0, 5);
-  const phrases = [
-    ...extractScientificKeyPhrases(userQuery),
-    ...extractAutoResearchKeywords(userQuery)
-  ]
-    .map(v => cleanRetrievalPhrase(v))
-    .filter(v => v.length >= 3)
-    .slice(0, 6);
-
-  const terms = [...new Set([...phrases, ...tokens])].slice(0, 7);
-
+  const terms = buildRobustFullTextSearchTerms(userQuery);
   if (!terms.length) return [];
 
+  const sqlTerms = terms.slice(0, 10);
   const clauses = [];
   const params = [];
 
-  for (const term of terms) {
+  for (const term of sqlTerms) {
     clauses.push(`(
       LOWER(title) LIKE ?
       OR LOWER(file_name) LIKE ?
       OR LOWER(text) LIKE ?
     )`);
 
-    const like = `%${term.toLowerCase()}%`;
+    const like = `%${String(term || "").toLowerCase()}%`;
     params.push(like, like, like);
   }
 
-  const result = await env.DB.prepare(`
-    SELECT
-      post_id,
-      title,
-      source_url,
-      pdf_link,
-      file_name,
-      chunk_index,
-      text,
-      text_length,
-      created_at
-    FROM paper_fulltext_chunks
-    WHERE ${clauses.join(" OR ")}
-    ORDER BY
-      CASE
-        WHEN LOWER(title) LIKE ? THEN 0
-        WHEN LOWER(text) LIKE ? THEN 1
-        ELSE 2
-      END,
-      text_length DESC
-    LIMIT ?
-  `).bind(
-    ...params,
-    `%${terms[0].toLowerCase()}%`,
-    `%${terms[0].toLowerCase()}%`,
-    limit
-  ).all();
+  let rows = [];
 
-  return (result.results || []).map(row => ({
-    post_id: row.post_id,
-    title: cleanBibtexText(row.title),
-    source_url: row.source_url || "",
-    pdf_link: row.pdf_link || "",
-    content: [
-      "Paper_Talk DB Research Paper",
-      "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
-      `Title: ${row.title || ""}`,
-      row.file_name ? `Full text file: ${row.file_name}` : "",
-      `Chunk index: ${row.chunk_index}`,
-      "",
-      row.text || ""
-    ].filter(Boolean).join("\n"),
-    matched_chunk: cleanBibtexText(row.text || ""),
-    from_fulltext_chunk_search: true,
-    from_direct_db_search: true
-  }));
+  try {
+    const result = await env.DB.prepare(`
+      SELECT
+        post_id,
+        title,
+        source_url,
+        pdf_link,
+        file_name,
+        chunk_index,
+        text,
+        text_length,
+        created_at
+      FROM paper_fulltext_chunks
+      WHERE ${clauses.join(" OR ")}
+      ORDER BY datetime(created_at) DESC, chunk_index ASC
+      LIMIT 90
+    `).bind(...params).all();
+
+    rows = result.results || [];
+  } catch {
+    rows = [];
+  }
+
+  if (!rows.length) return [];
+
+  const scoredRows = rows
+    .map(row => ({ row, score: scoreFullTextChunkRow(row, terms) }))
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score || Number(a.row.chunk_index || 0) - Number(b.row.chunk_index || 0));
+
+  const grouped = new Map();
+
+  for (const { row, score } of scoredRows) {
+    const key = row.post_id || normalizeSearchText(row.title || row.file_name || "");
+    if (!key) continue;
+
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        post_id: row.post_id || "",
+        title: cleanBibtexText(row.title || row.file_name || ""),
+        source_url: row.source_url || "",
+        pdf_link: row.pdf_link || "",
+        file_name: row.file_name || "",
+        chunks: [],
+        score: 0
+      });
+    }
+
+    const group = grouped.get(key);
+    if (group.chunks.length < 3) {
+      group.chunks.push(row);
+      group.score += score;
+    }
+  }
+
+  return Array.from(grouped.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(group => {
+      const chunkText = group.chunks
+        .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0))
+        .map(row => [
+          `Chunk index: ${row.chunk_index}`,
+          String(row.text || "").slice(0, 1600)
+        ].join("\n"))
+        .join("\n\n--- Full-text chunk ---\n\n");
+
+      return {
+        post_id: group.post_id,
+        title: group.title,
+        source_url: group.source_url,
+        pdf_link: group.pdf_link,
+        content: [
+          "Paper_Talk DB Research Paper",
+          "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
+          `Title: ${group.title}`,
+          group.file_name ? `Full text file: ${group.file_name}` : "",
+          "",
+          chunkText
+        ].filter(Boolean).join("\n").slice(0, 6500),
+        matched_chunk: cleanBibtexText(chunkText).slice(0, 4000),
+        similarity_score: group.score,
+        from_fulltext_chunk_search: true,
+        from_direct_db_search: true
+      };
+    });
 }
+
 
 
 
