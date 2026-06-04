@@ -9239,6 +9239,47 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
   }
 }
 
+
+function detectUserLanguage(text) {
+  const value = String(text || "").trim();
+
+  if (/[가-힣]/.test(value)) return "Korean";
+  if (/[\u3040-\u30ff]/.test(value)) return "Japanese";
+  if (/[\u4e00-\u9fff]/.test(value)) return "Chinese";
+
+  // Default to English for Latin-script scientific questions.
+  return "English";
+}
+
+function buildMultilingualAnswerInstruction(userMessage) {
+  const language = detectUserLanguage(userMessage);
+
+  return `
+MULTILINGUAL LANGUAGE POLICY
+
+Detected user language: ${language}
+
+Answer entirely in ${language}.
+Do not mix languages in section titles, explanations, summaries, paper recommendation labels, research ideas, or conclusions.
+
+If the user asks in English:
+- Use English section titles such as "Why this matters", "Recommended papers", "How to read this", "Next research ideas".
+- Do not use Korean labels such as "추천 논문", "왜 중요한가", "다음 연구 아이디어".
+
+If the user asks in Korean:
+- Use Korean section titles such as "왜 중요한가", "추천 논문", "어떻게 읽으면 좋은가", "다음 연구 아이디어".
+- Do not switch to English section titles unless they are scientific terms.
+
+If the user asks in Japanese or Chinese:
+- Keep the whole answer in that language.
+- Scientific method names and paper titles may remain in English.
+
+Paper titles, gene names, software names, model names, and technical terms may remain in their original language.
+But all explanatory sentences and section labels must follow the detected user language.
+`.trim();
+}
+
+
 function buildAdaptiveStyleInstruction({ outputStyle, hasContext, userMessage = "" }) {
   const common = `
 GENERAL READABILITY RULES
