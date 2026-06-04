@@ -802,25 +802,19 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
 
       if (status) status.textContent = `Uploading full text ${index + 1}/${files.length}: ${fileName}`;
 
-      const res = await fetch("/api/admin/research/fulltext/import", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Admin-Key": key
-        },
-        body: JSON.stringify({
+      const result = await uploadResearchFullTextPayloadWithRetries({
+        key,
+        payload: {
           title,
           sourceUrl,
           pdfLink,
           fileName,
           sourceType: isPdf ? "pdf" : "text",
           text: uploadText
-        })
+        }
       });
 
-      const result = await parseApiJsonOrText(res);
-
-      if (!res.ok || !result.ok) {
+      if (!result._httpOk || !result.ok) {
         results.push({
           fileName,
           status: "failed",
@@ -852,7 +846,7 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
     }
 
     if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
-    await new Promise(resolve => setTimeout(resolve, 1200));
+    await new Promise(resolve => setTimeout(resolve, 3500));
   }
 
   if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
@@ -988,6 +982,58 @@ async function parseApiJsonOrText(res) {
   }
 }
 
+
+async function uploadResearchFullTextPayloadWithRetries({ key, payload }) {
+  const baseText = String(payload.text || "");
+  const title = String(payload.title || payload.fileName || "Uploaded paper").trim();
+  const fallbackText = [
+    "Paper_Talk PDF metadata-only fallback",
+    `Title: ${title}`,
+    payload.sourceUrl ? `Article link: ${payload.sourceUrl}` : "",
+    payload.pdfLink ? `PDF link: ${payload.pdfLink}` : "",
+    payload.fileName ? `File name: ${payload.fileName}` : "",
+    baseText ? `Extracted preview: ${baseText.slice(0, 1200)}` : ""
+  ].filter(Boolean).join("\n");
+
+  const attempts = [
+    { label: "bounded", text: baseText.slice(0, 12000) },
+    { label: "small", text: baseText.slice(0, 4000) },
+    { label: "metadata_only", text: fallbackText.slice(0, 1800) }
+  ];
+
+  let lastResult = { ok: false, error: "Upload did not run." };
+
+  for (const attempt of attempts) {
+    const res = await fetch("/api/admin/research/fulltext/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      },
+      body: JSON.stringify({
+        ...payload,
+        text: attempt.text,
+        importMode: attempt.label
+      })
+    });
+
+    const result = await parseApiJsonOrText(res);
+    result._httpOk = res.ok;
+    result._attempt = attempt.label;
+    lastResult = result;
+
+    if (res.ok && result.ok) return result;
+
+    const msg = String(result.error || result.message || "");
+    const retryable = /non-JSON response|HTTP 500|HTTP 502|HTTP 503|HTTP 504|Worker|timeout/i.test(msg) || [500, 502, 503, 504].includes(res.status);
+    if (!retryable) return result;
+
+    await new Promise(resolve => setTimeout(resolve, 2500));
+  }
+
+  return lastResult;
+}
+
 function titleFromFullTextFileName(fileName) {
   return String(fileName || "")
     .replace(/\.[^.]+$/, "")
@@ -1009,7 +1055,7 @@ function prepareFullTextForUpload(text) {
     .replace(/[ \t]+/g, " ")
     .replace(/\n{4,}/g, "\n\n\n")
     .trim()
-    .slice(0, 28000);
+    .slice(0, 12000);
 }
 
 async function importResearchFullTextFile(e) {
@@ -1085,25 +1131,19 @@ async function importResearchFullTextFile(e) {
         status.textContent = `Uploading ${index + 1}/${files.length}: ${fileName}`;
       }
 
-      const res = await fetch("/api/admin/research/fulltext/import", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Admin-Key": key
-        },
-        body: JSON.stringify({
+      const result = await uploadResearchFullTextPayloadWithRetries({
+        key,
+        payload: {
           title: isUrl ? "" : matchValue,
           sourceUrl: isUrl ? matchValue : "",
           pdfLink,
           fileName,
           sourceType: isPdf ? "pdf" : "text",
           text: uploadText
-        })
+        }
       });
 
-      const result = await parseApiJsonOrText(res);
-
-      if (!res.ok || !result.ok) {
+      if (!result._httpOk || !result.ok) {
         results.push({
           fileName,
           status: "failed",
@@ -1138,7 +1178,7 @@ async function importResearchFullTextFile(e) {
       resultList.innerHTML = renderResearchFullTextResults(results);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 1200));
+    await new Promise(resolve => setTimeout(resolve, 3500));
   }
 
   const imported = results.filter(r => r.status === "imported").length;
