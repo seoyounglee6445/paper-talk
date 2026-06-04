@@ -1,8 +1,9 @@
 /*
-Paper_Talk Worker v76 user-first answer patch
+Paper_Talk Worker v77 multilingual user-first answer patch
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea routing.
 - User-first answer behavior: answer the scientific question first.
+- Multilingual behavior: detect and preserve the user's language across the entire answer.
 - Do not start with DB retrieval failure messages unless user explicitly asks for sources/evidence.
 - Literature/trend questions still show DB paper titles when requested.
 */
@@ -2089,7 +2090,7 @@ Critical constraints:
 - 4,000 to 8,000 characters preferred.
 - This must be used silently by GPT.
 - It must NOT change the final answer into a textbook summary.
-- It must preserve Paper_Talk's warm senior-researcher Korean explanation style.
+- It must preserve Paper_Talk's warm senior-researcher explanation style in the user's language.
 - It should help the GPT read papers, evaluate methods, suggest research ideas, and identify validation/limitations.
 - Separate "research evidence" from "reasoning framework".
 
@@ -2105,7 +2106,7 @@ PAPER_TALK DISTILLED SCIENTIFIC THINKING LOGIC
 Use silently. Do not explain this framework to the user unless explicitly asked.
 Do not cite this framework as paper evidence.
 Do not let this framework change the final answer into a dry textbook summary.
-Keep the existing Paper_Talk answer style: warm, calm, Korean research mentor, practical research suggestions.
+Keep the existing Paper_Talk answer style: warm, calm, multilingual research mentor, practical research suggestions.
 
 ${result}
 
@@ -9238,13 +9239,13 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
   }
 }
 
-function buildAdaptiveStyleInstruction({ outputStyle, hasContext }) {
+function buildAdaptiveStyleInstruction({ outputStyle, hasContext, userMessage = "" }) {
   const common = `
 GENERAL READABILITY RULES
 - Match the user's language and answer the user's real question first.
 - Do not force a rigid template. Choose the clearest structure for the question.
 - Start with the core takeaway in 2-4 friendly sentences before details.
-- Use short paragraphs, natural Korean headings when helpful, and concrete examples.
+- Use short paragraphs, natural headings in the same language as the user, and concrete examples.
 - Prefer "what this means / why it matters / what to do next" over mechanical summaries.
 - Keep a calm senior cancer-genomics mentor tone: clear, kind, practical, and research-aware.
 - Do not invent papers, authors, years, datasets, biomarkers, or conclusions.
@@ -9262,17 +9263,17 @@ Do not answer as a mechanical paper-by-paper summary.
 Help the user understand the field first, then place papers inside that story.
 
 Preferred flow:
-1. Start with a short orientation: "최근 흐름을 보면 이 주제는 크게 몇 가지 방향으로 보면 좋습니다."
+1. Start with a short orientation in the user's language explaining that the topic can be understood through a few current trends.
 2. Group retrieved papers by trend/theme.
-3. For each trend, explain:
+3. For each trend, explain in the user's language:
    - why this trend is currently important,
    - which retrieved paper is a good entry point,
    - how the user should read that paper,
    - what research idea or next question follows.
-4. End with a short "먼저 읽는 순서" or "정리하면" paragraph.
+4. End with a short reading-order or summary paragraph in the user's language.
 
 Formatting rules:
-- Do not use 논문 A/B/C or Paper A/B/C labels.
+- Do not use paper labels such as 논문 A/B/C or Paper A/B/C.
 - Do not start with only a raw list of papers.
 - Do not write long isolated paper summaries unless the user explicitly asks for a summary.
 - Actual retrieved DB paper titles may appear only as recommended reading under a trend/theme.
@@ -9384,7 +9385,7 @@ SOURCE DISCLOSURE MODE
 
 The user explicitly asked for papers, literature, references, or sources.
 You may show only retrieved Paper_Talk DB titles and source metadata.
-For literature recommendation questions, organize titles under trend/theme sections rather than 논문 A/B/C labels.
+For literature recommendation questions, organize titles under trend/theme sections rather than paper labels.
 Never invent papers from outside the DB.
     `.trim();
   }
@@ -9422,8 +9423,13 @@ If the user later asks "어떤 논문 기반이야?", the Worker will show store
 
 function buildLiteratureRecommendationAnswerFromContext({ context, userMessage }) {
   const items = selectTopSupportingPapersForAnswer(context, 10, "LITERATURE_REVIEW");
+  const language = detectUserLanguage(userMessage);
+  const isKo = language === "Korean";
+
   if (!items.length) {
-    return "현재 Paper_Talk DB에서 이 주제와 직접 매칭되는 논문을 찾지 못했습니다. 검색어를 조금 더 구체화하거나 DB에 해당 논문을 추가한 뒤 다시 시도해 주세요.";
+    return isKo
+      ? "현재 Paper_Talk DB에서 이 주제와 직접 매칭되는 논문을 찾지 못했습니다. 검색어를 조금 더 구체화하거나 DB에 해당 논문을 추가한 뒤 다시 시도해 주세요."
+      : "I could not find papers in the current Paper_Talk DB that directly match this topic. Try a narrower keyword or add relevant papers to the DB and search again.";
   }
 
   const topic = String(userMessage || "")
@@ -9431,9 +9437,31 @@ function buildLiteratureRecommendationAnswerFromContext({ context, userMessage }
     .replace(/\s+/g, " ")
     .trim();
 
-  const heading = topic
-    ? `현재 Paper_Talk DB에서 ${topic} 주제와 관련해 참고할 만한 논문들은 다음과 같습니다.`
-    : "현재 Paper_Talk DB에서 이 주제와 관련해 참고할 만한 논문들은 다음과 같습니다.";
+  const heading = isKo
+    ? (topic
+      ? `현재 Paper_Talk DB에서 ${topic} 주제는 몇 가지 흐름으로 나누어 읽으면 좋습니다.`
+      : "현재 Paper_Talk DB에서 이 주제는 몇 가지 흐름으로 나누어 읽으면 좋습니다.")
+    : (topic
+      ? `In the current Paper_Talk DB, ${topic} is best read through a few major trends.`
+      : "In the current Paper_Talk DB, this topic is best read through a few major trends.");
+
+  const labels = isKo
+    ? {
+        why: "왜 중요한가",
+        papers: "추천 논문",
+        read: "어떻게 읽으면 좋은가",
+        next: "다음 연구 아이디어",
+        summary: "정리하면,",
+        summaryText: "이 주제는 방법론, 조직 구조 해석, 세포 상태 모델링, translational biomarker 발굴 쪽으로 나누어 읽으면 흐름을 잡기 좋습니다."
+      }
+    : {
+        why: "Why this trend matters",
+        papers: "Recommended papers",
+        read: "How to read this",
+        next: "Next research ideas",
+        summary: "In short,",
+        summaryText: "This topic is easiest to understand by separating it into methods, tissue-architecture interpretation, cell-state modeling, and translational biomarker discovery."
+      };
 
   const groups = [];
   const used = new Set();
@@ -9456,19 +9484,33 @@ function buildLiteratureRecommendationAnswerFromContext({ context, userMessage }
   addGroup("Clinical or translational spatial analysis", hay => /clinical|patient|therapy|response|biomarker|prognosis|cancer|tumou?r|치료|바이오마커|암/.test(hay));
 
   const remaining = items.filter(item => !used.has(item.title)).slice(0, 5);
-  if (remaining.length) groups.push({ name: "Additional relevant papers", items: remaining });
+  if (remaining.length) groups.push({ name: isKo ? "추가로 읽어볼 흐름" : "Additional useful direction", items: remaining });
 
-  const body = groups.slice(0, 4).map((group, groupIndex) => {
-    const bullets = group.items.map(item => {
-      const title = cleanBibtexText(item.title || "").trim();
+  const body = groups.map((group, groupIndex) => {
+    const paperLines = group.items.map(item => {
+      const title = cleanBibtexText(item.title || "Untitled paper");
       const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 220);
       const why = excerpt
         ? excerpt.replace(/\s+/g, " ").replace(/^(title|abstract)\s*[:：]\s*/i, "")
-        : "이 주제와 직접적으로 연결되는 Paper_Talk DB 논문입니다.";
+        : (isKo ? "이 주제와 직접적으로 연결되는 Paper_Talk DB 논문입니다." : "This is a relevant Paper_Talk DB paper for this topic.");
       return `- ${title}\n  - ${why}`;
     }).join("\n");
 
-    return `### ${groupIndex + 1}. ${group.name}\n\n${bullets}`;
+    return [
+      `${groupIndex + 1}. ${group.name}`,
+      "",
+      labels.why,
+      isKo ? "이 흐름은 현재 질문을 더 구체적인 연구 문제로 바꾸는 데 도움이 됩니다." : "This trend helps turn the broad question into a more concrete research problem.",
+      "",
+      labels.papers,
+      paperLines,
+      "",
+      labels.read,
+      isKo ? "먼저 biological question과 데이터 타입을 확인한 뒤, 방법론이 어떤 한계를 해결하는지 보시면 좋습니다." : "Read it by first identifying the biological question and data type, then asking what limitation the method or result addresses.",
+      "",
+      labels.next,
+      isKo ? "이 흐름을 바탕으로 validation, multimodal integration, 또는 환자 cohort 적용 가능성을 생각해볼 수 있습니다." : "From this trend, consider validation, multimodal integration, or application to patient cohorts."
+    ].join("\n");
   }).join("\n\n");
 
   return [
@@ -9476,9 +9518,9 @@ function buildLiteratureRecommendationAnswerFromContext({ context, userMessage }
     "",
     body,
     "",
-    "정리하면,",
+    labels.summary,
     "",
-    "이 주제는 spatial representation learning, 조직 구조 해석, 세포 상태 모델링, translational biomarker 발굴 쪽으로 나누어 읽으면 흐름을 잡기 좋습니다."
+    labels.summaryText
   ].join("\n");
 }
 
@@ -9525,7 +9567,8 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
 
   const intent = autoIntent || makeFallbackResearchIntent(userMessage);
   const outputStyle = determinePaperTalkOutputStyle({ userMessage, intent, hasContext });
-  const adaptiveStyleInstruction = buildAdaptiveStyleInstruction({ outputStyle, hasContext });
+  const adaptiveStyleInstruction = buildAdaptiveStyleInstruction({ outputStyle, hasContext, userMessage });
+  const multilingualInstruction = buildMultilingualAnswerInstruction(userMessage);
   const strictInternalEvidenceInstruction = buildStrictInternalEvidenceInstruction({ outputStyle, hasContext });
   const questionType = normalizeQuestionType(intent.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent.answer_style || "concise_answer");
@@ -9638,18 +9681,14 @@ v63 readable hidden-source behavior:
   "예를 들어 ... (논문 ...)"
   "사용한 논문", "근거 논문", "참고 논문", "Relevant papers", "Sources"
 - Do NOT organize by paper. Organize by synthesized insight.
-- Write in readable Korean with short paragraphs.
-- For research-direction questions, use the Research Insight Report style automatically:
+- Write in the user's language with short paragraphs.
+- For research-direction questions, use a clear insight style automatically:
   1) Start with one concise synthesis sentence.
-  2) Use markdown headings such as "### 1. Immunosenescence".
+  2) Use natural headings in the user's language.
   3) Explain 3 to 5 promising research directions with blank lines between sections.
   4) For each direction, explain why it matters biologically.
-  5) End with "정리하면," and a short 2-3 line summary.
-- Use phrases like:
-  "검색된 Paper_Talk DB 근거들을 종합하면..."
-  "여러 연구에서 공통적으로 보이는 흐름은..."
-  "연구 방향으로 바꾸면..."
-  "앞으로 특히 유망한 축은..."
+  5) End with a short 2-3 line summary in the user's language.
+- Use natural transition phrases in the user's language instead of hard-coded Korean phrases.
 - Do not reveal individual paper titles now. The Worker stores the sources separately for later follow-up.
     `.trim()
     : `
@@ -9660,9 +9699,9 @@ No Paper_Talk DB context was retrieved.
 For research-related answers:
 1. Do NOT use outside literature as if it came from Paper_Talk DB.
 2. Do NOT invent related papers.
-3. Say clearly that no matching Paper_Talk DB source was retrieved.
-4. Ask the user to try a narrower keyword, reindex, or check research_knowledge.
-5. You may give only a very brief general conceptual clarification if needed, but label it as general background, not DB evidence.
+3. Do not start with a database-failure message unless the user explicitly asked for sources/evidence.
+4. For ordinary concept, method, algorithm, or research-idea questions, answer the scientific question directly from general knowledge first.
+5. If the user explicitly asked for sources/evidence, say in the user's language that no matching Paper_Talk DB source was retrieved and suggest narrower keywords or reindexing.
     `.trim();
 
   const activePaperLockInstruction = strictActivePaperLocked
@@ -9710,12 +9749,9 @@ Target answer style:
   4. why it matters for cancer genomics, immunology, single-cell, spatial, or biomedical research,
   5. what the limitations or next validation questions are.
 - Unless the user asks for "3 lines", "briefly", "short", or "bullet only", write 4 to 8 readable paragraphs for paper interpretation.
-- The preferred style is calm explanatory prose, like this:
-  "Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다.
-  최근 spatial transcriptomics 연구들을 보면 조직 내 세포 분포나 niche 구조를 정교하게 설명하는 연구는 상당히 많이 축적되어 있습니다. 반면, 세포가 특정 공간에서 어떤 방향으로 분화하거나 상태 전이를 겪는지까지 설명하는 연구는 상대적으로 적습니다.
-  그래서 Spatial + RNA velocity, 또는 Spatial + longitudinal sample 분석 같은 접근이 좋은 연구 주제가 될 수 있습니다."
-- This is the style to imitate: professional, soft, explanatory, and readable.
-- Avoid too-casual phrases such as "음...", "제가 보기에는요", "~더라고요" unless the user explicitly wants casual chat.
+- The preferred style is calm explanatory prose: professional, soft, explanatory, and readable.
+- Do not copy a fixed example style in one language. Adapt the style to the user's language.
+- Avoid overly casual filler phrases unless the user explicitly wants casual chat.
 - Avoid report-like section labels.
 
 Forbidden section labels unless the user explicitly asks for them:
@@ -9733,7 +9769,7 @@ Paper/source visibility rule:
 - In LITERATURE_REVIEW and SOURCE_TRACE modes, you may show retrieved DB paper titles.
 - In normal RESEARCH_INSIGHT, RESEARCH_SYNTHESIS, VALIDATION, CONCEPT, COMPARISON, or GENERAL answers, do NOT show 논문 A/B/C labels, paper titles, URLs, journals, authors, DOI/PMID, or source lists.
 - For broad research-direction questions, synthesize across retrieved DB papers silently and give project-level research ideas.
-- If the user later asks "어떤 논문 기반이야?", "출처는?", "근거 논문 보여줘", SOURCE_TRACE will show the stored sources separately.
+- If the user later asks for sources/evidence/references in any language, SOURCE_TRACE will show the stored sources separately.
 
 Adaptive format rules:
 - If the user asks for research ideas, explain why a direction is promising, what the DB suggests, what research questions follow, and what validation would be useful.
@@ -9755,7 +9791,7 @@ Paper_Talk DB rules:
 - If no DB context was retrieved, do NOT start with a database-failure sentence. For ordinary concept/method/research-idea questions, answer from general scientific knowledge first. Mention DB retrieval failure only when the user explicitly asks for sources, references, Paper_Talk DB evidence, or which papers were used.
 
 Language:
-Answer in the user's language.
+Answer entirely in the user's language. Do not mix languages in section titles or transitions.
 
 Formatting:
 Return plain text only.
@@ -9764,10 +9800,14 @@ Use readable paragraphs. Do not be too brief unless the user explicitly asks for
 For paper summaries, be generous and educational: explain the paper's motivation, biological question, dataset/method if visible in the excerpt, key result, interpretation, why it matters, and what follow-up validation would be useful.
 If the excerpt is thin, say that gently, but still explain what can be safely inferred from the retrieved text.
 Use bullets only for concrete research questions, candidate project ideas, or validation steps. A compact selected-paper mapping is allowed for DB grounding, but each label must include the exact title. After that, avoid dumping paper-by-paper summaries; synthesize the papers around the question.
-Headings are optional. If used, make them natural Korean headings, not report labels.
+Headings are optional. If used, make them natural headings in the same language as the user, not report labels.
 
 ${requestedFormatInstruction || ""}
       `.trim()
+    },
+    {
+      role: "system",
+      content: multilingualInstruction
     },
     {
       role: "system",
@@ -9782,7 +9822,7 @@ Use this silently as an internal reasoning checklist only.
 Do not summarize it.
 Do not answer about the framework itself.
 Do not change the final answer into a textbook-style explanation.
-The final answer must keep the existing Paper_Talk style: warm Korean research mentor, natural paragraphs, practical research suggestions, and concrete examples.
+The final answer must keep the existing Paper_Talk style: warm multilingual research mentor, natural paragraphs, practical research suggestions, and concrete examples in the user's language.
 
 ${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
       `.trim()
@@ -9814,16 +9854,16 @@ If outputStyle is LITERATURE_REVIEW:
   이 논문을 어떻게 읽으면 좋은가?
   다음 연구 아이디어
 - Show exact retrieved DB paper titles only under 추천 논문.
-- Do not use 논문 A/B/C or Paper A/B/C labels.
+- Do not use paper labels such as 논문 A/B/C or Paper A/B/C.
 - Do not write a long sequential summary of each paper.
 - End with a short 정리하면 paragraph.
 
 If outputStyle is RESEARCH_INSIGHT or RESEARCH_SYNTHESIS:
 - Produce actionable project-level research ideas.
-- Use Project / Input / Model / Research Question / Expected Output / Novelty / Validation or Publication Potential.
+- Use Project / Input / Model / Research Question / Expected Output / Novelty / Validation or Publication Potential, translated naturally into the user's language.
 - Avoid generic categories.
 - Do NOT show retrieved paper titles, paper labels, or source lists.
-- Mention that the answer synthesizes Paper_Talk DB evidence only in a general way, without naming individual papers.
+- If mentioning Paper_Talk DB evidence, do so only in the user's language and only in a general way, without naming individual papers.
 - For spatial/cancer/AI questions, prioritize spatial foundation models, histology-to-spatial translation, multimodal spatial AI, GNN, transformer, diffusion, tumor evolution, immune escape, and drug-response prediction.
 
 Never answer a paper recommendation request with only a field summary.
@@ -9845,7 +9885,7 @@ Never answer a paper recommendation request with only a field summary.
       role: "system",
       content: hasContext
         ? (["LITERATURE_REVIEW", "SOURCE_TRACE"].includes(outputStyle)
-          ? "A DB context is present. The user explicitly asked for papers/literature/sources, so you may show retrieved EXACT_DB_TITLE values. For LITERATURE_REVIEW, organize papers by trend/theme and do not use 논문 A/B/C labels. Do not use external papers."
+          ? "A DB context is present. The user explicitly asked for papers/literature/sources, so you may show retrieved EXACT_DB_TITLE values. For LITERATURE_REVIEW, organize papers by trend/theme using the user's language for all section titles. Do not use paper labels. Do not use external papers."
           : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources. Answer the user's question first in a friendly explanatory way.")
         : "No DB context is present. Do not start with a Paper_Talk DB retrieval-failure sentence unless the user explicitly asked for sources/evidence. For ordinary concept, algorithm, method, or research-idea questions, answer the scientific question directly from general knowledge. Do not invent paper titles, authors, years, journals, sample sizes, or datasets."
     },
