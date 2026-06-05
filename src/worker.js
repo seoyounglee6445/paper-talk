@@ -131,9 +131,9 @@ export default {
         return env.ASSETS.fetch(new Request(new URL("/visium-gpt.html", request.url)));
       }
 
-      if (pathname === "/specialist-gpts") {
-        return env.ASSETS.fetch(new Request(new URL("/specialist-gpts.html", request.url)));
-      }
+     if (pathname === "/research-gpts") {
+  return env.ASSETS.fetch(new Request(new URL("/specialist-gpts.html", request.url)));
+}
 
       if (pathname === "/neuroscience-gpt") {
         return env.ASSETS.fetch(new Request(new URL("/visium-gpt.html?gpt=neuroscience", request.url)));
