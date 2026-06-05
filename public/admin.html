@@ -1,25 +1,2087 @@
-<label>Admin Key</label>
-<input id="globalAdminKey" type="password" placeholder="Enter admin key">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin | Paper_Talk</title>
+  <link rel="stylesheet" href="/style.css">
 
-<button onclick="saveAdminKey()">Save Admin Key</button>
-<button class="danger-btn" onclick="clearAdminKey()">Clear Admin Key</button>
+  <style>
+    .compact-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 12px 0;
+    }
+    .compact-actions input {
+      max-width: 360px;
+      min-width: 240px;
+    }
+    .mini-table-wrap {
+      width: 100%;
+      max-height: 360px;
+      overflow: auto;
+      border: 1px solid #c9d4ff;
+      border-radius: 12px;
+      background: #fff;
+      margin-top: 12px;
+    }
+    .mini-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .mini-table th,
+    .mini-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid #e6ebff;
+      vertical-align: top;
+      text-align: left;
+    }
+    .mini-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f7f9ff;
+      color: #0c1b8f;
+      font-weight: 800;
+    }
+    .mini-table tr:last-child td {
+      border-bottom: 0;
+    }
+    .mini-title {
+      font-weight: 800;
+      color: #10142a;
+      max-width: 440px;
+    }
+    .mini-muted {
+      color: #5f6b7a;
+      font-size: 12px;
+      word-break: break-word;
+    }
+    .mini-btn {
+      border: 0;
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .danger-outline {
+      background: #fff0f0;
+      color: #e63946;
+      border: 1px solid #ffc7c7;
+    }
+    .upload-result-box {
+      max-width: 720px;
+      margin-top: 12px;
+    }
+  </style>
 
-<p id="adminKeyStatus"></p>
+</head>
 
-<div style="display:flex; gap:18px; flex-wrap:wrap;">
-  <p id="userCountBox">Save your admin key to view the current user count.</p>
-  <p id="activeUserBox">Save your admin key to view active users.</p>
-</div>
+<body>
+<header class="header">
+  <nav class="nav">
+    <div class="logo">Paper_Talk Admin</div>
+    <a href="/">Home</a>
+    <a href="/admin.html">Admin</a>
+    <a href="/admin-gpt.html">GPT Usage</a>
+    <a href="/specialist-gpts.html">Specialist GPTs</a>
+    <a href="/specialist-admin">Research GPT Admin</a>
+    <a href="/research">Research Paper</a>
+    <a href="/study">Study Materials</a>
+    <a href="/community">Community</a>
+    <a href="/career">Career</a>
+  </nav>
+</header>
 
-<div id="activeUserList"></div>
+<main class="container">
+  <h1>Site Admin</h1>
+  <p>Manage research papers, specialist GPT posts, study posts, methodology posts, blog posts, users, approvals, and deletion.</p>
 
-<button onclick="refreshUserStats()">Refresh Users</button>
+  <section class="card">
+    <h2>Admin Access</h2>
+    <p>Enter your admin key once. It will be saved for 1 hour.</p>
 
-<form onsubmit="createResearchPaper(event)">
-  <div>
-    <label>Title</label>
-    <input name="title" required placeholder="Paper title">
+    <label>Admin Key</label>
+    <input id="globalAdminKey" type="password" placeholder="Enter admin key">
+
+    <button onclick="saveAdminKey()">Save Admin Key</button>
+    <button class="danger-btn" onclick="clearAdminKey()">Clear Admin Key</button>
+
+    <p id="adminKeyStatus"></p>
+  </section>
+
+  <div id="adminContent" style="display:none;">
+
+  <section class="card">
+    <h2>Users</h2>
+    <p>Registered users and currently active visitors are loaded automatically after admin access is saved. Active visitors are counted once per IP.</p>
+
+    <div style="display:flex; gap:18px; flex-wrap:wrap;">
+      <p id="userCountBox">Save your admin key to view the current user count.</p>
+      <p id="activeUserBox">Save your admin key to view active users.</p>
+    </div>
+
+    <div id="activeUserList"></div>
+
+    <button onclick="refreshUserStats()">Refresh Users</button>
+  </section>
+
+
+  <section class="card">
+    <h2>Reindex Research Papers</h2>
+    <p>Rebuild the Paper_Talk GPT knowledge base from all published Research Paper posts. Use this after deploying a new Worker or after deleting rows from research_knowledge.</p>
+    <button onclick="reindexResearchPapers()">Reindex Research Papers</button>
+    <p id="reindexStatus"></p>
+  </section>
+
+  <section class="card write-form">
+    <h2>New Research Paper</h2>
+
+    <form onsubmit="createResearchPaper(event)">
+      <div>
+        <label>Title</label>
+        <input name="title" required placeholder="Paper title">
+      </div>
+
+      <div>
+        <label>Article Link</label>
+        <input name="articleLink" placeholder="https://doi.org/...">
+      </div>
+
+      <div>
+        <label>Authors</label>
+        <input name="authors" placeholder="Author names">
+      </div>
+
+      <div>
+        <label>Year</label>
+        <input name="year" placeholder="2026">
+      </div>
+
+      <div>
+        <label>Journal</label>
+        <input name="journal" placeholder="Journal name">
+      </div>
+
+      <div>
+        <label>PDF / File Link</label>
+        <input name="pdfLink" placeholder="Google Drive, PDF, or file link">
+      </div>
+
+      <div>
+        <label>Category</label>
+        <input name="category" placeholder="Cancer genomics, single-cell, spatial...">
+      </div>
+
+      <div>
+        <label>Tags</label>
+        <input name="tags" placeholder="RNA velocity, single-cell, spatial">
+      </div>
+
+      <div class="full-row">
+        <label>Abstract</label>
+        <textarea name="abstract" placeholder="Paste abstract here"></textarea>
+      </div>
+      <div class="full-row">
+        <label>Optional Full Text PDF / TXT Upload</label>
+        <input type="file" id="newResearchFullTextFiles" name="newResearchFullTextFiles" accept=".pdf,.txt,text/plain,application/pdf" multiple>
+        <p class="post-meta">Optional. Select one or more text-based PDFs/TXT files. After the paper is saved, the full text will be attached to this paper and indexed automatically. Duplicate PDFs are skipped.</p>
+      </div>
+
+      <p id="newResearchFullTextStatus"></p>
+      <div id="newResearchFullTextResultList"></div>
+
+      <button type="submit">Save Research Paper</button>
+    </form>
+  </section>
+
+
+  <section class="card write-form">
+    <h2>Import Research Paper Full Text PDF / TXT</h2>
+    <p>Upload one or many actual paper PDF/TXT full texts. This is paper evidence, not Thinking Logic. GPT will use this before abstract/metadata when answering about the matched paper. Duplicate PDFs in the same batch will be skipped automatically.</p>
+
+    <form onsubmit="importResearchFullTextFile(event)">
+      <div class="full-row">
+        <label>Optional Paper Title or Article URL to Match</label>
+        <input id="fullTextPaperMatch" placeholder="Optional. Leave blank to match each PDF by its file name.">
+      </div>
+
+      <div class="full-row">
+        <label>Optional PDF Link</label>
+        <input id="fullTextPdfLink" placeholder="Optional PDF/file link">
+      </div>
+
+      <div class="full-row">
+        <label>Research Paper Full Text PDF / TXT File(s)</label>
+        <input type="file" id="researchFullTextFile" accept=".pdf,.txt,text/plain,application/pdf" multiple required>
+      </div>
+
+      <button type="submit">Import Research Paper Full Text File(s)</button>
+      <p id="researchFullTextStatus"></p>
+      <div id="researchFullTextResultList"></div>
+    </form>
+  </section>
+
+
+
+  <section class="card" id="storedFullTextCard">
+    <h2>Stored Research Full Text Files</h2>
+    <p>View, filter, select, or delete uploaded PDF/TXT full-text chunks. Uploading a PDF/TXT already stores it; this list is for checking and cleanup.</p>
+
+    <div class="compact-actions">
+      <button onclick="loadStoredFullTextFiles()">Load Stored Full Text Files</button>
+      <button class="danger-btn" onclick="deleteCheckedStoredFullTextFiles()">Delete Checked Full Text</button>
+      <input id="storedFullTextSearch" placeholder="Filter displayed files..." oninput="renderStoredFullTextFiles()">
+    </div>
+    <p id="storedFullTextStatus"></p>
+    <div id="storedFullTextList"></div>
+  </section>
+
+  <section class="card write-form">
+  <h2>Import LinkedIn CSV / BibTeX to GPT Knowledge</h2>
+  <p>Select your LinkedIn Posts.csv, Shares.csv, or BibTeX .bib file. It will be imported into the Paper_Talk GPT knowledge base.</p>
+
+  <form onsubmit="importLinkedInCsvFile(event)">
+    <div class="full-row">
+      <label>LinkedIn CSV / BibTeX File</label>
+      <input type="file" id="linkedinCsvFile" accept=".csv,.bib,.txt,text/csv,text/plain,application/x-bibtex">
+    </div>
+
+    <button type="submit">Import CSV / BibTeX File</button>
+  </form>
+</section>
+
+  <section class="card write-form">
+    <h2>Import Scientific Thinking Logic PDF / TXT</h2>
+    <p>Upload a PDF or TXT source that teaches the GPT how to think scientifically. It will be used as a reasoning framework only, not as paper evidence.</p>
+
+    <form onsubmit="importThinkingLogicFile(event)">
+      <div class="full-row">
+        <label>Logic Title</label>
+        <input id="thinkingLogicTitle" placeholder="Thinking Data Science, Scientific Reasoning, Reviewer Logic...">
+      </div>
+
+      <div class="full-row">
+        <label>Thinking Logic PDF / TXT File</label>
+        <input type="file" id="thinkingLogicFile" accept=".pdf,.txt,text/plain,application/pdf">
+      </div>
+
+      <button type="submit">Import Thinking Logic File</button>
+      <button type="button" class="danger-btn" onclick="deleteThinkingLogic()">Delete All Thinking Logic</button>
+      <p id="thinkingLogicStatus"></p>
+    </form>
+  </section>
+  
+
+  <section class="card write-form">
+    <h2>New Study Post</h2>
+
+    <form onsubmit="createStudyPost(event)">
+      <div>
+        <label>Title</label>
+        <input name="title" required placeholder="Study post title">
+      </div>
+
+      <div>
+        <label>Category</label>
+        <input name="category" placeholder="Statistics, R, Python, genomics...">
+      </div>
+
+      <div>
+        <label>Tags</label>
+        <input name="tags" placeholder="survival analysis, RNA-seq, single-cell">
+      </div>
+
+      <div>
+        <label>Source / Reference Link</label>
+        <input name="link" placeholder="https://...">
+      </div>
+
+      <div class="full-row">
+        <label>Content</label>
+        <textarea name="body" rows="14" placeholder="Write your study material here."></textarea>
+      </div>
+      <button type="submit">Save Study Post</button>
+    </form>
+  </section>
+
+  <section class="card write-form">
+    <h2>New Methodology Post</h2>
+
+    <form onsubmit="saveMethodologyPage(event)">
+      <div>
+        <label>Title</label>
+        <input name="title" required placeholder="Methodology post title">
+      </div>
+
+      <div>
+        <label>Category</label>
+        <input name="category" placeholder="Single-cell, spatial, statistics...">
+      </div>
+
+      <div>
+        <label>Tags</label>
+        <input name="tags" placeholder="Seurat, Scanpy, survival analysis">
+      </div>
+
+      <div>
+        <label>Source / Reference Link</label>
+        <input name="link" placeholder="https://...">
+      </div>
+
+      <div class="full-row">
+        <label>Content</label>
+        <textarea name="body" rows="14" placeholder="Write your methodology content here."></textarea>
+      </div>
+      <button type="submit">Save Methodology Post</button>
+    </form>
+  </section>
+
+  <section class="card write-form">
+    <h2>New Blog Post</h2>
+
+    <form onsubmit="createBlogPost(event)">
+      <div>
+        <label>Title</label>
+        <input name="title" required placeholder="Blog post title">
+      </div>
+
+      <div>
+        <label>Website / Blog Name</label>
+        <input name="websiteName" placeholder="Website or blog name">
+      </div>
+
+      <div>
+        <label>Original Author</label>
+        <input name="author" placeholder="Author name">
+      </div>
+
+      <div>
+        <label>Source URL</label>
+        <input name="sourceUrl" placeholder="https://...">
+      </div>
+
+      <div>
+        <label>Tags</label>
+        <input name="tags" placeholder="pipeline, statistics, single-cell">
+      </div>
+
+      <div class="full-row">
+        <label>Summary</label>
+        <textarea name="summary" placeholder="Write your summary here"></textarea>
+      </div>
+      <button type="submit">Save Blog Post</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Manage Posts</h2>
+
+    <label>Section</label>
+    <select id="sectionFilter">
+      <option value="">All Sections</option>
+      <option value="research">Research Paper</option>
+      <option value="study">Study Materials</option>
+      <option value="community">Community</option>
+      <option value="career">Career</option>
+    </select>
+
+    <label>Category</label>
+    <select id="typeFilter">
+      <option value="">All Categories</option>
+      <option value="paper">Research Paper</option>
+      <option value="specialist_gpt">Specialist GPT</option>
+      <option value="study_post">Study</option>
+      <option value="methodology_page">Methodology</option>
+      <option value="blog">Blog</option>
+      <option value="linkedin">LinkedIn Promotion</option>
+      <option value="job">Job Posting</option>
+      <option value="jobsite">Job Website</option>
+      <option value="collaboration">Collaboration Hub</option>
+      <option value="question">Question / Discussion</option>
+      <option value="conference_notice">Conference Notice</option>
+    </select>
+
+    <label>Status</label>
+    <select id="statusFilter">
+      <option value="">All Status</option>
+      <option value="pending">Pending</option>
+      <option value="published">Published</option>
+    </select>
+
+    <button onclick="loadAdminPosts()">Load Posts</button>
+  </section>
+
+
+  <section id="editPostBox" class="card write-form" style="display:none;">
+    <h2>Edit Post</h2>
+    <p>Change Section and Category, then save. For example, set Section to Research Paper and Category to Research Paper to move a Study post into Research.</p>
+
+    <form onsubmit="saveEditedPost(event)">
+      <input type="hidden" id="editPostId">
+
+      <div>
+        <label>Section</label>
+        <select id="editSection" required onchange="syncEditTypeOptions()">
+          <option value="research">Research Paper</option>
+          <option value="study">Study Materials</option>
+          <option value="community">Community</option>
+          <option value="career">Career</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Category / Type</label>
+        <select id="editType" required>
+          <option value="paper">Research Paper</option>
+          <option value="specialist_gpt">Specialist GPT</option>
+          <option value="study_post">Study</option>
+          <option value="methodology_page">Methodology</option>
+          <option value="blog">Blog</option>
+          <option value="linkedin">LinkedIn Promotion</option>
+          <option value="job">Job Posting</option>
+          <option value="jobsite">Job Website</option>
+          <option value="collaboration">Collaboration Hub</option>
+          <option value="question">Question / Discussion</option>
+          <option value="conference_notice">Conference Notice</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Status</label>
+        <select id="editStatus" required>
+          <option value="published">Published</option>
+          <option value="pending">Pending</option>
+        </select>
+      </div>
+
+      <div class="full-row">
+        <label>Title</label>
+        <input id="editTitle" required>
+      </div>
+
+      <div class="full-row">
+        <label>Link</label>
+        <input id="editLink" placeholder="https://...">
+      </div>
+
+      <div class="full-row">
+        <label>Body / JSON Body</label>
+        <textarea id="editBody" rows="14" placeholder="Post body or JSON body"></textarea>
+      </div>
+
+      <button type="submit">Save Changes</button>
+      <button type="button" onclick="cancelEditPost()">Cancel</button>
+    </form>
+  </section>
+
+  <h2>Posts</h2>
+  <div id="adminPostList"></div>
   </div>
+</main>
 
-  <div>
-    <label>Article 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+const ADMIN_KEY_STORAGE = "paperTalkAdminKey";
+const ADMIN_KEY_EXPIRES = "paperTalkAdminKeyExpires";
+const ONE_HOUR = 60 * 60 * 1000;
+let adminLoadedPosts = [];
+let storedResearchFullTextFiles = [];
+
+function updateAdminContentVisibility() {
+  const content = document.getElementById("adminContent");
+  if (!content) return;
+
+  const key = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
+  const expires = Number(localStorage.getItem(ADMIN_KEY_EXPIRES) || 0);
+
+  content.style.display = key && Date.now() <= expires ? "block" : "none";
+}
+
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function parseJsonBody(body) {
+  try {
+    return JSON.parse(body || "{}");
+  } catch {
+    return {};
+  }
+}
+
+async function checkAdminKeyWithServer(key) {
+  try {
+    const res = await fetch("/api/admin/check", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      },
+      cache: "no-store"
+    });
+
+    const data = await res.json().catch(() => ({}));
+    return Boolean(res.ok && data.ok && data.authenticated);
+  } catch {
+    return false;
+  }
+}
+
+async function saveAdminKey() {
+  const key = document.getElementById("globalAdminKey").value.trim();
+
+  if (!key) {
+    alert("Please enter admin key.");
+    return;
+  }
+
+  const status = document.getElementById("adminKeyStatus");
+  if (status) status.textContent = "Checking admin key...";
+
+  const valid = await checkAdminKeyWithServer(key);
+
+  if (!valid) {
+    localStorage.removeItem(ADMIN_KEY_STORAGE);
+    localStorage.removeItem(ADMIN_KEY_EXPIRES);
+    document.getElementById("globalAdminKey").value = "";
+    updateAdminKeyStatus();
+    updateAdminContentVisibility();
+    alert("Invalid admin key.");
+    return;
+  }
+
+  localStorage.setItem(ADMIN_KEY_STORAGE, key);
+  localStorage.setItem(ADMIN_KEY_EXPIRES, String(Date.now() + ONE_HOUR));
+
+  updateAdminKeyStatus();
+  updateAdminContentVisibility();
+  setTimeout(refreshUserStats, 100);
+  alert("Admin key saved for 1 hour.");
+}
+
+function clearAdminKey() {
+  localStorage.removeItem(ADMIN_KEY_STORAGE);
+  localStorage.removeItem(ADMIN_KEY_EXPIRES);
+  document.getElementById("globalAdminKey").value = "";
+
+  const userCountBox = document.getElementById("userCountBox");
+  const activeUserBox = document.getElementById("activeUserBox");
+  const activeUserList = document.getElementById("activeUserList");
+
+  if (userCountBox) userCountBox.textContent = "Save your admin key to view the current user count.";
+  if (activeUserBox) activeUserBox.textContent = "Save your admin key to view active users.";
+  if (activeUserList) activeUserList.innerHTML = "";
+
+  updateAdminKeyStatus();
+  updateAdminContentVisibility();
+}
+
+function getAdminKey() {
+  const key = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
+  const expires = Number(localStorage.getItem(ADMIN_KEY_EXPIRES) || 0);
+
+  if (!key || Date.now() > expires) {
+    clearAdminKey();
+    return "";
+  }
+
+  return key;
+}
+
+function requireAdminKey() {
+  const key = getAdminKey();
+
+  if (!key) {
+    alert("Please save your admin key first.");
+    return "";
+  }
+
+  return key;
+}
+
+function updateAdminKeyStatus() {
+  const status = document.getElementById("adminKeyStatus");
+  const key = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
+  const expires = Number(localStorage.getItem(ADMIN_KEY_EXPIRES) || 0);
+
+  if (!key || Date.now() > expires) {
+    status.textContent = "Admin key is not saved.";
+    updateAdminContentVisibility();
+    return;
+  }
+
+  const minutesLeft = Math.max(Math.ceil((expires - Date.now()) / 60000), 0);
+  status.textContent = `Admin key saved. Expires in about ${minutesLeft} minutes.`;
+  updateAdminContentVisibility();
+}
+
+
+let paperTalkReindexRunning = false;
+
+function setReindexStatusText(message) {
+  const status = document.getElementById("reindexStatus");
+  if (status) status.textContent = message;
+}
+
+async function reindexResearchPapers() {
+  if (paperTalkReindexRunning) {
+    alert("Reindex is already running. Please wait.");
+    return;
+  }
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  paperTalkReindexRunning = true;
+
+  let totalResearch = 0;
+  let totalLegacy = 0;
+  let totalFailed = 0;
+  let remaining = null;
+  let round = 0;
+
+  setReindexStatusText("Reindexing started... Please keep this page open.");
+
+  try {
+    while (true) {
+      round += 1;
+
+      const res = await fetch("/api/admin/research/reindex?limit=50", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Key": key
+        }
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || data.message || "Reindex failed.");
+      }
+
+      totalResearch += Number(data.indexed || 0);
+      totalLegacy += Number(data.legacyIndexed || 0);
+      totalFailed += Number(data.failed || 0);
+      remaining = Number(data.remaining || 0);
+
+      setReindexStatusText(
+        `Reindexing... round ${round} | Research papers: ${totalResearch} | LinkedIn/BibTeX rows: ${totalLegacy} | Failed: ${totalFailed} | Remaining: ${remaining}`
+      );
+
+      if (remaining <= 0) break;
+
+      await new Promise(resolve => setTimeout(resolve, 700));
+    }
+
+    const doneMessage =
+      `Reindex complete. Research papers: ${totalResearch}, LinkedIn/BibTeX rows: ${totalLegacy}, Failed: ${totalFailed}.`;
+
+    setReindexStatusText(doneMessage);
+    alert(doneMessage);
+  } catch (error) {
+    const errorMessage = `Reindex stopped: ${error?.message || error}`;
+    setReindexStatusText(errorMessage);
+    alert(errorMessage);
+  } finally {
+    paperTalkReindexRunning = false;
+  }
+}
+
+async function loadUserCount() {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const box = document.getElementById("userCountBox");
+  box.textContent = "Loading current user count...";
+
+  const res = await fetch("/api/admin/users/count", {
+    method: "GET",
+    headers: {
+      "X-Admin-Key": key
+    }
+  });
+
+  const data = await res.json();
+
+  if (!res.ok || !data.ok) {
+    box.textContent = data.error || "Failed to load user count.";
+    return;
+  }
+
+  box.textContent = `Total registered users: ${data.total}`;
+}
+
+async function loadActiveUsers() {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const box = document.getElementById("activeUserBox");
+  const list = document.getElementById("activeUserList");
+
+  if (box) box.textContent = "Loading active users...";
+  if (list) list.innerHTML = "";
+
+  const res = await fetch("/api/admin/users/active", {
+    method: "GET",
+    headers: {
+      "X-Admin-Key": key
+    }
+  });
+
+  const data = await res.json();
+
+  if (!res.ok || !data.ok) {
+    if (box) box.textContent = data.error || "Failed to load active users.";
+    return;
+  }
+
+  if (box) {
+    box.textContent =
+      `Currently active visitors: ${data.totalActive} ` +
+      `(signed-in users: ${data.signedInActive}, guests: ${data.guestActive})`;
+  }
+
+  if (!list) return;
+
+  if (!data.users || data.users.length === 0) {
+    list.innerHTML = `<p>No signed-in users active in the last 5 minutes.</p>`;
+    return;
+  }
+
+  list.innerHTML = data.users.map(user => `
+    <article class="post-card">
+      <p><strong>${escapeHtml(user.name || "Signed-in user")}</strong></p>
+      <p>${escapeHtml(user.email || "")}</p>
+      <p class="post-meta">Last seen: ${escapeHtml(user.last_seen || "")}</p>
+    </article>
+  `).join("");
+}
+
+async function refreshUserStats() {
+  await loadUserCount();
+  await loadActiveUsers();
+}
+
+async function createResearchPaper(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const formEl = e.target;
+  const fileInput = document.getElementById("newResearchFullTextFiles");
+  const status = document.getElementById("newResearchFullTextStatus");
+  const resultList = document.getElementById("newResearchFullTextResultList");
+  const fullTextFiles = Array.from(fileInput?.files || []);
+
+  const form = new FormData(formEl);
+  form.delete("newResearchFullTextFiles");
+  const data = Object.fromEntries(form.entries());
+
+  if (status) status.textContent = "Saving research paper...";
+  if (resultList) resultList.innerHTML = "";
+
+  const res = await fetch("/api/admin/research/create", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify(data)
+  });
+
+  const result = await parseApiJsonOrText(res);
+
+  if (!res.ok || !result.ok) {
+    const message = result.error || result.message || "Save failed";
+    if (status) status.textContent = message;
+    alert(message);
+    return;
+  }
+
+  if (!fullTextFiles.length) {
+    if (status) status.textContent = "Research paper saved.";
+    alert("Research paper saved.");
+    formEl.reset();
+    loadAdminPosts();
+    return;
+  }
+
+  const uploadResults = await importNewResearchPaperFullTextFiles({
+    key,
+    title: data.title || "",
+    sourceUrl: data.articleLink || "",
+    pdfLink: data.pdfLink || "",
+    files: fullTextFiles,
+    status,
+    resultList
+  });
+
+  const imported = uploadResults.filter(r => r.status === "imported").length;
+  const skipped = uploadResults.filter(r => r.status === "skipped").length;
+  const failed = uploadResults.filter(r => r.status === "failed").length;
+
+  if (status) {
+    status.textContent = `Research paper saved. Full-text import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
+  }
+
+  alert(`Research paper saved.
+Full-text imported: ${imported}
+Skipped duplicates: ${skipped}
+Failed: ${failed}`);
+  formEl.reset();
+  loadAdminPosts();
+}
+
+async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfLink, files, status, resultList }) {
+  const seenHashes = new Map();
+  const results = [];
+
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const fileName = file.name || `research-full-text-${index + 1}`;
+    const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
+
+    try {
+      if (status) status.textContent = `Reading full text ${index + 1}/${files.length}: ${fileName}`;
+
+      const extractedText = isPdf
+        ? await extractPdfTextFromFile(file)
+        : await file.text();
+
+      const cleanText = String(extractedText || "").trim();
+
+      if (!cleanText || cleanText.length < 20) {
+        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version. Extracted text was under 20 characters." });
+        continue;
+      }
+
+      const uploadText = prepareFullTextForUpload(cleanText);
+      const textHash = await sha256Text(uploadText.replace(/\s+/g, " "));
+
+      if (seenHashes.has(textHash)) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Duplicate in this batch. Same as: ${seenHashes.get(textHash)}`
+        });
+        continue;
+      }
+
+      seenHashes.set(textHash, fileName);
+
+      if (status) status.textContent = `Uploading full text ${index + 1}/${files.length}: ${fileName}`;
+
+      const result = await uploadResearchFullTextPayloadWithRetries({
+        key,
+        payload: {
+          title,
+          sourceUrl,
+          pdfLink,
+          fileName,
+          sourceType: isPdf ? "pdf" : "text",
+          text: uploadText
+        }
+      });
+
+      if (!result._httpOk || !result.ok) {
+        results.push({
+          fileName,
+          status: "failed",
+          message: result.error || result.message || "Research full text import failed."
+        });
+        continue;
+      }
+
+      if (result.duplicate) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Already imported: ${result.duplicateTitle || result.title || "existing paper"}`
+        });
+        continue;
+      }
+
+      results.push({
+        fileName,
+        status: "imported",
+        message: `${result.title || title || "paper"} (${result.fullTextCharacters || 0} characters, ${result.chunks || 0} chunks)`
+      });
+    } catch (error) {
+      results.push({
+        fileName,
+        status: "failed",
+        message: error?.message || String(error)
+      });
+    }
+
+    if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
+    await new Promise(resolve => setTimeout(resolve, 3500));
+  }
+
+  if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
+  return results;
+}
+
+async function importLinkedInCsvFile(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const fileInput = document.getElementById("linkedinCsvFile");
+  const file = fileInput.files[0];
+
+  if (!file) {
+    alert("Please select a CSV or BibTeX file.");
+    return;
+  }
+
+  const fileText = await file.text();
+
+  if (!fileText.trim()) {
+    alert("Selected file is empty.");
+    return;
+  }
+
+  const isBibtex =
+    /\.bib$/i.test(file.name || "") ||
+    /@(?:article|book|inproceedings|proceedings|misc|preprint|dataset|phdthesis|mastersthesis)\s*\{/i.test(fileText);
+
+  const status = document.getElementById("reindexStatus");
+  if (status) {
+    status.textContent = isBibtex
+      ? "Importing BibTeX file... Please wait."
+      : "Importing LinkedIn CSV file... Please wait.";
+  }
+
+  const res = await fetch("/api/admin/research/import-linkedin-csv", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({
+      csvText: fileText,
+      bibText: isBibtex ? fileText : "",
+      fileName: file.name || "",
+      sourceType: isBibtex ? "bibtex" : "linkedin_csv"
+    })
+  });
+
+  let result = {};
+  try {
+    result = await res.json();
+  } catch {
+    alert("Import failed: server returned a non-JSON response.");
+    return;
+  }
+
+  if (!res.ok || !result.ok) {
+    const message = result.error || result.message || "CSV / BibTeX import failed.";
+    if (status) status.textContent = message;
+    alert(message);
+    return;
+  }
+
+  const sourceType = result.sourceType || (isBibtex ? "bibtex" : "linkedin_csv");
+  const doneMessage =
+    `Import complete.\nType: ${sourceType}\nImported: ${result.imported || 0}\nSkipped: ${result.skipped || 0}`;
+
+  if (status) {
+    status.textContent =
+      `Import complete. Type: ${sourceType}, Imported: ${result.imported || 0}, Skipped: ${result.skipped || 0}. Now click Reindex Research Papers.`;
+  }
+
+  alert(doneMessage);
+  e.target.reset();
+  loadAdminPosts();
+}
+
+
+async function extractPdfTextFromFile(file) {
+  if (!window.pdfjsLib) {
+    throw new Error("PDF reader library did not load. Please refresh the page and try again.");
+  }
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const maxPages = Math.min(pdf.numPages, 500);
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items
+      .map(item => item.str || "")
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (pageText) {
+      pages.push(`Page ${pageNumber}\n${pageText}`);
+    }
+  }
+
+  return pages.join("\n\n");
+}
+
+
+async function sha256Text(value) {
+  const buffer = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(String(value || ""))
+  );
+
+  return Array.from(new Uint8Array(buffer))
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function parseApiJsonOrText(res) {
+  const raw = await res.text();
+  try {
+    return JSON.parse(raw || "{}");
+  } catch {
+    return {
+      ok: false,
+      error: `Server returned non-JSON response. HTTP ${res.status}. ${raw.replace(/\s+/g, " ").slice(0, 300)}`
+    };
+  }
+}
+
+
+async function uploadResearchFullTextPayloadWithRetries({ key, payload }) {
+  const baseText = String(payload.text || "");
+  const title = String(payload.title || payload.fileName || "Uploaded paper").trim();
+  const fallbackText = [
+    "Paper_Talk PDF metadata-only fallback",
+    `Title: ${title}`,
+    payload.sourceUrl ? `Article link: ${payload.sourceUrl}` : "",
+    payload.pdfLink ? `PDF link: ${payload.pdfLink}` : "",
+    payload.fileName ? `File name: ${payload.fileName}` : "",
+    baseText ? `Extracted preview: ${baseText.slice(0, 1200)}` : ""
+  ].filter(Boolean).join("\n");
+
+  const attempts = [
+    { label: "bounded", text: baseText.slice(0, 12000) },
+    { label: "small", text: baseText.slice(0, 4000) },
+    { label: "metadata_only", text: fallbackText.slice(0, 1800) }
+  ];
+
+  let lastResult = { ok: false, error: "Upload did not run." };
+
+  for (const attempt of attempts) {
+    const res = await fetch("/api/admin/research/fulltext/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      },
+      body: JSON.stringify({
+        ...payload,
+        text: attempt.text,
+        importMode: attempt.label
+      })
+    });
+
+    const result = await parseApiJsonOrText(res);
+    result._httpOk = res.ok;
+    result._attempt = attempt.label;
+    lastResult = result;
+
+    if (res.ok && result.ok) return result;
+
+    const msg = String(result.error || result.message || "");
+    const retryable = /non-JSON response|HTTP 500|HTTP 502|HTTP 503|HTTP 504|Worker|timeout/i.test(msg) || [500, 502, 503, 504].includes(res.status);
+    if (!retryable) return result;
+
+    await new Promise(resolve => setTimeout(resolve, 2500));
+  }
+
+  return lastResult;
+}
+
+function titleFromFullTextFileName(fileName) {
+  return String(fileName || "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function prepareFullTextForUpload(text) {
+  // Long-term stable import policy:
+  // Do not send hundreds of thousands of characters to the Worker in one JSON body.
+  // Large JSON bodies were causing Cloudflare HTML 500/503 responses before the Worker
+  // could return a normal JSON error. The Worker stores bounded D1 chunks anyway, so
+  // sending the first 28k characters is enough for title/abstract/introduction/results
+  // level retrieval and keeps batch uploads reliable.
+  return String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim()
+    .slice(0, 12000);
+}
+
+async function importResearchFullTextFile(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const matchInput = document.getElementById("fullTextPaperMatch");
+  const pdfLinkInput = document.getElementById("fullTextPdfLink");
+  const fileInput = document.getElementById("researchFullTextFile");
+  const status = document.getElementById("researchFullTextStatus");
+  const resultList = document.getElementById("researchFullTextResultList");
+
+  const globalMatchValue = (matchInput.value || "").trim();
+  const pdfLink = (pdfLinkInput.value || "").trim();
+  const files = Array.from(fileInput.files || []);
+
+  if (!files.length) {
+    alert("Please select one or more research paper PDF or TXT files.");
+    return;
+  }
+
+  if (files.length > 1 && globalMatchValue && !confirm("You selected multiple files with one shared title/URL match. This will attach every selected PDF to the same matched paper if the Worker finds the same record. Continue?\n\nTip: Leave the match box empty for batch upload so each PDF is matched by its file name.")) {
+    return;
+  }
+
+  if (status) status.textContent = `Starting full-text import for ${files.length} file(s)... Large batches are paced to reduce Worker 500/503 errors.`;
+  if (resultList) resultList.innerHTML = "";
+
+  const seenHashes = new Map();
+  const results = [];
+
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const fileName = file.name || `research-full-text-${index + 1}`;
+    const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
+
+    try {
+      if (status) {
+        status.textContent = `Reading ${index + 1}/${files.length}: ${fileName}`;
+      }
+
+      const extractedText = isPdf
+        ? await extractPdfTextFromFile(file)
+        : await file.text();
+
+      const cleanText = String(extractedText || "").trim();
+
+      if (!cleanText || cleanText.length < 20) {
+        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version. Extracted text was under 20 characters." });
+        continue;
+      }
+
+      const uploadText = prepareFullTextForUpload(cleanText);
+      const textHash = await sha256Text(uploadText.replace(/\s+/g, " "));
+
+      if (seenHashes.has(textHash)) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Duplicate in this batch. Same as: ${seenHashes.get(textHash)}`
+        });
+        continue;
+      }
+
+      seenHashes.set(textHash, fileName);
+
+      const matchValue = globalMatchValue || titleFromFullTextFileName(fileName);
+      const isUrl = /^https?:\/\//i.test(matchValue);
+
+      if (status) {
+        status.textContent = `Uploading ${index + 1}/${files.length}: ${fileName}`;
+      }
+
+      const result = await uploadResearchFullTextPayloadWithRetries({
+        key,
+        payload: {
+          title: isUrl ? "" : matchValue,
+          sourceUrl: isUrl ? matchValue : "",
+          pdfLink,
+          fileName,
+          sourceType: isPdf ? "pdf" : "text",
+          text: uploadText
+        }
+      });
+
+      if (!result._httpOk || !result.ok) {
+        results.push({
+          fileName,
+          status: "failed",
+          message: result.error || result.message || "Research full text import failed."
+        });
+        continue;
+      }
+
+      if (result.duplicate) {
+        results.push({
+          fileName,
+          status: "skipped",
+          message: `Already imported: ${result.duplicateTitle || result.title || "existing paper"}`
+        });
+        continue;
+      }
+
+      results.push({
+        fileName,
+        status: "imported",
+        message: `${result.title || "paper"} (${result.fullTextCharacters || 0} characters, ${result.chunks || 0} chunks)`
+      });
+    } catch (error) {
+      results.push({
+        fileName,
+        status: "failed",
+        message: error?.message || String(error)
+      });
+    }
+
+    if (resultList) {
+      resultList.innerHTML = renderResearchFullTextResults(results);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 3500));
+  }
+
+  const imported = results.filter(r => r.status === "imported").length;
+  const skipped = results.filter(r => r.status === "skipped").length;
+  const failed = results.filter(r => r.status === "failed").length;
+
+  if (status) {
+    status.textContent = `Full-text import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
+  }
+
+  if (resultList) {
+    resultList.innerHTML = renderResearchFullTextResults(results);
+  }
+
+  alert(`Full-text import complete.\nImported: ${imported}\nSkipped duplicates: ${skipped}\nFailed: ${failed}`);
+
+  if (imported > 0) {
+    e.target.reset();
+    await loadStoredFullTextFiles();
+    const storedCard = document.getElementById("storedFullTextCard");
+    if (storedCard) storedCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    loadAdminPosts();
+  }
+}
+
+function renderResearchFullTextResults(results) {
+  if (!results || !results.length) return "";
+
+  return `
+    <div class="upload-result-box">
+      <div class="mini-table-wrap" style="max-height:260px;">
+        <table class="mini-table">
+          <thead>
+            <tr>
+              <th style="width:110px;">Status</th>
+              <th>File</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${results.map(row => {
+              const icon = row.status === "imported" ? "✅" : row.status === "skipped" ? "⏭️" : "❌";
+              return `
+                <tr>
+                  <td>${icon} ${escapeHtml(row.status || "")}</td>
+                  <td class="mini-title">${escapeHtml(row.fileName || "")}</td>
+                  <td class="mini-muted">${escapeHtml(row.message || "")}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+
+function encodeForInline(value) {
+  return encodeURIComponent(String(value || ""));
+}
+
+function decodeFromInline(value) {
+  try {
+    return decodeURIComponent(String(value || ""));
+  } catch {
+    return String(value || "");
+  }
+}
+
+function getFilteredStoredFullTextFiles() {
+  const q = String(document.getElementById("storedFullTextSearch")?.value || "").trim().toLowerCase();
+  if (!q) return storedResearchFullTextFiles;
+
+  return storedResearchFullTextFiles.filter(file => [
+    file.title,
+    file.file_name,
+    file.gpt_key,
+    file.content_hash,
+    file.created_at,
+    file.source_url,
+    file.pdf_link
+  ].filter(Boolean).join(" ").toLowerCase().includes(q));
+}
+
+async function loadStoredFullTextFiles() {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const status = document.getElementById("storedFullTextStatus");
+  const list = document.getElementById("storedFullTextList");
+
+  if (status) status.textContent = "Loading stored full text files...";
+  if (list) list.innerHTML = "";
+
+  const params = new URLSearchParams({ gptKey: "paper_talk", limit: "500" });
+  const res = await fetch("/api/admin/research/fulltext/list?" + params.toString(), {
+    method: "GET",
+    headers: { "X-Admin-Key": key }
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok || !data.ok) {
+    if (status) status.textContent = data.error || data.message || "Failed to load stored full text files.";
+    return;
+  }
+
+  const rows = Array.isArray(data.files) ? data.files : [];
+  storedResearchFullTextFiles = rows.map(file => ({
+    ...file,
+    gpt_key: file.gpt_key || "paper_talk"
+  }));
+
+  renderStoredFullTextFiles();
+}
+
+function renderStoredFullTextFiles() {
+  const status = document.getElementById("storedFullTextStatus");
+  const list = document.getElementById("storedFullTextList");
+  if (!list) return;
+
+  const files = getFilteredStoredFullTextFiles();
+  if (status) status.textContent = `Stored full text files: ${storedResearchFullTextFiles.length}. Showing: ${files.length}.`;
+
+  if (!storedResearchFullTextFiles.length) {
+    list.innerHTML = "<p>No stored full text files found.</p>";
+    return;
+  }
+
+  list.innerHTML = `
+    <div class="mini-table-wrap">
+      <table class="mini-table">
+        <thead>
+          <tr>
+            <th style="width:36px;"><input type="checkbox" id="checkAllStoredFullTextRows" onchange="toggleAllStoredFullTextRows(this.checked)"></th>
+            <th>Title / File</th>
+            <th>GPT DB</th>
+            <th>Chunks</th>
+            <th>Chars</th>
+            <th>Uploaded</th>
+            <th>Links</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${files.map(file => {
+            const globalIndex = storedResearchFullTextFiles.indexOf(file);
+            const postId = encodeForInline(file.post_id || "");
+            const fileName = encodeForInline(file.file_name || "");
+            const contentHash = encodeForInline(file.content_hash || "");
+            const gptKey = encodeForInline(file.gpt_key || "paper_talk");
+            const links = [
+              file.source_url ? `<a href="${escapeHtml(file.source_url)}" target="_blank">Article</a>` : "",
+              file.pdf_link ? `<a href="${escapeHtml(file.pdf_link)}" target="_blank">PDF</a>` : ""
+            ].filter(Boolean).join(" · ") || "-";
+
+            return `
+              <tr>
+                <td><input type="checkbox" class="stored-fulltext-check" value="${globalIndex}"></td>
+                <td>
+                  <div class="mini-title">${escapeHtml(file.title || "Untitled paper")}</div>
+                  <div class="mini-muted">${escapeHtml(file.file_name || "")}</div>
+                </td>
+                <td>${escapeHtml(file.gpt_key || "paper_talk")}</td>
+                <td>${escapeHtml(file.chunks || 0)}</td>
+                <td>${escapeHtml(file.characters || 0)}</td>
+                <td class="mini-muted">${escapeHtml(file.created_at || "")}</td>
+                <td class="mini-muted">${links}</td>
+                <td>
+                  <button class="mini-btn danger-outline" onclick="deleteStoredFullTextFile('${postId}', '${fileName}', '${contentHash}', '${gptKey}')">Delete</button>
+                </td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function toggleAllStoredFullTextRows(checked) {
+  document.querySelectorAll(".stored-fulltext-check").forEach(box => {
+    box.checked = Boolean(checked);
+  });
+}
+
+function getCheckedStoredFullTextFiles() {
+  const checked = Array.from(document.querySelectorAll(".stored-fulltext-check:checked"));
+  const selected = [];
+
+  for (const box of checked) {
+    const index = Number(box.value);
+    if (Number.isInteger(index) && storedResearchFullTextFiles[index]) {
+      selected.push(storedResearchFullTextFiles[index]);
+    }
+  }
+
+  return selected;
+}
+
+async function deleteCheckedStoredFullTextFiles() {
+  const files = getCheckedStoredFullTextFiles();
+  if (!files.length) {
+    alert("Please check one or more stored full text files to delete.");
+    return;
+  }
+
+  if (!confirm(`Delete ${files.length} checked stored full text file(s)?`)) return;
+
+  const status = document.getElementById("storedFullTextStatus");
+  let deleted = 0;
+  let failed = 0;
+
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i];
+    if (status) status.textContent = `Deleting ${i + 1}/${files.length}: ${file.file_name || file.title || "stored file"}`;
+    const ok = await deleteStoredFullTextFileObject(file, false);
+    if (ok) deleted += 1;
+    else failed += 1;
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+
+  if (status) status.textContent = `Delete complete. Deleted: ${deleted}, Failed: ${failed}.`;
+  alert(`Delete complete.\nDeleted: ${deleted}\nFailed: ${failed}`);
+  await loadStoredFullTextFiles();
+}
+
+async function deleteStoredFullTextFile(encodedPostId, encodedFileName, encodedContentHash, encodedGptKey = "") {
+  const file = {
+    post_id: decodeFromInline(encodedPostId),
+    file_name: decodeFromInline(encodedFileName),
+    content_hash: decodeFromInline(encodedContentHash),
+    gpt_key: decodeFromInline(encodedGptKey) || "paper_talk"
+  };
+
+  if (!confirm(`Delete stored full text?\n\n${file.file_name || "(no file name)"}`)) return;
+
+  const ok = await deleteStoredFullTextFileObject(file, true);
+  if (ok) {
+    alert("Stored full text deleted.");
+    await loadStoredFullTextFiles();
+  }
+}
+
+async function deleteStoredFullTextFileObject(file, showAlertOnError = true) {
+  const key = requireAdminKey();
+  if (!key) return false;
+
+  const res = await fetch("/api/admin/research/fulltext/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({
+      postId: file.post_id || "",
+      fileName: file.file_name || "",
+      contentHash: file.content_hash || "",
+      gptKey: file.gpt_key || "paper_talk"
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok || !data.ok) {
+    if (showAlertOnError) alert(data.error || data.message || "Delete failed.");
+    return false;
+  }
+
+  return true;
+}
+
+
+async function importThinkingLogicFile(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const fileInput = document.getElementById("thinkingLogicFile");
+  const titleInput = document.getElementById("thinkingLogicTitle");
+  const status = document.getElementById("thinkingLogicStatus");
+  const file = fileInput.files[0];
+
+  if (!file) {
+    alert("Please select a PDF or TXT file for thinking logic.");
+    return;
+  }
+
+  const fileName = file.name || "thinking-logic-file";
+  const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
+
+  try {
+    if (status) {
+      status.textContent = isPdf
+        ? "Reading PDF text in your browser... This can take a little while for large books."
+        : "Reading text file...";
+    }
+
+    const extractedText = isPdf
+      ? await extractPdfTextFromFile(file)
+      : await file.text();
+
+    if (!String(extractedText || "").trim() || String(extractedText || "").trim().length < 200) {
+      alert("I could not extract enough text from this file. If the PDF is scanned images, please upload a text-based PDF or TXT version.");
+      if (status) status.textContent = "Import stopped: not enough readable text was extracted.";
+      return;
+    }
+
+    if (status) {
+      status.textContent = "Uploading thinking logic to Paper_Talk GPT knowledge...";
+    }
+
+    const res = await fetch("/api/admin/thinking-logic/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      },
+      body: JSON.stringify({
+        title: titleInput.value.trim() || fileName.replace(/\.[^.]+$/, ""),
+        fileName,
+        sourceType: isPdf ? "pdf" : "text",
+        text: extractedText
+      })
+    });
+
+    const result = await parseApiJsonOrText(res);
+
+    if (!res.ok || !result.ok) {
+      const message = result.error || result.message || "Thinking logic import failed.";
+      if (status) status.textContent = message;
+      alert(message);
+      return;
+    }
+
+    const doneMessage = `Thinking logic imported. Characters learned: ${result.characters || 0}.`;
+    if (status) status.textContent = doneMessage;
+    alert(doneMessage);
+    e.target.reset();
+  } catch (error) {
+    const message = `Thinking logic import failed: ${error?.message || error}`;
+    if (status) status.textContent = message;
+    alert(message);
+  }
+}
+
+
+async function deleteThinkingLogic() {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  if (!confirm("Delete all uploaded Scientific Thinking Logic PDF/TXT files from GPT knowledge?")) {
+    return;
+  }
+
+  const status = document.getElementById("thinkingLogicStatus");
+  if (status) status.textContent = "Deleting uploaded thinking logic files...";
+
+  try {
+    const res = await fetch("/api/admin/thinking-logic/delete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": key
+      },
+      body: JSON.stringify({ deleteAll: true })
+    });
+
+    const result = await parseApiJsonOrText(res);
+
+    if (!res.ok || !result.ok) {
+      const message = result.error || result.message || "Delete thinking logic failed.";
+      if (status) status.textContent = message;
+      alert(message);
+      return;
+    }
+
+    const message = result.message || `Deleted ${result.deleted || 0} thinking logic file(s).`;
+    if (status) status.textContent = message;
+    alert(message);
+  } catch (error) {
+    const message = `Delete thinking logic failed: ${error?.message || error}`;
+    if (status) status.textContent = message;
+    alert(message);
+  }
+}
+
+async function createStudyPost(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const form = new FormData(e.target);
+  const data = Object.fromEntries(form.entries());
+
+  const res = await fetch("/api/admin/study/create", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify(data)
+  });
+
+  const result = await res.json();
+
+  if (!result.ok) {
+    alert(result.error || "Save failed");
+    return;
+  }
+
+  alert("Study post saved.");
+  e.target.reset();
+  loadAdminPosts();
+}
+
+async function saveMethodologyPage(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const form = new FormData(e.target);
+  const data = Object.fromEntries(form.entries());
+
+  const res = await fetch("/api/admin/methodology/save", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify(data)
+  });
+
+  const result = await res.json();
+
+  if (!result.ok) {
+    alert(result.error || "Save failed");
+    return;
+  }
+
+  alert("Methodology post saved.");
+  e.target.reset();
+  loadAdminPosts();
+}
+
+async function createBlogPost(e) {
+  e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const form = new FormData(e.target);
+  const data = Object.fromEntries(form.entries());
+
+  const res = await fetch("/api/admin/blog/create", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify(data)
+  });
+
+  const result = await res.json();
+
+  if (!result.ok) {
+    alert(result.error || "Save failed");
+    return;
+  }
+
+  alert("Blog post saved.");
+  e.target.reset();
+  loadAdminPosts();
+}
+
+async function loadAdminPosts() {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const section = document.getElementById("sectionFilter").value;
+  const type = document.getElementById("typeFilter").value;
+  const status = document.getElementById("statusFilter").value;
+
+  const params = new URLSearchParams({ key });
+
+  if (section) params.set("section", section);
+  if (type) params.set("type", type);
+  if (status) params.set("status", status);
+
+  const res = await fetch("/api/admin/posts?" + params.toString());
+  const data = await res.json();
+
+  const box = document.getElementById("adminPostList");
+
+  if (!data.ok) {
+    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed")}</p>`;
+    return;
+  }
+
+  adminLoadedPosts = data.posts || [];
+
+  if (!data.posts.length) {
+    box.innerHTML = "<p>No posts found.</p>";
+    return;
+  }
+
+  box.innerHTML = data.posts.map(post => {
+    const isJsonType =
+      post.type === "paper" ||
+      post.type === "blog" ||
+      post.type === "study_post" ||
+      post.type === "methodology_page";
+
+    const parsed = isJsonType ? parseJsonBody(post.body) : null;
+
+    return `
+      <article class="post-card">
+        <div class="post-card-header">
+          <div>
+            <h3>${escapeHtml(post.title)}</h3>
+            <p class="post-meta">
+              ${escapeHtml(post.section)} · ${escapeHtml(post.type)} · ${escapeHtml(post.status)}
+            </p>
+          </div>
+          <span class="post-badge">${escapeHtml(post.status)}</span>
+        </div>
+
+        ${
+          post.type === "paper" && parsed
+            ? `
+              <p><strong>Year:</strong> ${escapeHtml(parsed.year)}</p>
+              <p><strong>Authors:</strong> ${escapeHtml(parsed.authors)}</p>
+              <p><strong>Journal:</strong> ${escapeHtml(parsed.journal)}</p>
+              <p class="post-body">${escapeHtml(parsed.abstract)}</p>
+            `
+            : ""
+        }
+
+        ${
+          (post.type === "study_post" || post.type === "methodology_page") && parsed
+            ? `
+              <p><strong>Category:</strong> ${escapeHtml(parsed.category)}</p>
+              <p><strong>Tags:</strong> ${escapeHtml(parsed.tags)}</p>
+              <p class="post-body">${escapeHtml(parsed.body).replaceAll("\\n", "<br>")}</p>
+            `
+            : ""
+        }
+
+        ${
+          post.type === "blog" && parsed
+            ? `
+              <p><strong>Website:</strong> ${escapeHtml(parsed.websiteName)}</p>
+              <p><strong>Original Author:</strong> ${escapeHtml(parsed.author)}</p>
+              <p><strong>Tags:</strong> ${escapeHtml(parsed.tags)}</p>
+              <p class="post-body">${escapeHtml(parsed.summary)}</p>
+            `
+            : ""
+        }
+
+        ${
+          !isJsonType
+            ? `<p class="post-body">${escapeHtml(post.body)}</p>`
+            : ""
+        }
+
+        ${
+          post.link
+            ? `<p><a class="btn" href="${escapeHtml(post.link)}" target="_blank">Open Link</a></p>`
+            : ""
+        }
+
+        ${
+          parsed && parsed.link
+            ? `<p><a class="btn" href="${escapeHtml(parsed.link)}" target="_blank">Open Link</a></p>`
+            : ""
+        }
+
+        ${
+          parsed && parsed.sourceUrl
+            ? `<p><a class="btn" href="${escapeHtml(parsed.sourceUrl)}" target="_blank">Open Source</a></p>`
+            : ""
+        }
+
+        ${
+          parsed && parsed.pdfLink
+            ? `<p><a class="btn" href="${escapeHtml(parsed.pdfLink)}" target="_blank">Open PDF/File</a></p>`
+            : ""
+        }
+
+        <p><strong>Author:</strong> ${escapeHtml(post.author_name)}</p>
+        <p><strong>Email:</strong> ${escapeHtml(post.author_email)}</p>
+
+        <div class="post-actions">
+          ${post.status === "pending" ? `<button onclick="approvePost('${post.id}')">Approve</button>` : ""}
+          <button onclick="editPost('${post.id}')">Edit</button>
+          <button class="danger-btn" onclick="deletePost('${post.id}')">Delete</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+
+function syncEditTypeOptions() {
+  const section = document.getElementById("editSection").value;
+  const type = document.getElementById("editType");
+
+  const allowed = {
+    research: ["paper", "specialist_gpt"],
+    study: ["study_post", "methodology_page", "blog"],
+    community: ["question", "collaboration"],
+    career: ["linkedin", "job", "jobsite", "conference_notice"]
+  };
+
+  const values = allowed[section] || [];
+
+  Array.from(type.options).forEach(option => {
+    option.hidden = values.length ? !values.includes(option.value) : false;
+  });
+
+  if (values.length && !values.includes(type.value)) {
+    type.value = values[0];
+  }
+}
+
+function editPost(id) {
+  const post = adminLoadedPosts.find(item => item.id === id);
+
+  if (!post) {
+    alert("Post not found. Please reload posts.");
+    return;
+  }
+
+  document.getElementById("editPostId").value = post.id;
+  document.getElementById("editSection").value = post.section || "study";
+  document.getElementById("editType").value = post.type || "blog";
+  document.getElementById("editStatus").value = post.status || "published";
+  document.getElementById("editTitle").value = post.title || "";
+  document.getElementById("editLink").value = post.link || "";
+  document.getElementById("editBody").value = post.body || "";
+
+  syncEditTypeOptions();
+
+  document.getElementById("editPostBox").style.display = "block";
+  document.getElementById("editPostBox").scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+}
+
+function cancelEditPost() {
+  document.getElementById("editPostBox").style.display = "none";
+}
+
+async function saveEditedPost(e) {
+  if (e) e.preventDefault();
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const id = document.getElementById("editPostId").value;
+  const section = document.getElementById("editSection").value;
+  const type = document.getElementById("editType").value;
+  const status = document.getElementById("editStatus").value;
+  const title = document.getElementById("editTitle").value.trim();
+  const link = document.getElementById("editLink").value.trim();
+  let body = document.getElementById("editBody").value;
+
+  if (section === "research" && type === "paper") {
+    let parsed = {};
+
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      parsed = { abstract: body || "" };
+    }
+
+    body = JSON.stringify({
+      year: parsed.year || "",
+      authors: parsed.authors || parsed.author || "",
+      journal: parsed.journal || parsed.websiteName || "",
+      abstract: parsed.abstract || parsed.summary || parsed.body || "",
+      category: parsed.category || "Cancer biology",
+      pdfLink: parsed.pdfLink || "",
+      tags: parsed.tags || "",
+      articleLink: parsed.articleLink || parsed.sourceUrl || parsed.link || link || ""
+    }, null, 2);
+  }
+
+  if (!id || !title) {
+    alert("Post ID and title are required.");
+    return;
+  }
+
+  const res = await fetch("/api/admin/post/update", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({
+      id,
+      section,
+      type,
+      status,
+      title,
+      link,
+      body
+    })
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Update failed. Please make sure worker.js has /api/admin/post/update.");
+    return;
+  }
+
+  alert("Post updated.");
+  document.getElementById("editPostBox").style.display = "none";
+  await loadAdminPosts();
+}
+
+
+async function approvePost(id) {
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const res = await fetch("/api/admin/approve", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({ id })
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Approve failed");
+    return;
+  }
+
+  loadAdminPosts();
+}
+
+async function deletePost(id) {
+  if (!confirm("Delete this post?")) return;
+
+  const key = requireAdminKey();
+  if (!key) return;
+
+  const res = await fetch("/api/admin/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": key
+    },
+    body: JSON.stringify({ id })
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert(data.error || "Delete failed");
+    return;
+  }
+
+  loadAdminPosts();
+}
+
+
+
+
+async function sendActiveHeartbeat() {
+  try {
+    await fetch("/api/public/active/heartbeat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        adminPage: true,
+        forceGuest: true
+      })
+    });
+  } catch {
+    // Ignore heartbeat errors.
+  }
+}
+
+sendActiveHeartbeat();
+setInterval(sendActiveHeartbeat, 60000);
+
+window.addEventListener("load", async () => {
+  const key = getAdminKey();
+
+  if (key) {
+    document.getElementById("globalAdminKey").value = key;
+  }
+
+  updateAdminKeyStatus();
+
+  if (key) {
+    const valid = await checkAdminKeyWithServer(key);
+
+    if (!valid) {
+      clearAdminKey();
+      alert("Saved admin key is invalid or expired. Please enter the correct admin key again.");
+      return;
+    }
+
+    updateAdminContentVisibility();
+    setTimeout(refreshUserStats, 100);
+  }
+});
+</script>
+</body>
+</html>
