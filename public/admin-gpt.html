@@ -24,7 +24,7 @@
 
 <main class="container">
   <h1>GPT Usage</h1>
-  <p>View all Paper_Talk Vision GPT chats created by signed-in users.</p>
+  <p>View all Paper_Talk Vision GPT and Specialist GPT chats created by signed-in users.</p>
 
   <section class="card">
     <h2>Admin Access</h2>
@@ -41,6 +41,19 @@
   <div id="adminGptContent" style="display:none;">
     <section class="card">
       <h2>GPT Chat Threads</h2>
+
+      <label>Filter by GPT</label>
+      <select id="gptFilter" onchange="renderThreads()">
+        <option value="">All GPTs</option>
+        <option value="paper_talk">Paper_Talk Vision GPT</option>
+        <option value="neuroscience">Neuroscience GPT</option>
+        <option value="mitochondria">Mitochondria GPT</option>
+        <option value="single_cell">Single-cell GPT</option>
+        <option value="spatial_biology">Spatial Biology GPT</option>
+        <option value="cancer_genomics">Cancer Genomics GPT</option>
+      </select>
+
+      <br><br>
       <button onclick="loadThreads()">Load GPT Chats</button>
       <div id="threadList"></div>
     </section>
@@ -57,6 +70,8 @@ const KEY_NAME = "paperTalkAdminKey";
 const KEY_EXPIRES = "paperTalkAdminKeyExpires";
 const ONE_HOUR = 60 * 60 * 1000;
 
+let allThreads = [];
+
 function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -64,6 +79,21 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function getGptLabel(gptKey) {
+  const key = String(gptKey || "paper_talk").trim();
+
+  const labels = {
+    paper_talk: "Paper_Talk Vision GPT",
+    neuroscience: "Neuroscience GPT",
+    mitochondria: "Mitochondria GPT",
+    single_cell: "Single-cell GPT",
+    spatial_biology: "Spatial Biology GPT",
+    cancer_genomics: "Cancer Genomics GPT"
+  };
+
+  return labels[key] || key || "Paper_Talk Vision GPT";
 }
 
 function updateAdminVisibility() {
@@ -103,6 +133,7 @@ function clearKey() {
   document.getElementById("adminKey").value = "";
   document.getElementById("threadList").innerHTML = "";
   document.getElementById("messageList").innerHTML = "";
+  allThreads = [];
   updateAdminVisibility();
 }
 
@@ -118,6 +149,18 @@ function getKey() {
   return key;
 }
 
+async function readJsonSafely(response) {
+  const rawText = await response.text();
+
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    throw new Error(
+      `API returned non-JSON response. HTTP ${response.status}. Preview: ${rawText.slice(0, 300)}`
+    );
+  }
+}
+
 async function loadThreads() {
   const key = getKey();
 
@@ -126,31 +169,62 @@ async function loadThreads() {
     return;
   }
 
-  const res = await fetch("/api/admin/gpt/threads?key=" + encodeURIComponent(key));
-  const data = await res.json();
-
   const box = document.getElementById("threadList");
+  box.innerHTML = "<p>Loading GPT chats...</p>";
 
-  if (!data.ok) {
-    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load GPT chats.")}</p>`;
+  try {
+    const res = await fetch("/api/admin/gpt/threads?key=" + encodeURIComponent(key), {
+      cache: "no-store",
+      credentials: "include"
+    });
+
+    const data = await readJsonSafely(res);
+
+    if (!data.ok) {
+      box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load GPT chats.")}</p>`;
+      return;
+    }
+
+    allThreads = Array.isArray(data.threads) ? data.threads : [];
+    renderThreads();
+  } catch (error) {
+    box.innerHTML = `<p class="error">${escapeHtml(error.message || "Failed to load GPT chats.")}</p>`;
+  }
+}
+
+function renderThreads() {
+  const box = document.getElementById("threadList");
+  const filter = document.getElementById("gptFilter").value;
+
+  let threads = allThreads;
+
+  if (filter) {
+    threads = threads.filter(t => String(t.gpt_key || "paper_talk") === filter);
+  }
+
+  if (!threads.length) {
+    box.innerHTML = filter
+      ? `<p>No chats found for ${escapeHtml(getGptLabel(filter))}.</p>`
+      : "<p>No GPT chats yet.</p>";
     return;
   }
 
-  if (!data.threads.length) {
-    box.innerHTML = "<p>No GPT chats yet.</p>";
-    return;
-  }
+  box.innerHTML = threads.map(t => {
+    const gptKey = t.gpt_key || "paper_talk";
+    const gptLabel = getGptLabel(gptKey);
 
-  box.innerHTML = data.threads.map(t => `
-    <article class="post-card">
-      <h3>${escapeHtml(t.title || "New chat")}</h3>
-      <p><strong>User:</strong> ${escapeHtml(t.user_name || "")}</p>
-      <p><strong>Email:</strong> ${escapeHtml(t.user_email || "")}</p>
-      <p><strong>Created:</strong> ${escapeHtml(t.created_at)}</p>
-      <p><strong>Updated:</strong> ${escapeHtml(t.updated_at)}</p>
-      <button onclick="loadMessages('${escapeHtml(t.id)}')">View Messages</button>
-    </article>
-  `).join("");
+    return `
+      <article class="post-card">
+        <h3>${escapeHtml(t.title || "New chat")}</h3>
+        <p><strong>GPT:</strong> ${escapeHtml(gptLabel)} <span style="color:#64748b;">(${escapeHtml(gptKey)})</span></p>
+        <p><strong>User:</strong> ${escapeHtml(t.user_name || "")}</p>
+        <p><strong>Email:</strong> ${escapeHtml(t.user_email || "")}</p>
+        <p><strong>Created:</strong> ${escapeHtml(t.created_at)}</p>
+        <p><strong>Updated:</strong> ${escapeHtml(t.updated_at)}</p>
+        <button onclick="loadMessages('${escapeHtml(t.id)}')">View Messages</button>
+      </article>
+    `;
+  }).join("");
 }
 
 async function loadMessages(threadId) {
@@ -166,28 +240,37 @@ async function loadMessages(threadId) {
     threadId
   });
 
-  const res = await fetch("/api/admin/gpt/messages?" + params.toString());
-  const data = await res.json();
-
   const box = document.getElementById("messageList");
+  box.innerHTML = "<p>Loading messages...</p>";
 
-  if (!data.ok) {
-    box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load messages.")}</p>`;
-    return;
+  try {
+    const res = await fetch("/api/admin/gpt/messages?" + params.toString(), {
+      cache: "no-store",
+      credentials: "include"
+    });
+
+    const data = await readJsonSafely(res);
+
+    if (!data.ok) {
+      box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load messages.")}</p>`;
+      return;
+    }
+
+    if (!data.messages || !data.messages.length) {
+      box.innerHTML = "<p>No messages found.</p>";
+      return;
+    }
+
+    box.innerHTML = data.messages.map(m => `
+      <article class="post-card">
+        <p><strong>${escapeHtml(m.role)}</strong></p>
+        <p class="post-body">${escapeHtml(m.content).replaceAll("\\n", "<br>")}</p>
+        <p class="post-meta">${escapeHtml(m.created_at)}</p>
+      </article>
+    `).join("");
+  } catch (error) {
+    box.innerHTML = `<p class="error">${escapeHtml(error.message || "Failed to load messages.")}</p>`;
   }
-
-  if (!data.messages.length) {
-    box.innerHTML = "<p>No messages found.</p>";
-    return;
-  }
-
-  box.innerHTML = data.messages.map(m => `
-    <article class="post-card">
-      <p><strong>${escapeHtml(m.role)}</strong></p>
-      <p class="post-body">${escapeHtml(m.content).replaceAll("\\n", "<br>")}</p>
-      <p class="post-meta">${escapeHtml(m.created_at)}</p>
-    </article>
-  `).join("");
 }
 
 window.addEventListener("load", () => {
@@ -203,3 +286,35 @@ window.addEventListener("load", () => {
 </script>
 </body>
 </html>
+
+
+
+IMPORTANT WORKER PATCH REQUIRED
+
+For this admin-gpt.html to display Specialist GPT names, src/worker.js must return gpt_key from adminListGptThreads().
+
+In src/worker.js, find:
+
+async function adminListGptThreads(request, env) {
+  ...
+}
+
+Replace only the SELECT query inside that function with this version:
+
+const threads = await env.DB.prepare(`
+  SELECT
+    gpt_threads.id,
+    gpt_threads.user_id,
+    gpt_threads.title,
+    COALESCE(gpt_threads.gpt_key, 'paper_talk') AS gpt_key,
+    gpt_threads.created_at,
+    gpt_threads.updated_at,
+    users.name AS user_name,
+    users.email AS user_email
+  FROM gpt_threads
+  LEFT JOIN users ON users.id = gpt_threads.user_id
+  ORDER BY datetime(gpt_threads.updated_at) DESC
+`).all();
+
+Do not paste this HTML into src/worker.js.
+This HTML goes to: public/admin-gpt.html
