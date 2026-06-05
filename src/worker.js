@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v78 total GPT quota + safe research-gpts route patch
+Paper_Talk Worker v79 specialist admin access + assets-safe route patch
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea routing.
 - User-first answer behavior: answer the scientific question first.
@@ -55,6 +55,10 @@ export default {
 
       if (pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
       if (pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
+
+      if (pathname === "/api/admin/specialist/check" && (request.method === "GET" || request.method === "POST")) {
+        return specialistAdminCheck(request, env);
+      }
 
       if (pathname === "/api/admin/check" && (request.method === "GET" || request.method === "POST")) return adminCheck(request, env);
       if (pathname === "/api/admin/debug/visitor" && request.method === "GET") return adminDebugVisitor(request, env);
@@ -119,6 +123,15 @@ export default {
         return fetchAsset(env, request, "/admin-gpt.html");
       }
 
+      if (
+        pathname === "/admin-specialist-gpts" ||
+        pathname === "/admin-specialist-gpts.html" ||
+        pathname === "/specialist-admin" ||
+        pathname === "/specialist-admin.html"
+      ) {
+        return fetchAsset(env, request, "/admin-specialist-gpts.html");
+      }
+
       if (pathname === "/research") {
         return fetchAsset(env, request, "/research.html");
       }
@@ -173,18 +186,23 @@ export default {
 };
 
 function fetchAsset(env, request, assetPath) {
-  if (!env.ASSETS) {
-    return new Response("ASSETS binding is missing. Check wrangler.toml [assets] binding = \"ASSETS\".", { status: 500 });
+  const assetUrl = new URL(assetPath, request.url);
+
+  if (env.ASSETS) {
+    return env.ASSETS.fetch(new Request(assetUrl));
   }
 
-  return env.ASSETS.fetch(new Request(new URL(assetPath, request.url)));
+  // Cloudflare Workers static assets may be served directly from /public
+  // without an env.ASSETS binding. In that setup, redirect aliases such as
+  // /research-gpts or /admin-specialist-gpts to the real .html asset path.
+  return Response.redirect(assetUrl, 302);
 }
 
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Admin-Key"
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Admin-Key, X-Specialist-Admin-Key"
   };
 }
 
@@ -860,6 +878,61 @@ function isAdmin(request, env) {
   const expectedKey = String(env.ADMIN_KEY || "").trim();
 
   return Boolean(key && expectedKey && key === expectedKey);
+}
+
+function getSpecialistAdminKeyFromRequest(request) {
+  const url = new URL(request.url);
+  return String(
+    request.headers.get("X-Specialist-Admin-Key") ||
+    url.searchParams.get("specialistKey") ||
+    url.searchParams.get("key") ||
+    ""
+  ).trim();
+}
+
+function isSpecialistAdmin(request, env) {
+  const key = getSpecialistAdminKeyFromRequest(request);
+  const specialistKey = String(env.SPECIALIST_ADMIN_KEY || "").trim();
+  const fallbackAdminKey = String(env.ADMIN_KEY || "").trim();
+
+  return Boolean(
+    key &&
+    (
+      (specialistKey && key === specialistKey) ||
+      (fallbackAdminKey && key === fallbackAdminKey)
+    )
+  );
+}
+
+function isAdminOrSpecialistAdmin(request, env) {
+  return isAdmin(request, env) || isSpecialistAdmin(request, env);
+}
+
+async function specialistAdminCheck(request, env) {
+  const hasSpecialistKey = Boolean(String(env.SPECIALIST_ADMIN_KEY || "").trim());
+  const hasFallbackAdminKey = Boolean(String(env.ADMIN_KEY || "").trim());
+
+  if (!hasSpecialistKey && !hasFallbackAdminKey) {
+    return json({
+      ok: false,
+      authenticated: false,
+      error: "SPECIALIST_ADMIN_KEY or ADMIN_KEY is not configured in Worker secrets."
+    }, 500);
+  }
+
+  if (!isSpecialistAdmin(request, env)) {
+    return json({
+      ok: false,
+      authenticated: false,
+      error: "Unauthorized"
+    }, 401);
+  }
+
+  return json({
+    ok: true,
+    authenticated: true,
+    message: "Specialist admin key is valid."
+  });
 }
 
 async function adminCheck(request, env) {
@@ -1620,7 +1693,7 @@ async function ensureMinimalResearchKnowledgeForFullText({ postId, title, source
 }
 
 async function adminImportResearchFullText(request, env) {
-  if (!isAdmin(request, env)) {
+  if (!isAdminOrSpecialistAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
@@ -1787,7 +1860,7 @@ async function adminImportResearchFullText(request, env) {
 
 
 async function adminListResearchFullText(request, env) {
-  if (!isAdmin(request, env)) {
+  if (!isAdminOrSpecialistAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
@@ -1844,7 +1917,7 @@ async function adminListResearchFullText(request, env) {
 }
 
 async function adminDeleteResearchFullText(request, env) {
-  if (!isAdmin(request, env)) {
+  if (!isAdminOrSpecialistAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
