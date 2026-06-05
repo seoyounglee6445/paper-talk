@@ -232,20 +232,6 @@ body.guest-mode .gpt-sidebar {
   Signed-in usage: 50 questions per user per month.
 </p>
 
-  <section id="neuroPasswordBox" class="login-required-box" style="display:none;">
-    <h2>Private Neuro-GPT Access</h2>
-    <p>Please enter the Neuro-GPT password to continue.</p>
-    <input
-      id="neuroPasswordInput"
-      type="password"
-      placeholder="Enter Neuro-GPT password"
-      style="width:100%;max-width:420px;margin-bottom:12px;"
-    >
-    <br>
-    <button id="neuroPasswordBtn" type="button">Enter Neuro-GPT</button>
-    <p id="neuroPasswordStatus"></p>
-  </section>
-
   <section id="loginBox" class="login-required-box" style="display:none;">
     <h2>Free sign-in available</h2>
     <p>Please sign in with Google to continue after your free guest questions.</p>
@@ -287,7 +273,6 @@ let isSending = false;
 let isGuestMode = true;
 
 const urlParams = new URLSearchParams(window.location.search);
-
 function normalizeGptKey(value) {
   const raw = String(value || "paper_talk")
     .trim()
@@ -303,16 +288,7 @@ function normalizeGptKey(value) {
     neuro: "neuroscience",
     neuroscience: "neuroscience",
     neuro_gpt: "neuroscience",
-    neuro_sungmo: "neuroscience",
-    mitochondria: "mitochondria",
-    mitochondrial: "mitochondria",
-    singlecell: "single_cell",
-    single_cell: "single_cell",
-    single_cell_gpt: "single_cell",
-    spatial: "spatial_biology",
-    spatial_biology: "spatial_biology",
-    cancer: "cancer_genomics",
-    cancer_genomics: "cancer_genomics"
+    neuro_sungmo: "neuroscience"
   };
 
   return aliases[raw] || "paper_talk";
@@ -322,48 +298,6 @@ const GPT_KEY = normalizeGptKey(urlParams.get("gpt") || urlParams.get("gptKey"))
 const GPT_TITLE = GPT_KEY === "neuroscience" ? "Neuroscience GPT" : "Paper_Talk Vision GPT";
 
 const GUEST_LIMIT = 3;
-
-const NEURO_PRIVATE_PASSWORD = "engram";
-const NEURO_ACCESS_SESSION_KEY = "neuro_gpt_private_access";
-
-async function ensureNeuroGptAccess() {
-  if (GPT_KEY !== "neuroscience") return true;
-
-  const saved = sessionStorage.getItem(NEURO_ACCESS_SESSION_KEY);
-  if (saved === "ok") return true;
-
-  const password = prompt("Enter password for private Neuro-GPT");
-
-  if (password === null) {
-    window.location.href = "/specialist-gpts.html";
-    return false;
-  }
-
-  if (password !== NEURO_PRIVATE_PASSWORD) {
-    alert("Incorrect password.");
-    window.location.href = "/specialist-gpts.html";
-    return false;
-  }
-
-  const res = await fetch("/api/neuro-gpt/access", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store",
-    body: JSON.stringify({ password })
-  });
-
-  const data = await readJsonSafely(res, "/api/neuro-gpt/access");
-
-  if (!res.ok || !data.ok || !data.authenticated) {
-    alert(data.error || "Neuro-GPT access failed.");
-    window.location.href = "/specialist-gpts.html";
-    return false;
-  }
-
-  sessionStorage.setItem(NEURO_ACCESS_SESSION_KEY, "ok");
-  return true;
-}
-
 
 
 function applySpecialistGptBranding() {
@@ -433,22 +367,6 @@ function setupEventListeners() {
   document.getElementById("sendBtn").addEventListener("click", sendMessage);
   document.getElementById("stopBtn").addEventListener("click", stopMessage);
 
-  const neuroPasswordBtn = document.getElementById("neuroPasswordBtn");
-  const neuroPasswordInput = document.getElementById("neuroPasswordInput");
-
-  if (neuroPasswordBtn) {
-    neuroPasswordBtn.addEventListener("click", submitNeuroPassword);
-  }
-
-  if (neuroPasswordInput) {
-    neuroPasswordInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        submitNeuroPassword();
-      }
-    });
-  }
-
   document.getElementById("messageInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -462,9 +380,6 @@ document.addEventListener("DOMContentLoaded", init);
 async function init() {
   setupEventListeners();
   applySpecialistGptBranding();
-
-  const hasPrivateAccess = await ensureNeuroGptAccess();
-  if (!hasPrivateAccess) return;
 
   const meRes = await fetch("/api/me");
   const me = await readJsonSafely(meRes, "/api/me");
@@ -658,7 +573,7 @@ async function sendMessage() {
   stopBtn.style.display = "inline-block";
 
   addMessage("user", text);
-  addMessage("assistant", "Analyzing your question...\nSearching the Paper_Talk research database...\nPreparing a grounded answer...");
+  addMessage("assistant", `Analyzing your question...\nSearching the ${GPT_TITLE} knowledge base...\nPreparing a grounded answer...`);
   scrollChatToBottom();
 
   chatController = new AbortController();
