@@ -271,6 +271,7 @@ let currentThreadId = null;
 let chatController = null;
 let isSending = false;
 let isGuestMode = true;
+let messageLoadSeq = 0;
 
 const urlParams = new URLSearchParams(window.location.search);
 function normalizeGptKey(value) {
@@ -530,35 +531,57 @@ async function deleteThread(threadId) {
   await loadThreads();
 }
 
-async function loadMessages() {
+async function loadMessages(options = {}) {
   if (isGuestMode) return;
 
+  const force = Boolean(options.force);
+  const loadSeq = ++messageLoadSeq;
   const box = document.getElementById("chatBox");
-  box.innerHTML = "";
 
-  if (!currentThreadId) return;
+  // Important:
+  // Do not reload/clear messages while a new answer is being generated.
+  // On the first signed-in chat, an older loadMessages() call can finish after
+  // the user presses Send, which makes the first user message disappear.
+  if (isSending && !force) return;
 
-  const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}&gptKey=${encodeURIComponent(GPT_KEY)}`, {
-    cache: "no-store",
-    credentials: "include"
-  });
-  const data = await readJsonSafely(res, "API request");
-
-  if (!data.ok) {
-    box.innerHTML = `<p>${escapeHtml(data.error || "Failed to load messages.")}</p>`;
+  if (!currentThreadId) {
+    if (!isSending) {
+      box.innerHTML = `<p class="empty-posts">Start a new conversation with ${GPT_TITLE}.</p>`;
+    }
     return;
   }
 
-  if (!data.messages || data.messages.length === 0) {
-    box.innerHTML = `<p class="empty-posts">Start a new conversation with ${GPT_TITLE}.</p>`;
-    return;
+  try {
+    const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}&gptKey=${encodeURIComponent(GPT_KEY)}`, {
+      cache: "no-store",
+      credentials: "include"
+    });
+    const data = await readJsonSafely(res, "API request");
+
+    // Ignore stale message loads that started before the current Send action.
+    if (loadSeq !== messageLoadSeq || (isSending && !force)) return;
+
+    if (!data.ok) {
+      box.innerHTML = `<p>${escapeHtml(data.error || "Failed to load messages.")}</p>`;
+      return;
+    }
+
+    box.innerHTML = "";
+
+    if (!data.messages || data.messages.length === 0) {
+      box.innerHTML = `<p class="empty-posts">Start a new conversation with ${GPT_TITLE}.</p>`;
+      return;
+    }
+
+    data.messages.forEach(msg => {
+      addMessage(msg.role, msg.content);
+    });
+
+    scrollChatToBottom();
+  } catch (error) {
+    if (loadSeq !== messageLoadSeq || isSending) return;
+    box.innerHTML = `<p>${escapeHtml(error.message || "Failed to load messages.")}</p>`;
   }
-
-  data.messages.forEach(msg => {
-    addMessage(msg.role, msg.content);
-  });
-
-  scrollChatToBottom();
 }
 
 async function sendMessage() {
@@ -574,19 +597,26 @@ async function sendMessage() {
   if (isGuestMode) {
     const localUsed = getLocalGuestUsedToday();
     if (localUsed >= GUEST_LIMIT) {
-      addSignupMessage("You have used all 3 free guest questions for today. Please sign in with Google for free to continue using ${GPT_TITLE}.", "/auth/google");
+      addSignupMessage(`You have used all 3 free guest questions for today. Please sign in with Google for free to continue using ${GPT_TITLE}.`, "/auth/google");
       updateQuotaText(0, GUEST_LIMIT, true);
       return;
     }
   }
+
+  // Cancel any in-flight loadMessages() call so it cannot clear the first message
+  // after the user has already pressed Send.
+  messageLoadSeq++;
 
   isSending = true;
   input.value = "";
   sendBtn.style.display = "none";
   stopBtn.style.display = "inline-block";
 
-  addMessage("user", text);
-  addMessage("assistant", `Analyzing your question...\nSearching the ${GPT_TITLE} knowledge base...\nPreparing a grounded answer...`);
+  const userBubble = addMessage("user", text);
+  const progressBubble = addMessage(
+    "assistant",
+    `Analyzing your question...\nSearching the ${GPT_TITLE} knowledge base...\nPreparing a grounded answer...`
+  );
   scrollChatToBottom();
 
   chatController = new AbortController();
@@ -613,7 +643,7 @@ async function sendMessage() {
 
     const data = await readJsonSafely(res, "API request");
 
-    removeLastProgress();
+    removeMessage(progressBubble);
 
     if (!data.ok) {
       if (data.signupUrl) {
@@ -648,6 +678,8 @@ async function sendMessage() {
       }
     }
 
+    // Refresh the sidebar only. Do not reload messages here, because the UI already
+    // contains the user message and the generated answer.
     if (!isGuestMode) {
       await loadThreads();
     }
@@ -655,7 +687,13 @@ async function sendMessage() {
     scrollChatToBottom();
 
   } catch (error) {
-    removeLastProgress();
+    removeMessage(progressBubble);
+
+    // If the pending loadMessages() race already removed the user bubble in an
+    // older browser state, restore it before showing the error.
+    if (userBubble && !userBubble.isConnected) {
+      addMessage("user", text);
+    }
 
     if (error.name === "AbortError") {
       addMessage(
@@ -682,6 +720,12 @@ function stopMessage() {
   }
 }
 
+function removeMessage(node) {
+  if (node && node.parentNode) {
+    node.parentNode.removeChild(node);
+  }
+}
+
 function removeLastProgress() {
   const messages = document.querySelectorAll(".message.assistant");
   const last = messages[messages.length - 1];
@@ -691,6 +735,9 @@ function removeLastProgress() {
     (
       last.textContent.includes("Analyzing your question...") ||
       last.textContent.includes("Searching the Paper_Talk research database...") ||
+      last.textContent.includes("Searching the Paper_Talk Vision GPT knowledge base...") ||
+      last.textContent.includes("Searching the Neuroscience GPT knowledge base...") ||
+      last.textContent.includes("knowledge base...") ||
       last.textContent.includes("Preparing a grounded answer...")
     )
   ) {
@@ -698,16 +745,28 @@ function removeLastProgress() {
   }
 }
 
+function clearEmptyState() {
+  const box = document.getElementById("chatBox");
+  box.querySelectorAll(".empty-posts").forEach(node => node.remove());
+}
+
 function addMessage(role, content) {
   const box = document.getElementById("chatBox");
+  clearEmptyState();
+
   const div = document.createElement("div");
   div.className = `message ${role}`;
   div.textContent = content;
   box.appendChild(div);
+  scrollChatToBottom();
+
+  return div;
 }
 
 async function typeWriterMessage(text) {
   const box = document.getElementById("chatBox");
+  clearEmptyState();
+
   const div = document.createElement("div");
   div.className = "message assistant";
   box.appendChild(div);
@@ -724,10 +783,14 @@ async function typeWriterMessage(text) {
     const delay = value[i] === " " || value[i] === "\n" ? 2 : 8;
     await new Promise(resolve => setTimeout(resolve, delay));
   }
+
+  return div;
 }
 
 function addSignupMessage(message, signupUrl) {
   const box = document.getElementById("chatBox");
+  clearEmptyState();
+
   const div = document.createElement("div");
   div.className = "message assistant";
 
