@@ -3,7 +3,7 @@ main = "src/worker.js"
 compatibility_date = "2025-01-01"
 
 [vars]
-OPENAI_MODEL = "gpt-5"
+OPENAI_MODEL = "gpt-4o"
 
 [assets]
 directory = "./public"
