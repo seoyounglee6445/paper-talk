@@ -1,320 +1,179 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin | Paper_Talk</title>
-  <link rel="stylesheet" href="/style.css">
-</head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
 
-<body>
-<header class="header">
-  <nav class="nav">
-    <div class="logo">Paper_Talk Admin</div>
-    <a href="/">Home</a>
-    <a href="/admin.html">Admin</a>
-    <a href="/admin-gpt.html">GPT Usage</a>
-    <a href="/admin-specialist-gpts.html">Research GPTs</a>
-    <a href="/research">Research Paper</a>
-    <a href="/study">Study Materials</a>
-    <a href="/community">Community</a>
-    <a href="/career">Career</a>
-  </nav>
-</header>
-
-<main class="container">
-  <h1>GPT Usage</h1>
-  <p>View all Paper_Talk Vision GPT and Specialist GPT chats created by signed-in users.</p>
-
-  <section class="card">
-    <h2>Admin Access</h2>
-    <p>Enter your admin key once. It will be saved for 1 hour.</p>
-
-    <label>Admin Key</label>
-    <input id="adminKey" type="password" placeholder="Enter admin key">
-
-    <button onclick="saveKey()">Save Key</button>
-    <button class="danger-btn" onclick="clearKey()">Clear Admin Key</button>
-    <p id="status"></p>
-  </section>
-
-  <div id="adminGptContent" style="display:none;">
-    <section class="card">
-      <h2>GPT Chat Threads</h2>
-
-      <label>Filter by GPT</label>
-      <select id="gptFilter" onchange="renderThreads()">
-        <option value="">All GPTs</option>
-        <option value="paper_talk">Paper_Talk Vision GPT</option>
-        <option value="neuroscience">Neuroscience GPT</option>
-        <option value="mitochondria">Mitochondria GPT</option>
-        <option value="single_cell">Single-cell GPT</option>
-        <option value="spatial_biology">Spatial Biology GPT</option>
-        <option value="cancer_genomics">Cancer Genomics GPT</option>
-      </select>
-
-      <br><br>
-      <button onclick="loadThreads()">Load GPT Chats</button>
-      <div id="threadList"></div>
-    </section>
-
-    <section class="card">
-      <h2>Messages</h2>
-      <div id="messageList"></div>
-    </section>
-  </div>
-</main>
-
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-WWSD3F58L6"></script>
 <script>
-const KEY_NAME = "paperTalkAdminKey";
-const KEY_EXPIRES = "paperTalkAdminKeyExpires";
-const ONE_HOUR = 60 * 60 * 1000;
-
-let allThreads = [];
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function getGptLabel(gptKey) {
-  const key = String(gptKey || "paper_talk").trim();
-
-  const labels = {
-    paper_talk: "Paper_Talk Vision GPT",
-    neuroscience: "Neuroscience GPT",
-    mitochondria: "Mitochondria GPT",
-    single_cell: "Single-cell GPT",
-    spatial_biology: "Spatial Biology GPT",
-    cancer_genomics: "Cancer Genomics GPT"
-  };
-
-  return labels[key] || key || "Paper_Talk Vision GPT";
-}
-
-function updateAdminVisibility() {
-  const content = document.getElementById("adminGptContent");
-  const status = document.getElementById("status");
-  const key = localStorage.getItem(KEY_NAME) || "";
-  const expires = Number(localStorage.getItem(KEY_EXPIRES) || 0);
-
-  if (!key || Date.now() > expires) {
-    content.style.display = "none";
-    status.textContent = "Admin key is not saved.";
-    return;
-  }
-
-  const minutesLeft = Math.max(Math.ceil((expires - Date.now()) / 60000), 0);
-  content.style.display = "block";
-  status.textContent = `Admin key saved. Expires in about ${minutesLeft} minutes.`;
-}
-
-function saveKey() {
-  const key = document.getElementById("adminKey").value.trim();
-
-  if (!key) {
-    alert("Please enter admin key.");
-    return;
-  }
-
-  localStorage.setItem(KEY_NAME, key);
-  localStorage.setItem(KEY_EXPIRES, String(Date.now() + ONE_HOUR));
-  updateAdminVisibility();
-  alert("Admin key saved for 1 hour.");
-}
-
-function clearKey() {
-  localStorage.removeItem(KEY_NAME);
-  localStorage.removeItem(KEY_EXPIRES);
-  document.getElementById("adminKey").value = "";
-  document.getElementById("threadList").innerHTML = "";
-  document.getElementById("messageList").innerHTML = "";
-  allThreads = [];
-  updateAdminVisibility();
-}
-
-function getKey() {
-  const key = localStorage.getItem(KEY_NAME) || "";
-  const expires = Number(localStorage.getItem(KEY_EXPIRES) || 0);
-
-  if (!key || Date.now() > expires) {
-    clearKey();
-    return "";
-  }
-
-  return key;
-}
-
-async function readJsonSafely(response) {
-  const rawText = await response.text();
-
-  try {
-    return JSON.parse(rawText);
-  } catch {
-    throw new Error(
-      `API returned non-JSON response. HTTP ${response.status}. Preview: ${rawText.slice(0, 300)}`
-    );
-  }
-}
-
-async function loadThreads() {
-  const key = getKey();
-
-  if (!key) {
-    alert("Please enter admin key.");
-    return;
-  }
-
-  const box = document.getElementById("threadList");
-  box.innerHTML = "<p>Loading GPT chats...</p>";
-
-  try {
-    const res = await fetch("/api/admin/gpt/threads?key=" + encodeURIComponent(key), {
-      cache: "no-store",
-      credentials: "include"
-    });
-
-    const data = await readJsonSafely(res);
-
-    if (!data.ok) {
-      box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load GPT chats.")}</p>`;
-      return;
-    }
-
-    allThreads = Array.isArray(data.threads) ? data.threads : [];
-    renderThreads();
-  } catch (error) {
-    box.innerHTML = `<p class="error">${escapeHtml(error.message || "Failed to load GPT chats.")}</p>`;
-  }
-}
-
-function renderThreads() {
-  const box = document.getElementById("threadList");
-  const filter = document.getElementById("gptFilter").value;
-
-  let threads = allThreads;
-
-  if (filter) {
-    threads = threads.filter(t => String(t.gpt_key || "paper_talk") === filter);
-  }
-
-  if (!threads.length) {
-    box.innerHTML = filter
-      ? `<p>No chats found for ${escapeHtml(getGptLabel(filter))}.</p>`
-      : "<p>No GPT chats yet.</p>";
-    return;
-  }
-
-  box.innerHTML = threads.map(t => {
-    const gptKey = t.gpt_key || "paper_talk";
-    const gptLabel = getGptLabel(gptKey);
-
-    return `
-      <article class="post-card">
-        <h3>${escapeHtml(t.title || "New chat")}</h3>
-        <p><strong>GPT:</strong> ${escapeHtml(gptLabel)} <span style="color:#64748b;">(${escapeHtml(gptKey)})</span></p>
-        <p><strong>User:</strong> ${escapeHtml(t.user_name || "")}</p>
-        <p><strong>Email:</strong> ${escapeHtml(t.user_email || "")}</p>
-        <p><strong>Created:</strong> ${escapeHtml(t.created_at)}</p>
-        <p><strong>Updated:</strong> ${escapeHtml(t.updated_at)}</p>
-        <button onclick="loadMessages('${escapeHtml(t.id)}')">View Messages</button>
-      </article>
-    `;
-  }).join("");
-}
-
-async function loadMessages(threadId) {
-  const key = getKey();
-
-  if (!key) {
-    alert("Please enter admin key.");
-    return;
-  }
-
-  const params = new URLSearchParams({
-    key,
-    threadId
-  });
-
-  const box = document.getElementById("messageList");
-  box.innerHTML = "<p>Loading messages...</p>";
-
-  try {
-    const res = await fetch("/api/admin/gpt/messages?" + params.toString(), {
-      cache: "no-store",
-      credentials: "include"
-    });
-
-    const data = await readJsonSafely(res);
-
-    if (!data.ok) {
-      box.innerHTML = `<p class="error">${escapeHtml(data.error || "Failed to load messages.")}</p>`;
-      return;
-    }
-
-    if (!data.messages || !data.messages.length) {
-      box.innerHTML = "<p>No messages found.</p>";
-      return;
-    }
-
-    box.innerHTML = data.messages.map(m => `
-      <article class="post-card">
-        <p><strong>${escapeHtml(m.role)}</strong></p>
-        <p class="post-body">${escapeHtml(m.content).replaceAll("\\n", "<br>")}</p>
-        <p class="post-meta">${escapeHtml(m.created_at)}</p>
-      </article>
-    `).join("");
-  } catch (error) {
-    box.innerHTML = `<p class="error">${escapeHtml(error.message || "Failed to load messages.")}</p>`;
-  }
-}
-
-window.addEventListener("load", () => {
-  const key = localStorage.getItem(KEY_NAME);
-  const expires = Number(localStorage.getItem(KEY_EXPIRES) || 0);
-
-  if (key && Date.now() <= expires) {
-    document.getElementById("adminKey").value = key;
-  }
-
-  updateAdminVisibility();
-});
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag("js", new Date());
+gtag("config", "G-WWSD3F58L6");
 </script>
-</body>
-</html>
 
+<title>Specialist GPTs - Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
 
-
-IMPORTANT WORKER PATCH REQUIRED
-
-For this admin-gpt.html to display Specialist GPT names, src/worker.js must return gpt_key from adminListGptThreads().
-
-In src/worker.js, find:
-
-async function adminListGptThreads(request, env) {
-  ...
+<style>
+body {
+  margin: 0;
+  background: #eef2ff;
+  color: #020617;
+  font-family: Arial, Helvetica, sans-serif;
 }
 
-Replace only the SELECT query inside that function with this version:
+.header {
+  background: #1428a0;
+  color: #ffffff;
+}
 
-const threads = await env.DB.prepare(`
-  SELECT
-    gpt_threads.id,
-    gpt_threads.user_id,
-    gpt_threads.title,
-    COALESCE(gpt_threads.gpt_key, 'paper_talk') AS gpt_key,
-    gpt_threads.created_at,
-    gpt_threads.updated_at,
-    users.name AS user_name,
-    users.email AS user_email
-  FROM gpt_threads
-  LEFT JOIN users ON users.id = gpt_threads.user_id
-  ORDER BY datetime(gpt_threads.updated_at) DESC
-`).all();
+.nav {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 18px 28px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+}
 
-Do not paste this HTML into src/worker.js.
-This HTML goes to: public/admin-gpt.html
+.nav a {
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.nav .logo {
+  margin-right: auto;
+  font-size: 28px;
+  font-weight: 900;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 36px 32px 70px;
+}
+
+.auth-box {
+  text-align: right;
+  margin-bottom: 24px;
+}
+
+.auth-box #userText,
+.auth-box #guestInfo {
+  margin-right: 8px;
+}
+
+.signin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  color: #1428a0;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 14px 32px rgba(20,40,160,0.12);
+}
+
+.google-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #1428a0;
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.research-gpts-hero {
+  margin-top: 10px;
+  margin-bottom: 30px;
+}
+
+.research-gpts-hero h1 {
+  margin: 0 0 12px;
+  color: #1428a0;
+  font-size: 44px;
+  line-height: 1.1;
+}
+
+.research-gpts-hero p {
+  max-width: 820px;
+  line-height: 1.7;
+  font-size: 16px;
+}
+
+.gpt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 22px;
+  margin-top: 24px;
+}
+
+.gpt-card {
+  min-height: 190px;
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
+}
+
+.gpt-card h2 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #1428a0;
+  font-size: 24px;
+}
+
+.gpt-card p {
+  line-height: 1.6;
+  margin-bottom: 0;
+}
+
+.tag {
+  display: inline-block;
+  margin-bottom: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.clickable-card {
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.clickable-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 22px 48px rgba(0,0,0,0.08);
+}
+
+.coming-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.coming-card h2 {
+  margin: 0;
+  color: #64748b;
+}
+
+.password
+```
