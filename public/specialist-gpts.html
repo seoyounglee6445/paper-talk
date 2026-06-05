@@ -245,7 +245,7 @@ body {
 
       <article
         class="gpt-card clickable-card"
-        onclick="location.href='/visium-gpt.html?gpt=neuro_sungmo'"
+        onclick="openPrivateNeuroGpt()"
       >
         <span class="tag">Private</span>
         <h2>&#129504; Neuro-GPT</h2>
@@ -274,6 +274,28 @@ body {
 </main>
 
 <script>
+const NEURO_PRIVATE_PASSWORD = "engram";
+
+function openPrivateNeuroGpt() {
+  const saved = sessionStorage.getItem("neuro_gpt_private_access");
+
+  if (saved === "ok") {
+    location.href = "/visium-gpt.html?gpt=neuro_sungmo";
+    return;
+  }
+
+  const password = prompt("Enter password for private Neuro-GPT");
+
+  if (password === null) return;
+
+  if (password === NEURO_PRIVATE_PASSWORD) {
+    sessionStorage.setItem("neuro_gpt_private_access", "ok");
+    location.href = "/visium-gpt.html?gpt=neuro_sungmo";
+  } else {
+    alert("Incorrect password.");
+  }
+}
+
 async function initAuthBox() {
   const topLoginArea = document.getElementById("topLoginArea");
   const topLogoutArea = document.getElementById("topLogoutArea");
