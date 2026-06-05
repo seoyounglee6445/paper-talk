@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v80 GPT-4o unified + quota 50 + automatic method/package extraction routing patch
+Paper_Talk Worker v85 GPT-4o unified + quota 50 + cancelable chat + keyword paper-grounded pipeline routing patch
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
 - User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, first search/retrieve papers matching the user's keyword/domain and extract the workflows used in those papers; only then synthesize a practical paper-grounded workflow. Never answer pipeline/workflow questions with a generic protocol before showing the relevant paper workflow evidence. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
@@ -7,6 +7,7 @@ Paper_Talk Worker v80 GPT-4o unified + quota 50 + automatic method/package extra
 - Multilingual behavior: detect and preserve the user's language across the entire answer.
 - Do not start with DB retrieval failure messages unless user explicitly asks for sources/evidence.
 - Literature/trend questions still show DB paper titles when requested.
+- Chat cancellation: /api/gpt/chat accepts cancelId; /api/gpt/cancel marks the request canceled; OpenAI calls are linked to the browser request signal and cancelId polling so Cancel can stop generation and avoid quota charging.
 */
 
 export default {
@@ -54,6 +55,7 @@ export default {
       if (pathname.startsWith("/api/gpt/threads/") && request.method === "DELETE") return deleteGptThread(request, env);
       if (pathname === "/api/gpt/messages" && request.method === "GET") return listGptMessages(request, env);
       if (pathname === "/api/gpt/chat" && request.method === "POST") return gptChat(request, env);
+      if (pathname === "/api/gpt/cancel" && request.method === "POST") return cancelGptRequest(request, env);
 
       if (pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
       if (pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
@@ -151,17 +153,19 @@ export default {
         return redirect(new URL("/study.html", request.url).toString());
       }
 
-      if (pathname === "/visium-gpt") {
-        return redirect(new URL("/visium-gpt.html", request.url).toString());
+      // Public Specialist GPT pages are served directly by the Worker so a missing or
+      // accidentally overwritten static asset can never expose the Worker source code.
+      if (pathname === "/research-gpts" || pathname === "/specialist-gpts" || pathname === "/specialist-gpts.html") {
+        return specialistGptsLandingPage(request);
       }
 
-      // Public Specialist GPT landing page aliases.
-      if (pathname === "/research-gpts" || pathname === "/specialist-gpts") {
-        return redirect(new URL("/specialist-gpts.html", request.url).toString());
+      const specialistGptKeyFromRoute = getSpecialistGptKeyFromPathname(pathname);
+      if (specialistGptKeyFromRoute) {
+        return redirect(new URL(`/visium-gpt.html?gpt=${encodeURIComponent(specialistGptKeyFromRoute)}`, request.url).toString());
       }
 
-      if (pathname === "/neuroscience-gpt") {
-        return redirect(new URL("/visium-gpt.html?gpt=neuroscience", request.url).toString());
+      if (pathname === "/visium-gpt" || pathname === "/visium-gpt.html") {
+        return specialistGptChatPage(request);
       }
 
       if (pathname === "/community") {
@@ -221,6 +225,268 @@ function json(data, status = 200, headers = {}) {
       ...corsHeaders(),
       ...headers
     }
+  });
+}
+
+
+// ======================================
+// Cancelable GPT request support
+// ======================================
+const USER_CANCELED_MESSAGE = "USER_CANCELED: Request canceled by user.";
+
+class UserCanceledError extends Error {
+  constructor(message = "Request canceled by user.") {
+    super(message);
+    this.name = "UserCanceledError";
+    this.canceled = true;
+  }
+}
+
+function isUserCanceledError(error) {
+  return Boolean(error && (error.canceled || error.name === "UserCanceledError"));
+}
+
+function isUserCanceledText(value) {
+  return /^USER_CANCELED:/i.test(String(value || ""));
+}
+
+function normalizeGptCancelId(value) {
+  const id = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{8,120}$/.test(id) ? id : "";
+}
+
+async function getGuestGptIdentityKey(request, env) {
+  const todayKey = getTodayKey(new Date());
+  const visitorIp = getVisitorIp(request);
+  const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
+  return `guest:${todayKey}:${ipHash}`;
+}
+
+async function getGptCancelOwnerKey(request, env, user = null) {
+  return user?.id ? `user:${user.id}` : await getGuestGptIdentityKey(request, env);
+}
+
+async function ensureGptCancellationTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS gpt_request_cancellations (
+      cancel_id TEXT PRIMARY KEY,
+      owner_key TEXT NOT NULL,
+      gpt_key TEXT DEFAULT 'paper_talk',
+      status TEXT NOT NULL DEFAULT 'running',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      canceled_at TEXT,
+      finished_at TEXT
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_gpt_request_cancellations_owner
+    ON gpt_request_cancellations(owner_key, created_at)
+  `).run();
+}
+
+async function registerGptCancellableRequest({ env, cancelId, ownerKey, gptKey }) {
+  const id = normalizeGptCancelId(cancelId);
+  if (!id || !ownerKey) return;
+
+  await ensureGptCancellationTable(env);
+
+  // If the user hits Cancel before the chat route finishes registering the request,
+  // preserve the already-canceled state instead of resetting it back to running.
+  await env.DB.prepare(`
+    INSERT INTO gpt_request_cancellations (
+      cancel_id,
+      owner_key,
+      gpt_key,
+      status,
+      created_at,
+      canceled_at,
+      finished_at
+    )
+    VALUES (?, ?, ?, 'running', CURRENT_TIMESTAMP, NULL, NULL)
+    ON CONFLICT(cancel_id) DO UPDATE SET
+      owner_key = excluded.owner_key,
+      gpt_key = excluded.gpt_key,
+      status = CASE
+        WHEN gpt_request_cancellations.status = 'canceled' THEN 'canceled'
+        ELSE 'running'
+      END,
+      created_at = CURRENT_TIMESTAMP,
+      finished_at = NULL
+  `).bind(id, ownerKey, normalizeGptKey(gptKey)).run();
+}
+
+async function markGptCancellableRequestFinished({ env, cancelId, ownerKey }) {
+  const id = normalizeGptCancelId(cancelId);
+  if (!id || !ownerKey) return;
+
+  await ensureGptCancellationTable(env);
+  await env.DB.prepare(`
+    UPDATE gpt_request_cancellations
+    SET status = CASE WHEN status = 'canceled' THEN 'canceled' ELSE 'finished' END,
+        finished_at = CURRENT_TIMESTAMP
+    WHERE cancel_id = ? AND owner_key = ?
+  `).bind(id, ownerKey).run();
+}
+
+async function isGptRequestCanceled({ env, cancelId, ownerKey }) {
+  const id = normalizeGptCancelId(cancelId);
+  if (!id || !ownerKey) return false;
+
+  await ensureGptCancellationTable(env);
+  const row = await env.DB.prepare(`
+    SELECT status
+    FROM gpt_request_cancellations
+    WHERE cancel_id = ? AND owner_key = ?
+    LIMIT 1
+  `).bind(id, ownerKey).first();
+
+  return String(row?.status || "").toLowerCase() === "canceled";
+}
+
+function makeGptCancelRuntime({ request, env, cancelId, ownerKey }) {
+  const normalizedCancelId = normalizeGptCancelId(cancelId);
+  let cachedCanceled = false;
+
+  async function isCanceled() {
+    if (cachedCanceled) return true;
+
+    if (request?.signal?.aborted) {
+      cachedCanceled = true;
+      return true;
+    }
+
+    if (normalizedCancelId && ownerKey) {
+      try {
+        cachedCanceled = await isGptRequestCanceled({ env, cancelId: normalizedCancelId, ownerKey });
+      } catch {
+        // A cancellation check failure should not break a valid chat request.
+        cachedCanceled = false;
+      }
+    }
+
+    return cachedCanceled;
+  }
+
+  return {
+    cancelId: normalizedCancelId,
+    ownerKey,
+    signal: request?.signal || null,
+    async isCanceled() {
+      return isCanceled();
+    },
+    async throwIfCanceled() {
+      if (await isCanceled()) throw new UserCanceledError();
+    }
+  };
+}
+
+async function isGptRuntimeCanceledNoThrow(cancelRuntime) {
+  if (!cancelRuntime?.isCanceled) return false;
+  try {
+    return await cancelRuntime.isCanceled();
+  } catch (error) {
+    return isUserCanceledError(error);
+  }
+}
+
+function createLinkedAbortController(cancelRuntime, timeoutMs = 70000) {
+  const controller = new AbortController();
+  let stopped = false;
+  let pollTimer = null;
+
+  const abortAsCanceled = () => {
+    if (!controller.signal.aborted) {
+      try {
+        controller.abort(new UserCanceledError());
+      } catch {
+        controller.abort();
+      }
+    }
+  };
+
+  const abortAsTimeout = () => {
+    if (!controller.signal.aborted) controller.abort();
+  };
+
+  const timeout = setTimeout(abortAsTimeout, timeoutMs);
+
+  const clientSignal = cancelRuntime?.signal || null;
+  if (clientSignal) {
+    if (clientSignal.aborted) {
+      abortAsCanceled();
+    } else {
+      clientSignal.addEventListener("abort", abortAsCanceled, { once: true });
+    }
+  }
+
+  const poll = async () => {
+    if (stopped || controller.signal.aborted) return;
+
+    if (await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
+      abortAsCanceled();
+      return;
+    }
+
+    if (!stopped && !controller.signal.aborted) {
+      pollTimer = setTimeout(poll, 800);
+    }
+  };
+
+  if (cancelRuntime?.isCanceled) {
+    pollTimer = setTimeout(poll, 800);
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup() {
+      stopped = true;
+      clearTimeout(timeout);
+      if (pollTimer) clearTimeout(pollTimer);
+      if (clientSignal) clientSignal.removeEventListener("abort", abortAsCanceled);
+    }
+  };
+}
+
+async function cancelGptRequest(request, env) {
+  const user = await getSession(request, env).catch(() => null);
+  const body = await request.json().catch(() => ({}));
+  const cancelId = normalizeGptCancelId(body.cancelId || body.requestId || body.chatRequestId);
+  const gptKey = getGptKeyFromRequestData(body);
+
+  if (!cancelId) {
+    return json({ ok: false, error: "cancelId is required." }, 400);
+  }
+
+  const ownerKey = await getGptCancelOwnerKey(request, env, user);
+  await ensureGptCancellationTable(env);
+
+  await env.DB.prepare(`
+    INSERT INTO gpt_request_cancellations (
+      cancel_id,
+      owner_key,
+      gpt_key,
+      status,
+      created_at,
+      canceled_at,
+      finished_at
+    )
+    VALUES (?, ?, ?, 'canceled', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)
+    ON CONFLICT(cancel_id) DO UPDATE SET
+      owner_key = excluded.owner_key,
+      gpt_key = excluded.gpt_key,
+      status = 'canceled',
+      canceled_at = CURRENT_TIMESTAMP
+  `).bind(cancelId, ownerKey, normalizeGptKey(gptKey)).run();
+
+  return json({ ok: true, canceled: true, cancelId });
+}
+
+function canceledChatJson() {
+  return json({
+    ok: false,
+    canceled: true,
+    error: "Canceled by user. No quota was charged for the canceled generation."
   });
 }
 
@@ -506,6 +772,372 @@ function redirect(location, headers = {}) {
       ...headers
     }
   });
+}
+
+
+// ======================================
+// Built-in public Specialist GPT pages
+// ======================================
+// These pages intentionally live inside the Worker. If specialist-gpts.html or
+// visium-gpt.html is missing from the ASSETS binding, clicking a Specialist GPT
+// should still show a safe UI instead of a raw Worker source file.
+const SPECIALIST_GPT_ROUTE_ALIASES = {
+  "/neuroscience-gpt": "neuroscience",
+  "/mitochondria-gpt": "mitochondria",
+  "/single-cell-gpt": "single_cell",
+  "/singlecell-gpt": "single_cell",
+  "/spatial-biology-gpt": "spatial_biology",
+  "/spatial-gpt": "spatial_biology",
+  "/cancer-genomics-gpt": "cancer_genomics",
+  "/cancer-gpt": "cancer_genomics"
+};
+
+function getSpecialistGptKeyFromPathname(pathname) {
+  const cleanPath = String(pathname || "").replace(/\/+$/, "") || "/";
+  return SPECIALIST_GPT_ROUTE_ALIASES[cleanPath] || "";
+}
+
+function html(data, status = 200, headers = {}) {
+  return new Response(String(data || ""), {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      ...corsHeaders(),
+      ...headers
+    }
+  });
+}
+
+function specialistGptsLandingPage(request) {
+  const cards = [
+    {
+      key: "neuroscience",
+      path: "/neuroscience-gpt",
+      title: "Neuroscience GPT",
+      badge: "Private",
+      description: "Curated neuroscience knowledge base for paper-grounded brain and engram questions."
+    },
+    {
+      key: "mitochondria",
+      path: "/mitochondria-gpt",
+      title: "Mitochondria GPT",
+      badge: "Specialist",
+      description: "Mitochondrial biology, metabolism, organelle stress, and disease-focused literature support."
+    },
+    {
+      key: "single_cell",
+      path: "/single-cell-gpt",
+      title: "Single-cell GPT",
+      badge: "Specialist",
+      description: "scRNA-seq, scATAC-seq, multiome integration, cell annotation, and analysis workflow guidance."
+    },
+    {
+      key: "spatial_biology",
+      path: "/spatial-biology-gpt",
+      title: "Spatial Biology GPT",
+      badge: "Specialist",
+      description: "Spatial transcriptomics, Visium, tissue domains, deconvolution, and spatial omics interpretation."
+    },
+    {
+      key: "cancer_genomics",
+      path: "/cancer-genomics-gpt",
+      title: "Cancer Genomics GPT",
+      badge: "Specialist",
+      description: "Cancer genomics, biomarkers, clonal evolution, variants, signatures, and translational omics."
+    }
+  ];
+
+  const cardHtml = cards.map(card => `
+    <a class="card" href="${card.path}" data-gpt="${card.key}">
+      <span class="badge">${card.badge}</span>
+      <h2>${card.title}</h2>
+      <p>${card.description}</p>
+      <span class="open">Open ${card.title} →</span>
+    </a>
+  `).join("\n");
+
+  return html(`<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Specialist GPTs | Paper_Talk</title>
+  <style>
+    :root { color-scheme: light; --bg:#f8fafc; --panel:#ffffff; --ink:#111827; --muted:#64748b; --line:#e5e7eb; --brand:#2563eb; --soft:#eff6ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+    header { padding:42px 20px 22px; text-align:center; }
+    .wrap { width:min(1120px, calc(100% - 32px)); margin:0 auto; }
+    .eyebrow { display:inline-flex; gap:8px; align-items:center; padding:7px 12px; border:1px solid var(--line); border-radius:999px; color:var(--brand); background:var(--soft); font-weight:700; font-size:13px; }
+    h1 { margin:18px 0 10px; font-size:clamp(32px, 5vw, 56px); line-height:1.05; letter-spacing:-0.04em; }
+    .lead { margin:0 auto; max-width:760px; color:var(--muted); font-size:17px; line-height:1.65; }
+    .grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:16px; padding:24px 0 50px; }
+    .card { display:block; min-height:230px; padding:24px; border:1px solid var(--line); border-radius:24px; background:var(--panel); color:inherit; text-decoration:none; box-shadow:0 14px 40px rgba(15,23,42,.06); transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+    .card:hover { transform:translateY(-3px); border-color:#bfdbfe; box-shadow:0 18px 50px rgba(37,99,235,.13); }
+    .badge { display:inline-flex; padding:6px 10px; border-radius:999px; background:#f1f5f9; color:#334155; font-size:12px; font-weight:800; }
+    .card h2 { margin:22px 0 10px; font-size:24px; letter-spacing:-0.02em; }
+    .card p { margin:0; color:var(--muted); line-height:1.58; }
+    .open { display:inline-block; margin-top:22px; color:var(--brand); font-weight:800; }
+    .note { margin:0 auto 40px; padding:16px 18px; max-width:860px; border:1px solid var(--line); border-radius:18px; background:#fff; color:#475569; line-height:1.6; }
+    @media (max-width: 860px) { .grid { grid-template-columns:1fr; } header { text-align:left; } .lead { margin:0; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <span class="eyebrow">Paper_Talk Specialist GPTs</span>
+      <h1>Choose a domain GPT</h1>
+      <p class="lead">각 GPT는 같은 채팅 API를 쓰되, gpt_key로 지식 베이스를 분리합니다. static HTML이 없어도 이 Worker 내장 페이지가 안전하게 열립니다.</p>
+    </div>
+  </header>
+  <main class="wrap">
+    <section class="grid" aria-label="Specialist GPT list">
+      ${cardHtml}
+    </section>
+    <p class="note">Neuroscience GPT는 private 모드입니다. 접속 후 비밀번호를 입력하면 24시간 동안 쿠키로 인증됩니다.</p>
+  </main>
+</body>
+</html>`);
+}
+
+function specialistGptChatPage(request) {
+  const url = new URL(request.url);
+  const routeKey = getSpecialistGptKeyFromPathname(url.pathname);
+  const gptKey = normalizeGptKey(routeKey || url.searchParams.get("gpt") || url.searchParams.get("gptKey") || url.searchParams.get("domain") || "neuroscience");
+  const profile = getGptProfile(gptKey);
+  const initialData = JSON.stringify({
+    gptKey,
+    title: profile.title,
+    knowledgeLabel: profile.knowledgeLabel,
+    isNeuroPrivate: gptKey === "neuroscience"
+  }).replace(/</g, "\\u003c");
+
+  return html(`<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${profile.title} | Paper_Talk</title>
+  <style>
+    :root { color-scheme: light; --bg:#f8fafc; --panel:#ffffff; --ink:#111827; --muted:#64748b; --line:#e5e7eb; --brand:#2563eb; --danger:#dc2626; --soft:#eff6ff; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--ink); font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color:var(--brand); text-decoration:none; }
+    .layout { display:grid; grid-template-columns:300px minmax(0,1fr); min-height:100vh; }
+    aside { border-right:1px solid var(--line); background:#fff; padding:20px; }
+    main { display:flex; flex-direction:column; min-width:0; }
+    .brand { display:flex; gap:10px; align-items:center; font-weight:900; letter-spacing:-0.02em; }
+    .dot { width:12px; height:12px; border-radius:50%; background:var(--brand); box-shadow:0 0 0 6px var(--soft); }
+    .side-title { margin:26px 0 6px; font-size:13px; color:var(--muted); font-weight:800; text-transform:uppercase; letter-spacing:.08em; }
+    .gpt-list { display:grid; gap:8px; }
+    .gpt-link { padding:11px 12px; border:1px solid var(--line); border-radius:14px; color:#334155; font-weight:700; }
+    .gpt-link.active { color:var(--brand); border-color:#bfdbfe; background:var(--soft); }
+    .quota { margin-top:18px; padding:13px; border:1px solid var(--line); border-radius:16px; color:#475569; background:#f8fafc; font-size:13px; line-height:1.5; }
+    .auth { margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; }
+    .btn, button { border:0; border-radius:14px; padding:11px 14px; background:var(--brand); color:#fff; font-weight:800; cursor:pointer; }
+    .btn.secondary, button.secondary { background:#e2e8f0; color:#0f172a; }
+    .btn.danger, button.danger { background:var(--danger); }
+    .topbar { border-bottom:1px solid var(--line); background:rgba(255,255,255,.86); backdrop-filter:blur(10px); padding:18px 22px; display:flex; justify-content:space-between; align-items:center; gap:14px; }
+    h1 { margin:0; font-size:22px; letter-spacing:-0.03em; }
+    .subtitle { margin:4px 0 0; color:var(--muted); font-size:13px; }
+    .messages { flex:1; overflow:auto; padding:24px; display:flex; flex-direction:column; gap:16px; }
+    .msg { max-width:880px; width:fit-content; padding:15px 17px; border-radius:18px; border:1px solid var(--line); line-height:1.62; white-space:pre-wrap; word-break:break-word; background:#fff; box-shadow:0 10px 30px rgba(15,23,42,.04); }
+    .msg.user { margin-left:auto; color:#fff; background:var(--brand); border-color:var(--brand); }
+    .msg.system { width:auto; max-width:none; background:#fff7ed; border-color:#fed7aa; color:#9a3412; }
+    .composer { border-top:1px solid var(--line); background:#fff; padding:16px 22px; }
+    .composer form { display:flex; gap:10px; align-items:flex-end; }
+    textarea { flex:1; min-height:54px; max-height:180px; resize:vertical; border:1px solid var(--line); border-radius:16px; padding:14px 15px; font:inherit; line-height:1.5; outline:none; }
+    textarea:focus { border-color:#93c5fd; box-shadow:0 0 0 4px var(--soft); }
+    .password-panel { display:none; margin:14px 22px 0; padding:14px; border:1px solid #fed7aa; border-radius:16px; background:#fff7ed; color:#9a3412; }
+    .password-panel.show { display:block; }
+    .password-row { display:flex; gap:8px; margin-top:10px; }
+    .password-row input { flex:1; border:1px solid #fdba74; border-radius:12px; padding:11px 12px; font:inherit; }
+    .small { color:var(--muted); font-size:12px; line-height:1.5; }
+    @media (max-width: 860px) { .layout { grid-template-columns:1fr; } aside { border-right:0; border-bottom:1px solid var(--line); } .gpt-list { grid-template-columns:repeat(2, minmax(0,1fr)); } .composer form { flex-direction:column; align-items:stretch; } }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand"><span class="dot"></span><span>Paper_Talk</span></div>
+      <p class="side-title">Specialist GPTs</p>
+      <nav class="gpt-list" id="gptList"></nav>
+      <div class="quota" id="quotaBox">Quota 확인 중...</div>
+      <div class="auth"><a class="btn secondary" href="/specialist-gpts">GPT 목록</a><a class="btn" href="/auth/google">Google 로그인</a></div>
+      <p class="small">정적 HTML 파일이 없거나 잘못 올라가도 이 내장 페이지가 우선 표시됩니다.</p>
+    </aside>
+    <main>
+      <div class="topbar">
+        <div><h1 id="pageTitle">${profile.title}</h1><p class="subtitle" id="pageSubtitle">${profile.knowledgeLabel}</p></div>
+        <button class="secondary" id="newChatBtn" type="button">새 대화</button>
+      </div>
+      <section class="password-panel" id="passwordPanel">
+        <strong>Neuroscience GPT private access</strong>
+        <div>비밀번호를 입력하면 24시간 동안 접속할 수 있습니다.</div>
+        <div class="password-row"><input id="neuroPassword" type="password" placeholder="Password"><button type="button" id="passwordBtn">인증</button></div>
+        <div class="small" id="passwordStatus"></div>
+      </section>
+      <section class="messages" id="messages" aria-live="polite"></section>
+      <section class="composer">
+        <form id="chatForm">
+          <textarea id="messageInput" placeholder="질문을 입력하세요. 예: EGFR-mutant lung cancer에서 resistance mechanism 정리해줘" required></textarea>
+          <button id="sendBtn" type="submit">Send</button>
+          <button id="cancelBtn" class="danger" type="button" style="display:none">Cancel</button>
+        </form>
+      </section>
+    </main>
+  </div>
+  <script>
+    var INITIAL = ${initialData};
+    var GPTS = [
+      { key:'neuroscience', path:'/neuroscience-gpt', title:'Neuroscience GPT' },
+      { key:'mitochondria', path:'/mitochondria-gpt', title:'Mitochondria GPT' },
+      { key:'single_cell', path:'/single-cell-gpt', title:'Single-cell GPT' },
+      { key:'spatial_biology', path:'/spatial-biology-gpt', title:'Spatial Biology GPT' },
+      { key:'cancer_genomics', path:'/cancer-genomics-gpt', title:'Cancer Genomics GPT' }
+    ];
+    var state = { gptKey: INITIAL.gptKey, threadId: '', pendingCancelId: '', isSending: false };
+    var el = function(id) { return document.getElementById(id); };
+    var messages = el('messages');
+
+    function escapeHtml(value) {
+      return String(value || '').replace(/[&<>"']/g, function(ch) {
+        return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[ch];
+      });
+    }
+
+    function addMessage(role, text) {
+      var div = document.createElement('div');
+      div.className = 'msg ' + role;
+      div.innerHTML = escapeHtml(text);
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+      return div;
+    }
+
+    function setSending(sending) {
+      state.isSending = sending;
+      el('sendBtn').disabled = sending;
+      el('messageInput').disabled = sending;
+      el('cancelBtn').style.display = sending ? 'inline-block' : 'none';
+    }
+
+    function renderGptList() {
+      el('gptList').innerHTML = GPTS.map(function(g) {
+        var cls = g.key === state.gptKey ? 'gpt-link active' : 'gpt-link';
+        return '<a class="' + cls + '" href="' + g.path + '">' + escapeHtml(g.title) + '</a>';
+      }).join('');
+    }
+
+    async function fetchJson(url, options) {
+      var res = await fetch(url, options || {});
+      var data = await res.json().catch(function() { return { ok:false, error:'Non-JSON response from server.' }; });
+      if (!res.ok && data && data.private) showPasswordPanel();
+      return data;
+    }
+
+    function showPasswordPanel() { el('passwordPanel').classList.add('show'); }
+
+    async function loadMe() {
+      var data = await fetchJson('/api/me');
+      if (!data.ok) {
+        el('quotaBox').textContent = data.error || 'Quota 정보를 불러오지 못했습니다.';
+        return;
+      }
+      var q = data.quota || {};
+      var who = data.user ? (data.user.name || data.user.email || 'Signed-in user') : 'Guest';
+      el('quotaBox').innerHTML = '<strong>' + escapeHtml(who) + '</strong><br>사용량: ' + (q.used || 0) + ' / ' + (q.limit || '-') + '<br>남은 횟수: ' + (q.remaining == null ? '-' : q.remaining);
+    }
+
+    async function submitPassword() {
+      var password = el('neuroPassword').value.trim();
+      if (!password) return;
+      el('passwordStatus').textContent = '확인 중...';
+      var data = await fetchJson('/api/neuro-gpt/access', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body:JSON.stringify({ password: password })
+      });
+      if (data.ok) {
+        el('passwordStatus').textContent = '인증되었습니다. 이제 질문할 수 있습니다.';
+        setTimeout(function() { el('passwordPanel').classList.remove('show'); }, 700);
+      } else {
+        el('passwordStatus').textContent = data.error || '인증 실패';
+      }
+    }
+
+    function makeCancelId() {
+      var random = Math.random().toString(36).slice(2);
+      return 'web_' + Date.now().toString(36) + '_' + random;
+    }
+
+    async function sendMessage(evt) {
+      evt.preventDefault();
+      if (state.isSending) return;
+      var input = el('messageInput');
+      var message = input.value.trim();
+      if (!message) return;
+      input.value = '';
+      addMessage('user', message);
+      var placeholder = addMessage('assistant', '생각 중...');
+      state.pendingCancelId = makeCancelId();
+      setSending(true);
+      try {
+        var data = await fetchJson('/api/gpt/chat', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body:JSON.stringify({ message: message, threadId: state.threadId, gptKey: state.gptKey, cancelId: state.pendingCancelId })
+        });
+        if (data.ok) {
+          state.threadId = data.threadId || state.threadId;
+          placeholder.innerHTML = escapeHtml(data.answer || 'No answer returned.');
+          if (data.quota) loadMe();
+        } else if (data.canceled) {
+          placeholder.className = 'msg system';
+          placeholder.innerHTML = escapeHtml(data.error || 'Canceled.');
+        } else {
+          placeholder.className = 'msg system';
+          placeholder.innerHTML = escapeHtml(data.error || 'Request failed.');
+        }
+      } catch (err) {
+        placeholder.className = 'msg system';
+        placeholder.innerHTML = escapeHtml(err && err.message ? err.message : err);
+      } finally {
+        setSending(false);
+        state.pendingCancelId = '';
+      }
+    }
+
+    async function cancelRequest() {
+      if (!state.pendingCancelId) return;
+      await fetchJson('/api/gpt/cancel', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body:JSON.stringify({ cancelId: state.pendingCancelId, gptKey: state.gptKey })
+      });
+    }
+
+    function newChat() {
+      state.threadId = '';
+      messages.innerHTML = '';
+      addMessage('assistant', INITIAL.title + '입니다. 질문을 입력해 주세요.');
+    }
+
+    el('chatForm').addEventListener('submit', sendMessage);
+    el('cancelBtn').addEventListener('click', cancelRequest);
+    el('newChatBtn').addEventListener('click', newChat);
+    el('passwordBtn').addEventListener('click', submitPassword);
+    el('neuroPassword').addEventListener('keydown', function(evt) { if (evt.key === 'Enter') submitPassword(); });
+
+    renderGptList();
+    loadMe();
+    if (INITIAL.isNeuroPrivate) showPasswordPanel();
+    newChat();
+  </script>
+</body>
+</html>`);
 }
 
 function isBlockedAI(request) {
@@ -5497,16 +6129,16 @@ async function safeRetrievePaperContextForChat(message, env, gptKey = DEFAULT_GP
 }
 
 
-async function callOpenAIGeneralNoRetrieval(userMessage, env) {
+async function callOpenAIGeneralNoRetrieval(userMessage, env, cancelRuntime = null) {
   if (!env.OPENAI_API_KEY) return "OPENAI_API_KEY is missing.";
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
+  await cancelRuntime?.throwIfCanceled?.();
+  const abortable = createLinkedAbortController(cancelRuntime, 45000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      signal: controller.signal,
+      signal: abortable.signal,
       headers: {
         "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
@@ -5555,9 +6187,15 @@ Plain text only.`
 
     return extractOpenAIText(data) || "No answer returned.";
   } catch (error) {
+    if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
+      return USER_CANCELED_MESSAGE;
+    }
+    if (error && error.name === "AbortError") {
+      return "OpenAI general request timeout after 45 seconds. Please try a narrower question.";
+    }
     return `OpenAI general request failed safely: ${error?.message || error}`;
   } finally {
-    clearTimeout(timeout);
+    abortable.cleanup();
   }
 }
 
@@ -5796,7 +6434,7 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
   const queryLimit = paperTalkIntent === "PIPELINE_WORKFLOW" ? 8 : (paperTalkIntent === "METHOD_EXTRACTION" ? 6 : 4);
   return [...new Set(queries.filter(Boolean))].slice(0, queryLimit);
 }
-async function inferPaperTalkResearchIntentForChat(userMessage, env) {
+async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRuntime = null) {
   const text = String(userMessage || "").trim();
   const heuristic = heuristicPaperTalkPlanner(text);
   const heuristicQueries = buildPaperTalkRetrievalQueries(text, heuristic.primaryDomain, heuristic.paperTalkIntent);
@@ -5833,13 +6471,13 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
 
   if (!text || !env.OPENAI_API_KEY) return fallback;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
+  await cancelRuntime?.throwIfCanceled?.();
+  const abortable = createLinkedAbortController(cancelRuntime, 9000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      signal: controller.signal,
+      signal: abortable.signal,
       headers: {
         "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
@@ -5922,10 +6560,13 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     inferred.retrieval_query = inferred.retrieval_queries.join(", ");
 
     return inferred;
-  } catch {
+  } catch (error) {
+    if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
+      throw new UserCanceledError();
+    }
     return fallback;
   } finally {
-    clearTimeout(timeout);
+    abortable.cleanup();
   }
 }
 
@@ -6035,6 +6676,20 @@ function getRequestedPaperOrdinal(message) {
 
 function isPaperRecommendationRequest(message) {
   return heuristicPaperTalkPlanner(message).paperTalkIntent === "LITERATURE_REVIEW";
+}
+
+function isEvidenceStyleAssociationQuestion(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  // Broad biological association / crosstalk questions should behave like the
+  // older Paper_Talk style: answer the biology first, then show a few retrieved
+  // DB paper titles as supporting context. This preserves the preferred answer
+  // style for questions such as CAF-macrophage immune exclusion.
+  const asksAssociation = /(association|associated|relationship|relation|correlation|correlated|link|linked|crosstalk|cross-talk|interaction|interact|connected|connection|관련|연관|관계|상관|상호작용)/i.test(text);
+  const hasCancerImmuneContext = /(caf|fibroblast|fibroblasts|macrophage|macrophages|tam|tams|immune|immuno|immunosuppression|immunosuppressive|suppression|excluded|exclusion|tme|tumou?r microenvironment|cancer|tumou?r|면역|면역억제|면역배제|대식세포|섬유아세포|종양미세환경|암)/i.test(text);
+  const notMethodOrPipeline = !/(pipeline|workflow|package|software|tool|method|algorithm|파이프라인|워크플로우|패키지|툴|도구|방법론|분석법)/i.test(text);
+
+  return asksAssociation && hasCancerImmuneContext && notMethodOrPipeline;
 }
 
 function isResearchDirectionRequest(message) {
@@ -6252,7 +6907,7 @@ async function saveSupportingPapersForAssistantMessage({ assistantMessageId, thr
   }
 }
 
-async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent, env, gptKey = DEFAULT_GPT_KEY) {
+async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent, env, gptKey = DEFAULT_GPT_KEY, cancelRuntime = null) {
   gptKey = normalizeGptKey(gptKey);
   // v57 safe DB-grounded retrieval:
   // Research questions should always consult Paper_Talk DB, but the chat path must stay bounded.
@@ -6260,6 +6915,7 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
   // calls and Cloudflare may return an HTML 503 page before our JSON catch can run.
   const text = String(userMessage || "").trim();
   if (!text) return [];
+  await cancelRuntime?.throwIfCanceled?.();
 
   const rawQueries = [
     text,
@@ -6279,10 +6935,15 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
   const all = [];
 
   for (const query of uniqueQueries) {
+    await cancelRuntime?.throwIfCanceled?.();
     try {
       const items = await safeRetrievePaperContextForChat(query, env, gptKey);
+      await cancelRuntime?.throwIfCanceled?.();
       if (Array.isArray(items) && items.length) all.push(...items);
-    } catch {
+    } catch (error) {
+      if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
+        throw new UserCanceledError();
+      }
       // Keep the route alive. Retrieval failure should not turn into an HTML 503 response.
     }
 
@@ -6290,6 +6951,7 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
     if (mergeKnowledgeResults(all).length >= PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS) break;
   }
 
+  await cancelRuntime?.throwIfCanceled?.();
   const merged = trimContextForChat(mergeKnowledgeResults(all));
 
   // Optional tiny fallback: if inferred English queries missed Korean/mixed-language text,
@@ -6300,13 +6962,19 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
       if (titleCandidate && titleCandidate !== text) {
         return trimContextForChat(await safeRetrievePaperContextForChat(titleCandidate, env, gptKey));
       }
-    } catch {}
+    } catch (error) {
+      if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
+        throw new UserCanceledError();
+      }
+    }
   }
 
   return merged;
 }
 
 async function gptChat(request, env) {
+  let activeCancelId = "";
+  let activeCancelOwnerKey = "";
   const bodyForAccess = await request.clone().json().catch(() => ({}));
   const gptKeyForAccess = getGptKeyFromRequestData(bodyForAccess);
   const neuroAccessError = requireNeuroGptAccessIfNeeded(request, env, gptKeyForAccess);
@@ -6328,9 +6996,19 @@ async function gptChat(request, env) {
     const gptProfile = getGptProfile(gptKey);
     let threadId = String(data.threadId || "").trim();
 
+    const cancelId = normalizeGptCancelId(data.cancelId || data.requestId || data.chatRequestId || "");
+    const cancelOwnerKey = await getGptCancelOwnerKey(request, env, user);
+    activeCancelId = cancelId;
+    activeCancelOwnerKey = cancelOwnerKey;
+    const cancelRuntime = makeGptCancelRuntime({ request, env, cancelId, ownerKey: cancelOwnerKey });
+    await registerGptCancellableRequest({ env, cancelId, ownerKey: cancelOwnerKey, gptKey });
+    await cancelRuntime.throwIfCanceled();
+
     if (!message) {
       return json({ ok: false, error: "Message is required." }, 400);
     }
+
+    await cancelRuntime.throwIfCanceled();
 
     const quotaBefore = isGuest
       ? await getGuestGptQuota(request, env)
@@ -6343,8 +7021,8 @@ async function gptChat(request, env) {
         signupRequired: isGuest,
         signupUrl: isGuest ? "/auth/google" : null,
         error: isGuest
-          ? "You have used all 3 free guest questions today. Please sign up for free with Google to continue with 20 total GPT questions per month."
-          : "Monthly limit reached. You have used all 20 total GPT questions for this month across Paper_Talk Vision GPT and all Specialist GPTs. Your quota will reset automatically next month.",
+          ? `You have used all 3 free guest questions today. Please sign up for free with Google to continue with ${SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT} total GPT questions per month.`
+          : `Monthly limit reached. You have used all ${SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT} total GPT questions for this month across Paper_Talk Vision GPT and all Specialist GPTs. Your quota will reset automatically next month.`,
         quota: {
           used: quotaBefore.used,
           limit: quotaBefore.limit,
@@ -6455,7 +7133,9 @@ async function gptChat(request, env) {
       });
     }
 
-    const inferredIntent = await inferPaperTalkResearchIntentForChat(effectiveMessage, env);
+    await cancelRuntime.throwIfCanceled();
+    const inferredIntent = await inferPaperTalkResearchIntentForChat(effectiveMessage, env, cancelRuntime);
+    await cancelRuntime.throwIfCanceled();
     const generalOrBroad = isLikelyGeneralQuestionFast(message) && !inferredIntent.is_research_related;
     let context = [];
 
@@ -6467,8 +7147,12 @@ async function gptChat(request, env) {
     // was retrieved instead of answering from outside literature.
     if (!generalOrBroad || inferredIntent.should_use_db_evidence) {
       try {
-        context = await retrievePaperTalkDbForResearchIntent(effectiveMessage, inferredIntent, env, gptKey);
-      } catch {
+        context = await retrievePaperTalkDbForResearchIntent(effectiveMessage, inferredIntent, env, gptKey, cancelRuntime);
+        await cancelRuntime.throwIfCanceled();
+      } catch (error) {
+        if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
+          throw new UserCanceledError();
+        }
         context = [];
       }
     }
@@ -6478,9 +7162,13 @@ async function gptChat(request, env) {
       try {
         const titleCandidate = extractLikelyPaperTitleForSafeLookup(effectiveMessage);
         if (titleCandidate && titleCandidate !== message) {
-          context = await retrievePaperTalkDbForResearchIntent(titleCandidate, inferredIntent, env, gptKey);
+          context = await retrievePaperTalkDbForResearchIntent(titleCandidate, inferredIntent, env, gptKey, cancelRuntime);
+          await cancelRuntime.throwIfCanceled();
         }
-      } catch {
+      } catch (error) {
+        if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
+          throw new UserCanceledError();
+        }
         context = [];
       }
     }
@@ -6491,7 +7179,7 @@ async function gptChat(request, env) {
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
 
     let assistantText = (generalOrBroad && !context.length)
-      ? await callOpenAIGeneralNoRetrieval(message, env)
+      ? await callOpenAIGeneralNoRetrieval(message, env, cancelRuntime)
       : await callOpenAIForPaperTalk({
           userMessage: `${gptProfile.title} context. User question: ${effectiveMessage}`,
           context,
@@ -6501,7 +7189,14 @@ async function gptChat(request, env) {
           recentMessages: [],
           autoIntent,
           strictActivePaperLocked: false
-        }, env);
+        }, env, cancelRuntime);
+
+    if (isUserCanceledText(assistantText)) {
+      await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
+      return canceledChatJson();
+    }
+
+    await cancelRuntime.throwIfCanceled();
 
     const assistantFailed =
       /^OpenAI API timeout/i.test(assistantText) ||
@@ -6510,6 +7205,7 @@ async function gptChat(request, env) {
       /returned non-JSON response/i.test(assistantText);
 
     if (assistantFailed) {
+      await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
       return json({
         ok: false,
         guest: isGuest,
@@ -6554,6 +7250,8 @@ async function gptChat(request, env) {
 
     assistantText = enforceStrictUserOutputFormat(assistantText, message);
 
+    await cancelRuntime.throwIfCanceled();
+
     if (!isGuest) {
       const assistantMessageId = crypto.randomUUID();
 
@@ -6578,9 +7276,13 @@ async function gptChat(request, env) {
       `).bind(message.slice(0, 60), threadId, user.id, gptKey).run();
     }
 
+    await cancelRuntime.throwIfCanceled();
+
     const quotaAfter = isGuest
       ? await incrementGuestGptUsage(request, env)
       : await incrementMonthlyGptUsage(user.id, env);
+
+    await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
 
     return json({
       ok: true,
@@ -6606,6 +7308,13 @@ async function gptChat(request, env) {
       }))
     });
   } catch (error) {
+    if (isUserCanceledError(error) || isUserCanceledText(error?.message)) {
+      try {
+        await markGptCancellableRequestFinished({ env, cancelId: activeCancelId, ownerKey: activeCancelOwnerKey });
+      } catch {}
+      return canceledChatJson();
+    }
+
     return json({
       ok: false,
       error: `GPT chat failed safely: ${error?.message || error}`
@@ -9843,6 +10552,10 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
     return "LITERATURE_REVIEW";
   }
 
+  if (hasContext && isEvidenceStyleAssociationQuestion(raw)) {
+    return "LITERATURE_REVIEW";
+  }
+
   if (isContinuationMoreRequest(raw)) {
     return "FOLLOW_UP_MORE";
   }
@@ -10125,7 +10838,7 @@ ${common}
 
 AUTOMATIC STYLE: USER-FRIENDLY TREND-BASED PAPER RECOMMENDATION
 
-The user is asking for papers, recent trends, hot topics, representative studies, or what to read.
+The user is asking for papers, recent trends, hot topics, representative studies, what to read, or a biological association question that benefits from named Paper_Talk DB evidence.
 Do not answer as a mechanical paper-by-paper summary.
 Help the user understand the field first, then place papers inside that story.
 
@@ -10511,7 +11224,7 @@ Expected answer behavior for this user request:
 `.trim();
 }
 
-async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env) {
+async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env, cancelRuntime = null) {
   context = trimContextForChat(context);
   const hasContext = context.length > 0;
 
@@ -10890,13 +11603,13 @@ Never answer a paper recommendation request with only a field summary.
     return "OPENAI_API_KEY is missing.";
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 70000);
+  await cancelRuntime?.throwIfCanceled?.();
+  const abortable = createLinkedAbortController(cancelRuntime, 70000);
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      signal: controller.signal,
+      signal: abortable.signal,
       headers: {
         "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
@@ -10924,13 +11637,16 @@ Never answer a paper recommendation request with only a field summary.
 
     return extractOpenAIText(data) || getOpenAIErrorMessage(data, "No answer was generated. Please try again with a shorter question.");
   } catch (error) {
+    if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
+      return USER_CANCELED_MESSAGE;
+    }
     if (error && error.name === "AbortError") {
       return "OpenAI API timeout after 70 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
     }
 
     return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
   } finally {
-    clearTimeout(timeout);
+    abortable.cleanup();
   }
 }
 
