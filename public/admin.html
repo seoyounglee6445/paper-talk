@@ -79,6 +79,40 @@
       max-width: 720px;
       margin-top: 12px;
     }
+
+
+    /* Admin nav one-line fix: prevent menu labels from breaking into two lines. */
+    .header .nav {
+      display: flex !important;
+      align-items: center !important;
+      flex-wrap: nowrap !important;
+      gap: 18px !important;
+      overflow-x: auto !important;
+      overflow-y: hidden !important;
+      -webkit-overflow-scrolling: touch;
+    }
+    .header .nav .logo,
+    .header .nav a {
+      white-space: nowrap !important;
+      flex: 0 0 auto !important;
+      line-height: 1.1 !important;
+    }
+    .header .nav a {
+      font-size: 15px !important;
+    }
+    .header .nav .logo {
+      margin-right: auto !important;
+    }
+
+    @media (max-width: 900px) {
+      .header .nav {
+        gap: 14px !important;
+      }
+      .header .nav a {
+        font-size: 14px !important;
+      }
+    }
+
   </style>
 
 </head>
