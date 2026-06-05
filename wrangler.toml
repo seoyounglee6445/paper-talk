@@ -16,4 +16,4 @@ database_id = "5b33c4d2-9d1d-47f0-993f-a694c2b05d8a"
 [[d1_databases]]
 binding = "DB_NEUROSCIENCE"
 database_name = "neuro-gpt-db"
-database_id = "실제_neuro_gpt_db_id"
+database_id = "실제_neuro-gpt-db_UUID"
