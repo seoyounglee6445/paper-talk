@@ -95,6 +95,18 @@ gtag('config', 'G-WWSD3F58L6');
   text-decoration: none !important;
 }
 
+/* Keep navigation labels on one line. */
+.header .nav {
+  flex-wrap: nowrap !important;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.header .nav a,
+.header .nav .logo {
+  white-space: nowrap !important;
+  flex: 0 0 auto;
+}
 </style>
 </head>
 
@@ -112,7 +124,7 @@ gtag('config', 'G-WWSD3F58L6');
     <a href="/research.html">Research Paper</a>
     <a href="/study.html">Study Materials</a>
     <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
-    <a href="/specialist-gpts.html">Specialist GPTs</a>
+    <a href="/specialist-gpts.html" onclick="event.preventDefault(); window.location.href='/specialist-gpts.html'; return false;">Specialist GPTs</a>
     <a href="/community.html">Community</a>
     <a href="/career.html">Career</a>
   </nav>
