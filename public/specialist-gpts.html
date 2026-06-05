@@ -37,83 +37,169 @@ gtag('config', 'G-WWSD3F58L6');
 }
 
 .specialist-hero p {
-  max-width: 880px;
+  max-width: 900px;
   line-height: 1.65;
 }
 
-.gpt-grid {
+.specialist-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 22px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
   margin-top: 28px;
 }
 
-.gpt-card {
+.specialist-card {
   background: #ffffff;
   border: 1px solid #b9c7ff;
   border-radius: 24px;
-  padding: 26px;
+  padding: 24px;
+  min-height: 240px;
   box-shadow: 0 18px 40px rgba(0,0,0,0.04);
   display: flex;
   flex-direction: column;
-  min-height: 260px;
 }
 
-.gpt-card h2 {
-  margin-top: 0;
-  margin-bottom: 12px;
+.specialist-card h2 {
+  margin: 0 0 8px;
   color: #1428a0;
-  font-size: 24px;
+  font-size: 23px;
+  line-height: 1.2;
 }
 
-.gpt-card p {
+.specialist-owner {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: #475569;
+  font-weight: 700;
+}
+
+.specialist-card p {
   line-height: 1.55;
-  margin-bottom: 18px;
+  margin: 0 0 16px;
 }
 
-.gpt-tags {
+.specialist-tags {
   display: flex;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: 8px;
   margin: 8px 0 18px;
 }
 
-.gpt-tag {
+.specialist-tag {
   display: inline-block;
-  font-size: 12px;
-  font-weight: 700;
-  color: #1428a0;
-  background: #e8f0ff;
-  border: 1px solid #b9c7ff;
-  border-radius: 999px;
   padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #b9c7ff;
+  background: #e8f0ff;
+  color: #1428a0;
+  font-size: 12px;
+  font-weight: 800;
 }
 
-.gpt-card .btn {
+.specialist-status {
   margin-top: auto;
-  width: fit-content;
+}
+
+.private-btn,
+.coming-soon-btn {
+  display: inline-block;
+  border: none;
+  border-radius: 999px;
+  padding: 11px 18px;
+  font-weight: 800;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.private-btn {
+  background: #1428a0;
+  color: #ffffff;
+}
+
+.coming-soon-btn {
+  background: #e5e7eb;
+  color: #64748b;
+  cursor: not-allowed;
 }
 
 .private-note {
-  margin-top: 8px;
+  margin-top: 10px;
   color: #64748b;
   font-size: 13px;
   line-height: 1.45;
 }
 
-@media (max-width: 1000px) {
-  .gpt-grid {
+.password-panel {
+  display: none;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #b9c7ff;
+  border-radius: 16px;
+  background: #f8fbff;
+}
+
+.password-panel.active {
+  display: block;
+}
+
+.password-panel label {
+  display: block;
+  font-weight: 800;
+  color: #1428a0;
+  margin-bottom: 8px;
+}
+
+.password-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.password-row input {
+  min-width: 0;
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #b9c7ff;
+  border-radius: 10px;
+}
+
+.password-row button {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: #1428a0;
+  color: white;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.password-message {
+  margin-top: 10px;
+  color: #ef4444;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@media (max-width: 1100px) {
+  .specialist-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 640px) {
-  .gpt-grid {
+  .specialist-grid {
     grid-template-columns: 1fr;
   }
 
-  .gpt-card {
+  .specialist-card {
+    min-height: auto;
     padding: 20px;
+  }
+
+  .password-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>
@@ -148,99 +234,153 @@ gtag('config', 'G-WWSD3F58L6');
   <section class="specialist-hero">
     <h1>Specialist GPTs</h1>
     <p>
-      Choose a domain-specific Paper_Talk GPT. Each GPT uses the same chat system and monthly quota,
-      but routes questions to its own curated knowledge space.
+      Private and upcoming domain-specific GPTs for Paper_Talk.
       <br><br>
       Guest usage: Try 3 questions. <br>
       Signed-in usage: 50 questions per user per month.
     </p>
   </section>
 
-  <section class="gpt-grid" aria-label="Specialist GPT list">
+  <section class="specialist-grid" aria-label="Specialist GPTs">
 
-    <article class="gpt-card">
-      <h2>Paper_Talk Vision GPT</h2>
+    <article class="specialist-card">
+      <h2>Neuro-GPT</h2>
+      <p class="specialist-owner">From Sungmo Park</p>
       <p>
-        General research GPT for Paper_Talk. Ask about papers, validation, research gaps,
-        biological interpretation, and project ideas.
+        A private neuroscience GPT for curated neuroscience literature,
+        neurodegeneration, brain aging, synaptic biology, neural circuits,
+        validation, gaps, and research ideas.
       </p>
-      <div class="gpt-tags">
-        <span class="gpt-tag">General research</span>
-        <span class="gpt-tag">Papers</span>
-        <span class="gpt-tag">Ideas</span>
+      <div class="specialist-tags">
+        <span class="specialist-tag">Private</span>
+        <span class="specialist-tag">Password required</span>
+        <span class="specialist-tag">Neuroscience</span>
       </div>
-      <a class="btn" href="/visium-gpt.html?gpt=paper_talk">Open Vision GPT</a>
+      <div class="specialist-status">
+        <button id="openNeuroBtn" class="private-btn" type="button">Open Neuro-GPT</button>
+        <div class="private-note">This GPT is private. Enter the access password to continue.</div>
+
+        <div id="neuroPasswordPanel" class="password-panel">
+          <label for="neuroPasswordInput">Neuro-GPT password</label>
+          <div class="password-row">
+            <input id="neuroPasswordInput" type="password" autocomplete="current-password" placeholder="Enter password">
+            <button id="submitNeuroPasswordBtn" type="button">Enter</button>
+          </div>
+          <div id="neuroPasswordMessage" class="password-message"></div>
+        </div>
+      </div>
     </article>
 
-    <article class="gpt-card">
-      <h2>Neuroscience GPT</h2>
-      <p>
-        Specialist GPT for neuroscience literature, neurodegeneration, brain aging,
-        neural circuits, synaptic biology, and validation ideas.
-      </p>
-      <div class="gpt-tags">
-        <span class="gpt-tag">Neuroscience</span>
-        <span class="gpt-tag">Brain aging</span>
-        <span class="gpt-tag">Neurodegeneration</span>
-      </div>
-      <a class="btn" href="/visium-gpt.html?gpt=neuroscience">Open Neuroscience GPT</a>
-      <div class="private-note">Private GPT. If prompted, enter the configured Neuroscience GPT password.</div>
-    </article>
-
-    <article class="gpt-card">
+    <article class="specialist-card">
       <h2>Mitochondria GPT</h2>
+      <p class="specialist-owner">Coming Soon</p>
       <p>
-        Specialist GPT for mitochondrial metabolism, mtDNA, stress responses,
-        organelle crosstalk, disease mechanisms, and research ideas.
+        Mitochondrial metabolism, mtDNA, stress response, organelle crosstalk,
+        disease mechanisms, validation, gaps, and research ideas.
       </p>
-      <div class="gpt-tags">
-        <span class="gpt-tag">Mitochondria</span>
-        <span class="gpt-tag">Metabolism</span>
-        <span class="gpt-tag">mtDNA</span>
+      <div class="specialist-tags">
+        <span class="specialist-tag">Mitochondria</span>
+        <span class="specialist-tag">Metabolism</span>
       </div>
-      <a class="btn" href="/visium-gpt.html?gpt=mitochondria">Open Mitochondria GPT</a>
+      <div class="specialist-status">
+        <button class="coming-soon-btn" type="button" disabled>Coming Soon</button>
+      </div>
     </article>
 
-    <article class="gpt-card">
+    <article class="specialist-card">
       <h2>Single-cell GPT</h2>
+      <p class="specialist-owner">Coming Soon</p>
       <p>
-        Specialist GPT for scRNA-seq, scATAC-seq, multiome integration,
-        cell states, trajectories, perturbation analysis, and pipelines.
+        scRNA-seq, scATAC-seq, multiome integration, cell states,
+        trajectories, perturbation analysis, and practical pipelines.
       </p>
-      <div class="gpt-tags">
-        <span class="gpt-tag">scRNA-seq</span>
-        <span class="gpt-tag">scATAC-seq</span>
-        <span class="gpt-tag">Multiome</span>
+      <div class="specialist-tags">
+        <span class="specialist-tag">scRNA-seq</span>
+        <span class="specialist-tag">Multiome</span>
       </div>
-      <a class="btn" href="/visium-gpt.html?gpt=single_cell">Open Single-cell GPT</a>
+      <div class="specialist-status">
+        <button class="coming-soon-btn" type="button" disabled>Coming Soon</button>
+      </div>
     </article>
 
-    <article class="gpt-card">
+    <article class="specialist-card">
       <h2>Spatial Biology GPT</h2>
+      <p class="specialist-owner">Coming Soon</p>
       <p>
-        Specialist GPT for spatial transcriptomics, Visium, Xenium, CosMx,
-        MERFISH, tissue niches, spatial cell-cell interaction, and spatial omics.
+        Spatial transcriptomics, Visium, Xenium, CosMx, MERFISH,
+        tissue niches, spatial omics, and spatial cell-cell interaction.
       </p>
-      <div class="gpt-tags">
-        <span class="gpt-tag">Spatial biology</span>
-        <span class="gpt-tag">Visium</span>
-        <span class="gpt-tag">Xenium</span>
+      <div class="specialist-tags">
+        <span class="specialist-tag">Spatial omics</span>
+        <span class="specialist-tag">Tissue niches</span>
       </div>
-      <a class="btn" href="/visium-gpt.html?gpt=spatial_biology">Open Spatial Biology GPT</a>
+      <div class="specialist-status">
+        <button class="coming-soon-btn" type="button" disabled>Coming Soon</button>
+      </div>
     </article>
 
-    <article class="gpt-card">
+    <article class="specialist-card">
       <h2>Cancer Genomics GPT</h2>
+      <p class="specialist-owner">Coming Soon</p>
       <p>
-        Specialist GPT for tumor evolution, immune microenvironment,
-        biomarkers, multi-omics, cancer genomics papers, and validation ideas.
+        Tumor evolution, immune microenvironment, biomarkers,
+        multi-omics, cancer genomics papers, validation, and research ideas.
       </p>
-      <div class="gpt-tags">
-        <span class="gpt-tag">Cancer genomics</span>
-        <span class="gpt-tag">TME</span>
-        <span class="gpt-tag">Biomarkers</span>
+      <div class="specialist-tags">
+        <span class="specialist-tag">Cancer genomics</span>
+        <span class="specialist-tag">TME</span>
       </div>
-      <a class="btn" href="/visium-gpt.html?gpt=cancer_genomics">Open Cancer Genomics GPT</a>
+      <div class="specialist-status">
+        <button class="coming-soon-btn" type="button" disabled>Coming Soon</button>
+      </div>
+    </article>
+
+    <article class="specialist-card">
+      <h2>Immunology GPT</h2>
+      <p class="specialist-owner">Coming Soon</p>
+      <p>
+        Immune cell states, tumor immunity, inflammation,
+        immune suppression, immune exclusion, and immunotherapy questions.
+      </p>
+      <div class="specialist-tags">
+        <span class="specialist-tag">Immunology</span>
+        <span class="specialist-tag">Immunotherapy</span>
+      </div>
+      <div class="specialist-status">
+        <button class="coming-soon-btn" type="button" disabled>Coming Soon</button>
+      </div>
+    </article>
+
+    <article class="specialist-card">
+      <h2>Aging GPT</h2>
+      <p class="specialist-owner">Coming Soon</p>
+      <p>
+        Aging biology, senescence, tissue remodeling, age-associated disease,
+        longitudinal omics, and validation ideas.
+      </p>
+      <div class="specialist-tags">
+        <span class="specialist-tag">Aging</span>
+        <span class="specialist-tag">Senescence</span>
+      </div>
+      <div class="specialist-status">
+        <button class="coming-soon-btn" type="button" disabled>Coming Soon</button>
+      </div>
+    </article>
+
+    <article class="specialist-card">
+      <h2>Methods GPT</h2>
+      <p class="specialist-owner">Coming Soon</p>
+      <p>
+        Bioinformatics methods, analysis design, workflows, package selection,
+        benchmarking, and reproducible research planning.
+      </p>
+      <div class="specialist-tags">
+        <span class="specialist-tag">Methods</span>
+        <span class="specialist-tag">Pipelines</span>
+      </div>
+      <div class="specialist-status">
+        <button class="coming-soon-btn" type="button" disabled>Coming Soon</button>
+      </div>
     </article>
 
   </section>
@@ -248,6 +388,15 @@ gtag('config', 'G-WWSD3F58L6');
 </main>
 
 <script>
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 async function readJsonSafely(response) {
   const rawText = await response.text();
   try {
@@ -281,7 +430,68 @@ async function initAuthBox() {
   topLogoutArea.style.display = "none";
 }
 
-document.addEventListener("DOMContentLoaded", initAuthBox);
+function setupNeuroPasswordGate() {
+  const openBtn = document.getElementById("openNeuroBtn");
+  const panel = document.getElementById("neuroPasswordPanel");
+  const input = document.getElementById("neuroPasswordInput");
+  const submitBtn = document.getElementById("submitNeuroPasswordBtn");
+  const message = document.getElementById("neuroPasswordMessage");
+
+  async function submitPassword() {
+    const password = input.value.trim();
+
+    if (!password) {
+      message.textContent = "Please enter the Neuro-GPT password.";
+      return;
+    }
+
+    message.textContent = "Checking password...";
+    submitBtn.disabled = true;
+
+    try {
+      const res = await fetch("/api/neuro-gpt/access", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password })
+      });
+
+      const data = await readJsonSafely(res);
+
+      if (!data || !data.ok || !data.authenticated) {
+        message.textContent = data?.error || "Incorrect password.";
+        submitBtn.disabled = false;
+        return;
+      }
+
+      window.location.href = "/visium-gpt.html?gpt=neuroscience";
+    } catch (error) {
+      message.textContent = error.message || "Password check failed.";
+      submitBtn.disabled = false;
+    }
+  }
+
+  openBtn.addEventListener("click", () => {
+    panel.classList.add("active");
+    message.textContent = "";
+    input.focus();
+  });
+
+  submitBtn.addEventListener("click", submitPassword);
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submitPassword();
+    }
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  initAuthBox();
+  setupNeuroPasswordGate();
+});
 </script>
 
 <script>
