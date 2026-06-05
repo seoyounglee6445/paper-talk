@@ -13,7 +13,7 @@ gtag('js', new Date());
 gtag('config', 'G-WWSD3F58L6');
 </script>
 
-<title>Paper_Talk Vision GPT</title>
+<title>Specialist GPTs - Paper_Talk</title>
 <link rel="stylesheet" href="/style.css">
 
 <style>
@@ -26,171 +26,94 @@ gtag('config', 'G-WWSD3F58L6');
 .auth-box #guestInfo {
   margin-right: 8px;
 }
-.gpt-layout {
+
+.specialist-hero {
+  margin-top: 34px;
+  margin-bottom: 28px;
+}
+
+.specialist-hero h1 {
+  margin-bottom: 14px;
+}
+
+.specialist-hero p {
+  max-width: 880px;
+  line-height: 1.65;
+}
+
+.gpt-grid {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 22px;
-  margin-top: 24px;
+  margin-top: 28px;
 }
 
-body.guest-mode .gpt-layout {
-  grid-template-columns: 1fr;
-}
-
-body.guest-mode .gpt-sidebar {
-  display: none;
-}
-
-.gpt-sidebar,
-.gpt-chat,
-.login-required-box {
-  background: white;
+.gpt-card {
+  background: #ffffff;
   border: 1px solid #b9c7ff;
   border-radius: 24px;
-  padding: 28px;
+  padding: 26px;
   box-shadow: 0 18px 40px rgba(0,0,0,0.04);
-}
-
-.thread-row {
   display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  min-height: 260px;
 }
 
-.thread-item {
-  flex: 1;
-  text-align: left;
-  padding: 10px;
-  border: 1px solid #b9c7ff;
-  border-radius: 8px;
-  background: #f8f8f8;
-  color: #1428a0;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.thread-item.active {
-  background: #e8f0ff;
-  border-color: #1428a0;
-}
-
-.delete-thread-btn {
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #ef4444;
-  color: white;
-  border: none;
-  cursor: pointer;
-  font-weight: 700;
-}
-
-.chat-box {
-  height: 520px;
-  overflow-y: auto;
-  border: 1px solid #ddd;
-  border-radius: 16px;
-  padding: 16px;
-  background: #fafafa;
+.gpt-card h2 {
+  margin-top: 0;
   margin-bottom: 12px;
+  color: #1428a0;
+  font-size: 24px;
 }
 
-.message {
-  margin-bottom: 14px;
-  padding: 12px;
-  border-radius: 10px;
-  line-height: 1.5;
-  white-space: pre-wrap;
+.gpt-card p {
+  line-height: 1.55;
+  margin-bottom: 18px;
 }
 
-.message.user {
-  background: #e8f0ff;
-}
-
-.message.assistant {
-  background: #ffffff;
-  border: 1px solid #ddd;
-}
-
-.message.assistant .signup-inline-btn {
-  display: inline-block;
-  margin-top: 12px;
-  padding: 10px 16px;
-  border-radius: 999px;
-  background: #1428a0;
-  color: #ffffff;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.chat-input-row {
+.gpt-tags {
   display: flex;
   gap: 8px;
-  align-items: center;
   flex-wrap: wrap;
+  margin: 8px 0 18px;
 }
 
-#messageInput {
-  flex: 1 1 320px;
-  min-height: 44px;
-  padding: 10px;
-}
-
-#quotaText {
+.gpt-tag {
   display: inline-block;
-  align-self: center;
-  font-size: 13px;
-  color: #1428a0;
+  font-size: 12px;
   font-weight: 700;
-  white-space: nowrap;
-  margin: 4px 0;
+  color: #1428a0;
+  background: #e8f0ff;
+  border: 1px solid #b9c7ff;
+  border-radius: 999px;
+  padding: 6px 10px;
 }
 
-#sendBtn,
-#stopBtn {
-  flex: 0 0 auto;
+.gpt-card .btn {
+  margin-top: auto;
+  width: fit-content;
 }
 
-#stopBtn {
-  background: #ef4444;
+.private-note {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
-@media (max-width: 900px) {
-  .gpt-layout {
+@media (max-width: 1000px) {
+  .gpt-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .gpt-grid {
     grid-template-columns: 1fr;
   }
 
-  #messageInput {
-    flex: 1 1 100%;
-    width: 100%;
-  }
-
-  #quotaText {
-    flex: 1 1 auto;
-  }
-}
-
-@media (max-width: 520px) {
-  .gpt-sidebar,
-  .gpt-chat,
-  .login-required-box {
-    padding: 18px;
-  }
-
-  .chat-box {
-    height: 420px;
-  }
-
-  .chat-input-row {
-    align-items: stretch;
-  }
-
-  #quotaText {
-    width: 100%;
-  }
-
-  #sendBtn,
-  #stopBtn {
-    width: 100%;
+  .gpt-card {
+    padding: 20px;
   }
 }
 </style>
@@ -207,13 +130,13 @@ body.guest-mode .gpt-sidebar {
   <a href="/specialist-gpts.html">Specialist GPTs</a>
   <a href="/community.html">Community</a>
   <a href="/career.html">Career</a>
-</nav>
+ </nav>
 </header>
 
 <main class="container">
 
   <div id="topLoginArea" class="auth-box" style="display:none;">
-    <span id="guestInfo">Sign in for free to get 50 questions per month. </span>
+    <span id="guestInfo">Sign in for free to get 50 questions per month.</span>
     <a id="loginBtn" class="btn" href="/auth/google">Sign in with Google</a>
   </div>
 
@@ -222,688 +145,151 @@ body.guest-mode .gpt-sidebar {
     <a id="logoutBtn" class="btn danger-btn" href="/auth/logout">Logout</a>
   </div>
 
-  <h1>Paper_Talk Vision GPT</h1>
-
- <p>
-  Private GPT workspace for Paper_Talk users.<br><br>
-  It answers using Research Paper knowledge added by Paper_Talk.<br>
-  The research database is updated daily with newly indexed publications.<br><br>
-  Guest usage: Try 3 questions. <br>
-  Signed-in usage: 50 questions per user per month.
-</p>
-
-  <section id="loginBox" class="login-required-box" style="display:none;">
-    <h2>Free sign-in available</h2>
-    <p>Please sign in with Google to continue after your free guest questions.</p>
-    <a class="btn" href="/auth/google">Sign in with Google</a>
+  <section class="specialist-hero">
+    <h1>Specialist GPTs</h1>
+    <p>
+      Choose a domain-specific Paper_Talk GPT. Each GPT uses the same chat system and monthly quota,
+      but routes questions to its own curated knowledge space.
+      <br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    </p>
   </section>
 
-  <section id="gptApp" class="gpt-layout" style="display:none;">
-    <aside class="gpt-sidebar">
-      <button id="newThreadBtn">+ New Chat</button>
-      <hr>
-      <div id="threadList"></div>
-    </aside>
+  <section class="gpt-grid" aria-label="Specialist GPT list">
 
-    <section class="gpt-chat">
-      <div id="chatBox" class="chat-box"></div>
-
-      <div class="chat-input-row">
- <textarea
-  id="messageInput"
-  placeholder="Thinking may take 10–30 sec.
-Ask about papers, validation, gaps, or research ideas..."
-></textarea>
-        
-        <span id="quotaText">Free questions left today: 3/3</span>
-
-        <button id="sendBtn">Send</button>
-        <button id="stopBtn" style="display:none;">Cancel</button>
+    <article class="gpt-card">
+      <h2>Paper_Talk Vision GPT</h2>
+      <p>
+        General research GPT for Paper_Talk. Ask about papers, validation, research gaps,
+        biological interpretation, and project ideas.
+      </p>
+      <div class="gpt-tags">
+        <span class="gpt-tag">General research</span>
+        <span class="gpt-tag">Papers</span>
+        <span class="gpt-tag">Ideas</span>
       </div>
-    </section>
+      <a class="btn" href="/visium-gpt.html?gpt=paper_talk">Open Vision GPT</a>
+    </article>
+
+    <article class="gpt-card">
+      <h2>Neuroscience GPT</h2>
+      <p>
+        Specialist GPT for neuroscience literature, neurodegeneration, brain aging,
+        neural circuits, synaptic biology, and validation ideas.
+      </p>
+      <div class="gpt-tags">
+        <span class="gpt-tag">Neuroscience</span>
+        <span class="gpt-tag">Brain aging</span>
+        <span class="gpt-tag">Neurodegeneration</span>
+      </div>
+      <a class="btn" href="/visium-gpt.html?gpt=neuroscience">Open Neuroscience GPT</a>
+      <div class="private-note">Private GPT. If prompted, enter the configured Neuroscience GPT password.</div>
+    </article>
+
+    <article class="gpt-card">
+      <h2>Mitochondria GPT</h2>
+      <p>
+        Specialist GPT for mitochondrial metabolism, mtDNA, stress responses,
+        organelle crosstalk, disease mechanisms, and research ideas.
+      </p>
+      <div class="gpt-tags">
+        <span class="gpt-tag">Mitochondria</span>
+        <span class="gpt-tag">Metabolism</span>
+        <span class="gpt-tag">mtDNA</span>
+      </div>
+      <a class="btn" href="/visium-gpt.html?gpt=mitochondria">Open Mitochondria GPT</a>
+    </article>
+
+    <article class="gpt-card">
+      <h2>Single-cell GPT</h2>
+      <p>
+        Specialist GPT for scRNA-seq, scATAC-seq, multiome integration,
+        cell states, trajectories, perturbation analysis, and pipelines.
+      </p>
+      <div class="gpt-tags">
+        <span class="gpt-tag">scRNA-seq</span>
+        <span class="gpt-tag">scATAC-seq</span>
+        <span class="gpt-tag">Multiome</span>
+      </div>
+      <a class="btn" href="/visium-gpt.html?gpt=single_cell">Open Single-cell GPT</a>
+    </article>
+
+    <article class="gpt-card">
+      <h2>Spatial Biology GPT</h2>
+      <p>
+        Specialist GPT for spatial transcriptomics, Visium, Xenium, CosMx,
+        MERFISH, tissue niches, spatial cell-cell interaction, and spatial omics.
+      </p>
+      <div class="gpt-tags">
+        <span class="gpt-tag">Spatial biology</span>
+        <span class="gpt-tag">Visium</span>
+        <span class="gpt-tag">Xenium</span>
+      </div>
+      <a class="btn" href="/visium-gpt.html?gpt=spatial_biology">Open Spatial Biology GPT</a>
+    </article>
+
+    <article class="gpt-card">
+      <h2>Cancer Genomics GPT</h2>
+      <p>
+        Specialist GPT for tumor evolution, immune microenvironment,
+        biomarkers, multi-omics, cancer genomics papers, and validation ideas.
+      </p>
+      <div class="gpt-tags">
+        <span class="gpt-tag">Cancer genomics</span>
+        <span class="gpt-tag">TME</span>
+        <span class="gpt-tag">Biomarkers</span>
+      </div>
+      <a class="btn" href="/visium-gpt.html?gpt=cancer_genomics">Open Cancer Genomics GPT</a>
+    </article>
+
   </section>
 
 </main>
 
 <script>
-let currentUser = null;
-let currentThreadId = null;
-let chatController = null;
-let isSending = false;
-let isGuestMode = true;
-
-const urlParams = new URLSearchParams(window.location.search);
-
-// This file is the Spatial Biology GPT page by default.
-// It can still be reused with ?gpt=paper_talk, ?gpt=neuroscience, etc.
-const DEFAULT_GPT_KEY = "spatial_biology";
-
-function normalizeGptKey(value) {
-  const raw = String(value || DEFAULT_GPT_KEY)
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/-/g, "_");
-
-  const aliases = {
-    paper: "paper_talk",
-    paper_talk: "paper_talk",
-    vision: "paper_talk",
-    vision_gpt: "paper_talk",
-
-    neuro: "neuroscience",
-    neuroscience: "neuroscience",
-    neuro_gpt: "neuroscience",
-    neuroscience_gpt: "neuroscience",
-    neuro_sungmo: "neuroscience",
-
-    mitochondria: "mitochondria",
-    mitochondrial: "mitochondria",
-    mitochondria_gpt: "mitochondria",
-    mitochondrial_gpt: "mitochondria",
-
-    singlecell: "single_cell",
-    single_cell: "single_cell",
-    single_cell_gpt: "single_cell",
-    singlecell_gpt: "single_cell",
-
-    spatial: "spatial_biology",
-    spacial: "spatial_biology",
-    spatial_gpt: "spatial_biology",
-    spacial_gpt: "spatial_biology",
-    spatial_biology: "spatial_biology",
-    spatial_biology_gpt: "spatial_biology",
-
-    cancer: "cancer_genomics",
-    cancer_gpt: "cancer_genomics",
-    cancer_genomics: "cancer_genomics",
-    cancer_genomics_gpt: "cancer_genomics"
-  };
-
-  return aliases[raw] || DEFAULT_GPT_KEY;
-}
-
-const GPT_KEY = normalizeGptKey(urlParams.get("gpt") || urlParams.get("gptKey") || DEFAULT_GPT_KEY);
-
-const GPT_PROFILES = {
-  paper_talk: {
-    title: "Paper_Talk Vision GPT",
-    introHtml: `
-      Private GPT workspace for Paper_Talk users.<br><br>
-      It answers using Research Paper knowledge added by Paper_Talk.<br>
-      The research database is updated daily with newly indexed publications.<br><br>
-      Guest usage: Try 3 questions. <br>
-      Signed-in usage: 50 questions per user per month.
-    `,
-    placeholder: "Thinking may take 10–30 sec.\nAsk about papers, validation, gaps, or research ideas..."
-  },
-  neuroscience: {
-    title: "Neuroscience GPT",
-    introHtml: `
-      Specialized GPT workspace built on curated neuroscience literature.<br><br>
-      Ask about neurodegeneration, Alzheimer's disease, Parkinson's disease, brain aging, synaptic biology, neural circuits, validation, gaps, or research ideas.<br><br>
-      Guest usage: Try 3 questions. <br>
-      Signed-in usage: 50 questions per user per month.
-    `,
-    placeholder: "Thinking may take 10–30 sec.\nAsk about neuroscience papers, mechanisms, validation, gaps, or research ideas..."
-  },
-  mitochondria: {
-    title: "Mitochondria GPT",
-    introHtml: `
-      Specialized GPT workspace built on curated mitochondria literature.<br><br>
-      Ask about mitochondrial metabolism, stress response, mtDNA, organelle crosstalk, disease mechanisms, validation, gaps, or research ideas.<br><br>
-      Guest usage: Try 3 questions. <br>
-      Signed-in usage: 50 questions per user per month.
-    `,
-    placeholder: "Thinking may take 10–30 sec.\nAsk about mitochondria papers, validation, gaps, or research ideas..."
-  },
-  single_cell: {
-    title: "Single-cell GPT",
-    introHtml: `
-      Specialized GPT workspace built on curated single-cell and multi-omics literature.<br><br>
-      Ask about scRNA-seq, scATAC-seq, multiome integration, cell states, trajectories, validation, gaps, or research ideas.<br><br>
-      Guest usage: Try 3 questions. <br>
-      Signed-in usage: 50 questions per user per month.
-    `,
-    placeholder: "Thinking may take 10–30 sec.\nAsk about single-cell papers, pipelines, validation, gaps, or research ideas..."
-  },
-  spatial_biology: {
-    title: "Spatial Biology GPT",
-    introHtml: `
-      Specialized GPT workspace built on curated spatial biology and spatial omics literature.<br><br>
-      Ask about spatial transcriptomics, Visium, Xenium, CosMx, MERFISH, tissue niches, spatial cell-cell interaction, validation, gaps, or research ideas.<br><br>
-      Guest usage: Try 3 questions. <br>
-      Signed-in usage: 50 questions per user per month.
-    `,
-    placeholder: "Thinking may take 10–30 sec.\nAsk about spatial biology papers, spatial omics, validation, gaps, or research ideas..."
-  },
-  cancer_genomics: {
-    title: "Cancer Genomics GPT",
-    introHtml: `
-      Specialized GPT workspace built on curated cancer genomics literature.<br><br>
-      Ask about tumor evolution, immune microenvironment, biomarkers, multi-omics, validation, gaps, or research ideas.<br><br>
-      Guest usage: Try 3 questions. <br>
-      Signed-in usage: 50 questions per user per month.
-    `,
-    placeholder: "Thinking may take 10–30 sec.\nAsk about cancer genomics papers, validation, gaps, or research ideas..."
-  }
-};
-
-const GPT_PROFILE = GPT_PROFILES[GPT_KEY] || GPT_PROFILES.spatial_biology;
-const GPT_TITLE = GPT_PROFILE.title;
-const GUEST_LIMIT = 3;
-
-function applySpecialistGptBranding() {
-  document.title = `${GPT_TITLE} - Paper_Talk`;
-
-  const h1 = document.querySelector("main h1");
-  if (h1) h1.textContent = GPT_TITLE;
-
-  const intro = document.querySelector("main > p");
-  if (intro) intro.innerHTML = GPT_PROFILE.introHtml;
-
-  const input = document.getElementById("messageInput");
-  if (input) input.placeholder = GPT_PROFILE.placeholder;
-}
-
-async function readJsonSafely(response, label = "API request") {
-  const contentType = response.headers.get("Content-Type") || "";
+async function readJsonSafely(response) {
   const rawText = await response.text();
-
   try {
     return JSON.parse(rawText);
-  } catch (error) {
-    const preview = rawText
-      .replace(/\s+/g, " ")
-      .slice(0, 300);
-
-    throw new Error(
-      `${label} returned a non-JSON response. HTTP ${response.status}. ` +
-      `This usually means the Worker route is not deployed or the request is being served by an HTML page. ` +
-      `Content-Type: ${contentType || "unknown"}. Preview: ${preview}`
-    );
-  }
-}
-
-// Local fallback only for display before the server returns real guest quota.
-// The actual guest limit must be enforced in the Worker by IP hash.
-function getLocalGuestUsedToday() {
-  const today = new Date().toISOString().slice(0, 10);
-  const raw = localStorage.getItem(`pt_guest_gpt_usage_${GPT_KEY}`) || "{}";
-  let data = {};
-
-  try {
-    data = JSON.parse(raw);
   } catch {
-    data = {};
+    return null;
   }
-
-  if (data.date !== today) return 0;
-  return Number(data.used || 0);
 }
 
-function setLocalGuestUsedToday(used) {
-  const today = new Date().toISOString().slice(0, 10);
-  localStorage.setItem(`pt_guest_gpt_usage_${GPT_KEY}`, JSON.stringify({
-    date: today,
-    used: Number(used || 0)
-  }));
-}
-
-function setupEventListeners() {
-  document.getElementById("newThreadBtn").addEventListener("click", createThread);
-  document.getElementById("sendBtn").addEventListener("click", sendMessage);
-  document.getElementById("stopBtn").addEventListener("click", stopMessage);
-
-  document.getElementById("messageInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  });
-}
-
-document.addEventListener("DOMContentLoaded", init);
-
-async function init() {
-  setupEventListeners();
-  applySpecialistGptBranding();
-
-  let me = null;
+async function initAuthBox() {
+  const topLoginArea = document.getElementById("topLoginArea");
+  const topLogoutArea = document.getElementById("topLogoutArea");
+  const userText = document.getElementById("userText");
 
   try {
-    const meRes = await fetch("/api/me", {
+    const res = await fetch("/api/me", {
       cache: "no-store",
       credentials: "include"
     });
-    me = await readJsonSafely(meRes, "/api/me");
-  } catch (error) {
-    const box = document.getElementById("chatBox");
-    box.innerHTML = `<p class="empty-posts">${escapeHtml(error.message || "Failed to initialize GPT.")}</p>`;
-    document.getElementById("gptApp").style.display = "grid";
-    return;
-  }
+    const me = await readJsonSafely(res);
 
-  if (!me.ok || !me.user) {
-    isGuestMode = true;
-    currentUser = null;
-    currentThreadId = null;
-
-    document.body.classList.add("guest-mode");
-    document.getElementById("topLoginArea").style.display = "block";
-    document.getElementById("topLogoutArea").style.display = "none";
-    document.getElementById("loginBox").style.display = "none";
-    document.getElementById("gptApp").style.display = "grid";
-
-    const serverRemaining = me.quota ? Number(me.quota.remaining || 0) : null;
-    const serverLimit = me.quota ? Number(me.quota.limit || GUEST_LIMIT) : GUEST_LIMIT;
-
-    if (me.quota) {
-      updateQuotaText(serverRemaining, serverLimit, true);
-      setLocalGuestUsedToday(Number(me.quota.used || (serverLimit - serverRemaining) || 0));
-    } else {
-      const localUsed = getLocalGuestUsedToday();
-      updateQuotaText(Math.max(GUEST_LIMIT - localUsed, 0), GUEST_LIMIT, true);
-    }
-
-    const box = document.getElementById("chatBox");
-    box.innerHTML = `
-      <p class="empty-posts">
-        Start a free preview conversation with ${escapeHtml(GPT_TITLE)}.<br><br>
-        You can ask 3 questions without signing in.
-      </p>
-    `;
-    return;
-  }
-
-  isGuestMode = false;
-  currentUser = me.user;
-
-  document.body.classList.remove("guest-mode");
-  document.getElementById("topLoginArea").style.display = "none";
-  document.getElementById("topLogoutArea").style.display = "block";
-  document.getElementById("userText").textContent =
-    `Signed in as ${currentUser.name || currentUser.email}`;
-  document.getElementById("gptApp").style.display = "grid";
-
-  if (me.quota) {
-    updateQuotaText(me.quota.remaining, me.quota.limit, false);
-  }
-
-  await loadThreads();
-}
-
-async function loadThreads() {
-  if (isGuestMode) return;
-
-  const res = await fetch(`/api/gpt/threads?gptKey=${encodeURIComponent(GPT_KEY)}`, {
-    cache: "no-store",
-    credentials: "include"
-  });
-  const data = await readJsonSafely(res, "API request");
-
-  const list = document.getElementById("threadList");
-  list.innerHTML = "";
-
-  if (!data.ok) {
-    list.innerHTML = `<p>${escapeHtml(data.error || "Failed to load chats.")}</p>`;
-    return;
-  }
-
-  if (!data.threads || data.threads.length === 0) {
-    if (!isSending) await createThread();
-    return;
-  }
-
-  data.threads.forEach(thread => {
-    const row = document.createElement("div");
-    row.className = "thread-row";
-
-    const btn = document.createElement("button");
-    btn.className = "thread-item" + (thread.id === currentThreadId ? " active" : "");
-    btn.textContent = thread.title || "New chat";
-    btn.onclick = () => selectThread(thread.id);
-
-    const delBtn = document.createElement("button");
-    delBtn.className = "delete-thread-btn";
-    delBtn.textContent = "Delete";
-    delBtn.onclick = () => deleteThread(thread.id);
-
-    row.appendChild(btn);
-    row.appendChild(delBtn);
-    list.appendChild(row);
-  });
-
-  if (!currentThreadId && !isSending) {
-    await selectThread(data.threads[0].id);
-  }
-}
-
-async function createThread() {
-  if (isSending || isGuestMode) return;
-
-  const res = await fetch("/api/gpt/threads", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: "New chat", gptKey: GPT_KEY })
-  });
-
-  const data = await readJsonSafely(res, "API request");
-
-  if (!data.ok) {
-    alert(data.error || "Failed to create chat.");
-    return;
-  }
-
-  currentThreadId = data.thread.id;
-  await loadThreads();
-  await loadMessages();
-}
-
-async function selectThread(threadId) {
-  if (isSending || isGuestMode) return;
-
-  currentThreadId = threadId;
-  await loadThreads();
-  await loadMessages();
-}
-
-async function deleteThread(threadId) {
-  if (isSending || isGuestMode) return;
-
-  if (!confirm("Delete this chat?")) return;
-
-  const res = await fetch(`/api/gpt/threads/${encodeURIComponent(threadId)}?gptKey=${encodeURIComponent(GPT_KEY)}`, {
-    method: "DELETE",
-    cache: "no-store",
-    credentials: "include"
-  });
-
-  const data = await readJsonSafely(res, "API request");
-
-  if (!data.ok) {
-    alert(data.error || "Failed to delete chat.");
-    return;
-  }
-
-  if (currentThreadId === threadId) {
-    currentThreadId = null;
-  }
-
-  await loadThreads();
-}
-
-async function loadMessages() {
-  if (isGuestMode) return;
-
-  // Important:
-  // Do not clear the chat box while a message is being sent.
-  // On the first message, an async loadMessages/loadThreads call can return late
-  // and erase the just-added user bubble + progress bubble.
-  if (isSending) return;
-
-  const box = document.getElementById("chatBox");
-  box.innerHTML = "";
-
-  if (!currentThreadId) return;
-
-  const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}&gptKey=${encodeURIComponent(GPT_KEY)}`, {
-    cache: "no-store",
-    credentials: "include"
-  });
-  const data = await readJsonSafely(res, "API request");
-
-  if (!data.ok) {
-    box.innerHTML = `<p>${escapeHtml(data.error || "Failed to load messages.")}</p>`;
-    return;
-  }
-
-  if (!data.messages || data.messages.length === 0) {
-    box.innerHTML = `<p class="empty-posts">Start a new conversation with ${escapeHtml(GPT_TITLE)}.</p>`;
-    return;
-  }
-
-  data.messages.forEach(msg => {
-    addMessage(msg.role, msg.content);
-  });
-
-  scrollChatToBottom();
-}
-
-async function sendMessage() {
-  if (isSending) return;
-
-  const input = document.getElementById("messageInput");
-  const sendBtn = document.getElementById("sendBtn");
-  const stopBtn = document.getElementById("stopBtn");
-  const text = input.value.trim();
-
-  if (!text) return;
-
-  if (isGuestMode) {
-    const localUsed = getLocalGuestUsedToday();
-    if (localUsed >= GUEST_LIMIT) {
-      addSignupMessage(`You have used all 3 free guest questions for today. Please sign in with Google for free to continue using ${GPT_TITLE}.`, "/auth/google");
-      updateQuotaText(0, GUEST_LIMIT, true);
+    if (me && me.ok && me.user) {
+      topLoginArea.style.display = "none";
+      topLogoutArea.style.display = "block";
+      userText.textContent = `Signed in as ${me.user.name || me.user.email}`;
       return;
     }
-  }
+  } catch {}
 
-  isSending = true;
-  input.value = "";
-  sendBtn.style.display = "none";
-  stopBtn.style.display = "inline-block";
-
-  clearEmptyState();
-
-  addMessage("user", text);
-  const progressDiv = addMessage(
-    "assistant",
-    `Analyzing your question...\nSearching the ${GPT_TITLE} knowledge base...\nPreparing a grounded answer...`,
-    { progress: true }
-  );
-  scrollChatToBottom();
-
-  chatController = new AbortController();
-  let timedOut = false;
-  let refreshThreadsAfterSend = false;
-
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    if (chatController) chatController.abort();
-  }, 120000);
-
-  try {
-    const res = await fetch("/api/gpt/chat", {
-      method: "POST",
-      cache: "no-store",
-      credentials: "include",
-      signal: chatController.signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        threadId: isGuestMode ? null : currentThreadId,
-        message: text,
-        gptKey: GPT_KEY
-      })
-    });
-
-    const data = await readJsonSafely(res, "API request");
-
-    if (!data.ok) {
-      if (data.signupUrl) {
-        setMessageText(
-          progressDiv,
-          data.error || "You have used all free guest questions. Please sign in with Google for free to continue."
-        );
-
-        const link = document.createElement("a");
-        link.href = data.signupUrl;
-        link.className = "signup-inline-btn";
-        link.textContent = "Sign in with Google for free";
-        progressDiv.appendChild(link);
-      } else {
-        setMessageText(progressDiv, data.error || "Something went wrong.");
-      }
-
-      if (data.quota) {
-        updateQuotaText(data.quota.remaining, data.quota.limit, Boolean(data.guest));
-        if (data.guest) {
-          setLocalGuestUsedToday(Number(data.quota.used || (data.quota.limit - data.quota.remaining) || GUEST_LIMIT));
-        }
-      }
-
-      return;
-    }
-
-    if (data.threadId) {
-      currentThreadId = data.threadId;
-    }
-
-    await typeWriterInto(progressDiv, data.answer || "No answer was generated.");
-
-    if (data.quota) {
-      updateQuotaText(data.quota.remaining, data.quota.limit, Boolean(data.guest || isGuestMode));
-      if (data.guest || isGuestMode) {
-        setLocalGuestUsedToday(Number(data.quota.used || (data.quota.limit - data.quota.remaining) || 0));
-      }
-    }
-
-    refreshThreadsAfterSend = !isGuestMode;
-    scrollChatToBottom();
-
-  } catch (error) {
-    if (error.name === "AbortError") {
-      setMessageText(
-        progressDiv,
-        timedOut
-          ? "Request timed out after 120 seconds. Please try a narrower question."
-          : "Request cancelled."
-      );
-    } else {
-      setMessageText(progressDiv, error.message || "Request failed.");
-    }
-  } finally {
-    clearTimeout(timeout);
-    chatController = null;
-    isSending = false;
-    sendBtn.style.display = "inline-block";
-    stopBtn.style.display = "none";
-
-    if (refreshThreadsAfterSend) {
-      setTimeout(() => {
-        loadThreads().catch(() => {});
-      }, 0);
-    }
-  }
+  topLoginArea.style.display = "block";
+  topLogoutArea.style.display = "none";
 }
 
-function stopMessage() {
-  if (chatController) {
-    chatController.abort();
-  }
-}
-
-function clearEmptyState() {
-  const box = document.getElementById("chatBox");
-  box.querySelectorAll(".empty-posts").forEach(node => node.remove());
-}
-
-function addMessage(role, content, options = {}) {
-  const box = document.getElementById("chatBox");
-  clearEmptyState();
-
-  const div = document.createElement("div");
-  div.className = `message ${role}`;
-
-  if (options.progress) {
-    div.dataset.progress = "true";
-  }
-
-  div.textContent = content;
-  box.appendChild(div);
-  scrollChatToBottom();
-
-  return div;
-}
-
-function setMessageText(div, text) {
-  if (!div) return;
-  div.dataset.progress = "false";
-  div.textContent = text;
-  scrollChatToBottom();
-}
-
-async function typeWriterInto(div, text) {
-  if (!div) return;
-
-  div.dataset.progress = "false";
-  div.textContent = "";
-
-  const value = String(text || "");
-  let current = "";
-
-  for (let i = 0; i < value.length; i++) {
-    current += value[i];
-    div.textContent = current;
-    scrollChatToBottom();
-
-    // Faster on spaces/new lines so long research answers do not feel too slow.
-    const delay = value[i] === " " || value[i] === "\n" ? 2 : 8;
-    await new Promise(resolve => setTimeout(resolve, delay));
-  }
-}
-
-function addSignupMessage(message, signupUrl) {
-  const box = document.getElementById("chatBox");
-  clearEmptyState();
-
-  const div = document.createElement("div");
-  div.className = "message assistant";
-
-  const text = document.createElement("div");
-  text.textContent = message;
-
-  const link = document.createElement("a");
-  link.href = signupUrl || "/auth/google";
-  link.className = "signup-inline-btn";
-  link.textContent = "Sign in with Google for free";
-
-  div.appendChild(text);
-  div.appendChild(link);
-  box.appendChild(div);
-  scrollChatToBottom();
-}
-
-function scrollChatToBottom() {
-  const box = document.getElementById("chatBox");
-  box.scrollTop = box.scrollHeight;
-}
-
-function updateQuotaText(remaining, limit, guest = false) {
-  const quotaText = document.getElementById("quotaText");
-
-  if (!quotaText) return;
-
-  const safeRemaining = Math.max(Number(remaining || 0), 0);
-  const safeLimit = Number(limit || (guest ? GUEST_LIMIT : 50));
-
-  if (guest) {
-    quotaText.textContent = `Free questions left today: ${safeRemaining}/${safeLimit}`;
-  } else {
-    quotaText.textContent = `Questions left: ${safeRemaining}/${safeLimit}`;
-  }
-}
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+document.addEventListener("DOMContentLoaded", initAuthBox);
 </script>
+
+<script>
+fetch("/api/public/visits/today", {
+  method: "GET",
+  cache: "no-store"
+}).catch(() => {});
+</script>
+
 </body>
 </html>
