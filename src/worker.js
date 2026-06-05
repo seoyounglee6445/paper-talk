@@ -25,7 +25,7 @@ export default {
         return json({
           hasKey: !!env.OPENAI_API_KEY,
           hasModel: !!env.OPENAI_MODEL,
-          model: env.OPENAI_MODEL || "gpt-4o-mini"
+          model: env.OPENAI_MODEL || "gpt-5"
         });
       }
 
@@ -230,7 +230,7 @@ function json(data, status = 200, headers = {}) {
 const DEFAULT_GPT_KEY = "paper_talk";
 
 // Monthly GPT quota is shared across all GPT modes for each signed-in user.
-// Paper_Talk Vision GPT + Neuroscience GPT + any future Specialist GPTs = 20 total / month.
+// Paper_Talk Vision GPT + Neuroscience GPT + any future Specialist GPTs = 50 total / month.
 const SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT = 50;
 const GUEST_GPT_DAILY_LIMIT = 3;
 
@@ -401,25 +401,24 @@ async function testOpenAI(env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        model: env.OPENAI_MODEL || "gpt-5",
         messages: [
           { role: "user", content: "Say hello in one short sentence." }
         ],
-        temperature: 0,
-        max_tokens: 30
+        max_completion_tokens: 30
       })
     });
 
     const data = await readJsonResponseSafely(response, "OpenAI test request");
     return json({
       ok: true,
-      model: env.OPENAI_MODEL || "gpt-4o-mini",
+      model: env.OPENAI_MODEL || "gpt-5",
       answer: data?.choices?.[0]?.message?.content || "No answer returned."
     });
   } catch (error) {
     return json({
       ok: false,
-      model: env.OPENAI_MODEL || "gpt-4o-mini",
+      model: env.OPENAI_MODEL || "gpt-5",
       error: error?.message || "Unknown OpenAI test error"
     }, 500);
   }
@@ -2375,7 +2374,7 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        model: env.OPENAI_MODEL || "gpt-5",
         messages: [
           {
             role: "system",
@@ -2386,8 +2385,7 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
             content: prompt
           }
         ],
-        temperature: 0,
-        max_tokens: maxTokens
+        max_completion_tokens: maxTokens
       })
     });
 
@@ -5439,7 +5437,7 @@ async function callOpenAIGeneralNoRetrieval(userMessage, env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        model: env.OPENAI_MODEL || "gpt-5",
         messages: [
           {
             role: "system",
@@ -5463,8 +5461,7 @@ Plain text only.`
             content: String(userMessage || "").slice(0, 1200)
           }
         ],
-        temperature: 0.2,
-        max_tokens: 1800
+        max_completion_tokens: 1800
       })
     });
 
@@ -5626,7 +5623,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        model: env.OPENAI_MODEL || "gpt-5",
         messages: [
           {
             role: "system",
@@ -5645,8 +5642,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
           },
           { role: "user", content: text.slice(0, 1200) }
         ],
-        temperature: 0,
-        max_tokens: 520
+        max_completion_tokens: 520
       })
     });
 
@@ -7915,7 +7911,7 @@ async function expandQuestionForResearchRetrieval(userQuery, env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        model: env.OPENAI_MODEL || "gpt-5",
         messages: [
           {
             role: "system",
@@ -7932,7 +7928,6 @@ async function expandQuestionForResearchRetrieval(userQuery, env) {
             content: String(userQuery || "").slice(0, 1000)
           }
         ],
-        temperature: 0
       })
     });
 
@@ -8969,7 +8964,7 @@ async function inferUserResearchIntent({ userMessage, recentMessages = [] }, env
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        model: env.OPENAI_MODEL || "gpt-5",
         messages: [
           {
             role: "system",
@@ -9030,8 +9025,7 @@ ${String(userMessage || "").slice(0, 1200)}
             `.trim()
           }
         ],
-        temperature: 0,
-        max_tokens: 800
+        max_completion_tokens: 800
       })
     });
 
@@ -9335,7 +9329,7 @@ async function rewriteReportStyleAnswerIfNeeded({ originalAnswer, userMessage, c
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        model: env.OPENAI_MODEL || "gpt-5",
         messages: [
           {
             role: "system",
@@ -9385,8 +9379,7 @@ Strict rewriting rules:
             ].join("\n")
           }
         ],
-        temperature: 0,
-        max_tokens: 1800
+        max_completion_tokens: 1800
       })
     });
 
@@ -10379,10 +10372,9 @@ Never answer a paper recommendation request with only a field summary.
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-4o-mini",
+        model: env.OPENAI_MODEL || "gpt-5",
         messages,
-        temperature: isResearchRelated ? 0 : 0.1,
-        max_tokens: hasContext ? 2600 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 1700 : 2100)
+        max_completion_tokens: hasContext ? 2600 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 1700 : 2100)
       })
     });
 
