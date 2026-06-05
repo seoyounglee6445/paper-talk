@@ -37,6 +37,7 @@ export default {
       if (pathname === "/auth/google/callback") return googleCallback(request, env);
       if (pathname === "/auth/logout") return logout();
       if (pathname === "/api/me") return apiMe(request, env);
+      if (pathname === "/api/neuro-gpt/access" && request.method === "POST") return neuroGptAccessCheck(request, env);
 
       if (pathname === "/api/delete-account" && request.method === "POST") return deleteAccount(request, env);
 
@@ -232,6 +233,12 @@ const DEFAULT_GPT_KEY = "paper_talk";
 // Paper_Talk Vision GPT + Neuroscience GPT + any future Specialist GPTs = 20 total / month.
 const SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT = 50;
 const GUEST_GPT_DAILY_LIMIT = 3;
+
+// Private access key for Neuroscience GPT.
+// Users reach it from the Specialist GPT page with password "engram".
+// For stronger security, set NEURO_GPT_PASSWORD as a Cloudflare secret.
+const DEFAULT_NEURO_GPT_PASSWORD = "engram";
+const NEURO_GPT_ACCESS_COOKIE = "pt_neuro_gpt_access";
 
 const ALLOWED_GPT_KEYS = new Set([
   "paper_talk",
@@ -464,6 +471,76 @@ function getCookie(request, name) {
   }
 
   return "";
+}
+
+function getNeuroGptPassword(env) {
+  return String(env.NEURO_GPT_PASSWORD || DEFAULT_NEURO_GPT_PASSWORD || "").trim();
+}
+
+function createNeuroGptAccessCookie() {
+  return `${NEURO_GPT_ACCESS_COOKIE}=ok; Path=/; Secure; SameSite=Lax; Max-Age=86400`;
+}
+
+function clearNeuroGptAccessCookie() {
+  return `${NEURO_GPT_ACCESS_COOKIE}=; Path=/; Secure; SameSite=Lax; Max-Age=0`;
+}
+
+function hasNeuroGptAccess(request, env) {
+  const expected = getNeuroGptPassword(env);
+  if (!expected) return false;
+
+  const url = new URL(request.url);
+  const headerKey = String(request.headers.get("X-Neuro-GPT-Key") || "").trim();
+  const queryKey = String(url.searchParams.get("neuroKey") || "").trim();
+  const cookieValue = getCookie(request, NEURO_GPT_ACCESS_COOKIE);
+
+  return (
+    cookieValue === "ok" ||
+    headerKey === expected ||
+    queryKey === expected
+  );
+}
+
+async function neuroGptAccessCheck(request, env) {
+  const data = await request.json().catch(() => ({}));
+  const password = String(data.password || data.key || "").trim();
+  const expected = getNeuroGptPassword(env);
+
+  if (!expected) {
+    return json({ ok: false, error: "NEURO_GPT_PASSWORD is not configured." }, 500);
+  }
+
+  if (password !== expected) {
+    return json(
+      { ok: false, authenticated: false, error: "Incorrect Neuro-GPT password." },
+      401,
+      { "Set-Cookie": clearNeuroGptAccessCookie() }
+    );
+  }
+
+  return json(
+    { ok: true, authenticated: true },
+    200,
+    { "Set-Cookie": createNeuroGptAccessCookie() }
+  );
+}
+
+function requireNeuroGptAccessIfNeeded(request, env, gptKey) {
+  const key = normalizeGptKey(gptKey);
+
+  if (key !== "neuroscience") {
+    return null;
+  }
+
+  if (hasNeuroGptAccess(request, env)) {
+    return null;
+  }
+
+  return json({
+    ok: false,
+    private: true,
+    error: "Neuro-GPT is private. Please enter the Neuro-GPT password first."
+  }, 401);
 }
 
 async function sign(value, secret) {
@@ -4659,6 +4736,11 @@ async function upsertResearchKnowledgeVectors({ postId, title, sourceUrl, pdfLin
 }
 
 async function listGptThreads(request, env) {
+  const url = new URL(request.url);
+  const gptKeyForAccess = getGptKeyFromRequestData(Object.fromEntries(url.searchParams.entries()));
+  const neuroAccessError = requireNeuroGptAccessIfNeeded(request, env, gptKeyForAccess);
+  if (neuroAccessError) return neuroAccessError;
+
   const user = await getSession(request, env);
 
   if (!user) {
@@ -4685,6 +4767,11 @@ async function listGptThreads(request, env) {
 }
 
 async function createGptThread(request, env) {
+  const bodyForAccess = await request.clone().json().catch(() => ({}));
+  const gptKeyForAccess = getGptKeyFromRequestData(bodyForAccess);
+  const neuroAccessError = requireNeuroGptAccessIfNeeded(request, env, gptKeyForAccess);
+  if (neuroAccessError) return neuroAccessError;
+
   const user = await getSession(request, env);
 
   if (!user) {
@@ -4722,6 +4809,11 @@ async function createGptThread(request, env) {
 }
 
 async function listGptMessages(request, env) {
+  const url = new URL(request.url);
+  const gptKeyForAccess = getGptKeyFromRequestData(Object.fromEntries(url.searchParams.entries()));
+  const neuroAccessError = requireNeuroGptAccessIfNeeded(request, env, gptKeyForAccess);
+  if (neuroAccessError) return neuroAccessError;
+
   const user = await getSession(request, env);
 
   if (!user) {
@@ -5988,6 +6080,11 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
 }
 
 async function gptChat(request, env) {
+  const bodyForAccess = await request.clone().json().catch(() => ({}));
+  const gptKeyForAccess = getGptKeyFromRequestData(bodyForAccess);
+  const neuroAccessError = requireNeuroGptAccessIfNeeded(request, env, gptKeyForAccess);
+  if (neuroAccessError) return neuroAccessError;
+
   try {
     const user = await getSession(request, env);
     const isGuest = !user;
