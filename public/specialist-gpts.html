@@ -114,7 +114,7 @@ body {
 
 .gpt-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(4, minmax(260px, 1fr));
   gap: 22px;
   margin-top: 24px;
 }
@@ -240,6 +240,12 @@ body {
   min-height: 20px;
 }
 
+@media (max-width: 1100px) {
+  .gpt-grid {
+    grid-template-columns: repeat(2, minmax(260px, 1fr));
+  }
+}
+
 @media (max-width: 720px) {
   .nav {
     align-items: flex-start;
@@ -259,6 +265,10 @@ body {
 
   .research-gpts-hero h1 {
     font-size: 34px;
+  }
+
+  .gpt-grid {
+    grid-template-columns: 1fr;
   }
 
   .gpt-card {
@@ -316,6 +326,18 @@ body {
         <span class="tag">Private</span>
         <h2>&#129504; Neuro-GPT</h2>
         <p>from Sungmo Park</p>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
       </article>
 
       <article class="gpt-card coming-card">
