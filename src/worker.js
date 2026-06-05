@@ -2,8 +2,8 @@
 Paper_Talk Worker v80 GPT-4o unified + quota 50 + automatic method/package extraction routing patch
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
-- User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, pipelines, methods, workflows, or analysis options, answer with a practical tool list first before literature trends. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
-- Practical tool questions: if the user asks for tools/software/packages/pipelines/methods/workflows/analysis options, answer with a practical tool list first. For scRNA-seq + scATAC-seq integration, include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
+- User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, synthesize a paper-grounded workflow from retrieved papers in the requested domain first. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
+- Practical tool questions: if the user asks for tools/software/packages/methods/analysis options, answer with a practical tool list first. If the user asks for pipeline/workflow, use a paper-grounded domain-specific workflow. For scRNA-seq + scATAC-seq integration, include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
 - Multilingual behavior: detect and preserve the user's language across the entire answer.
 - Do not start with DB retrieval failure messages unless user explicitly asks for sources/evidence.
 - Literature/trend questions still show DB paper titles when requested.
@@ -5709,10 +5709,36 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
   }
 
   if (paperTalkIntent === "PIPELINE_WORKFLOW") {
+    // v83: workflow questions must retrieve paper-grounded workflows for the requested assay/domain.
+    // The model should synthesize workflows used in relevant papers, not give a generic protocol first.
+    const asksSpatialWorkflow =
+      primaryDomain === "SPATIAL_BIOLOGY" ||
+      /(spatial|visium|xenium|cosmx|merfish|slide[-\s]?seq|seq[-\s]?fish|spatial transcriptomics|공간|공간전사체|공간 전사체)/i.test(t);
+
+    const asksSingleCellWorkflow =
+      primaryDomain === "SINGLE_CELL" ||
+      primaryDomain === "MULTIOMICS" ||
+      /(scrna|sc\s*rna|single[-\s]?cell|싱글셀|단일세포|scatac|sc\s*atac|atac[-\s]?seq|chromatin|크로마틴|multi[-\s]?omics|멀티오믹스)/i.test(t);
+
+    if (asksSpatialWorkflow) {
+      queries.push(
+        "spatial transcriptomics paper workflow preprocessing QC normalization spatial domains deconvolution cell cell interaction",
+        "Visium Xenium CosMx MERFISH spatial transcriptomics analysis pipeline used methods papers Seurat Scanpy Squidpy Giotto BayesSpace SpaGCN STAGATE cell2location Tangram",
+        "spatial omics workflow histology image segmentation deconvolution niche analysis ligand receptor analysis papers"
+      );
+    }
+
+    if (asksSingleCellWorkflow) {
+      queries.push(
+        "single cell paper workflow scRNA scATAC multiome preprocessing QC integration downstream analysis used methods",
+        "scRNA scATAC multiome workflow papers FASTQ Cell Ranger ARC Seurat Signac WNN ArchR SnapATAC2 LIGER iNMF GLUE MultiVI",
+        "single cell chromatin accessibility workflow gene activity peak calling LSI motif TF activity SCENIC SCENIC+ chromVAR Cicero papers"
+      );
+    }
+
     queries.push(
-      "end to end analysis workflow pipeline raw data QC preprocessing integration interpretation",
-      "single cell multiome scRNA scATAC workflow FASTQ Cell Ranger ARC Seurat Signac WNN ArchR SnapATAC2",
-      "scRNA scATAC multiome pipeline LIGER iNMF GLUE MultiVI scvi-tools Harmony MOFA+ SCENIC SCENIC+ chromVAR Cicero"
+      "methods workflow used in paper analysis pipeline QC preprocessing downstream interpretation",
+      "end to end analysis workflow paper methods raw data QC preprocessing integration interpretation"
     );
   }
 
@@ -5803,16 +5829,16 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
               "Return strict JSON only.",
               "paper_talk_intent must be one of: LITERATURE_REVIEW, RESEARCH_IDEA, METHOD_EXTRACTION, PIPELINE_WORKFLOW, CONCEPT, VALIDATION, COMPARISON, PAPER_SUMMARY, SOURCE_TRACE, GENERAL.",
               "Use LITERATURE_REVIEW only when the user wants papers to read, recent trends, hot topics, representative studies, paper recommendations, or field overview.",
-              "Use PIPELINE_WORKFLOW when the user wants an actual analysis pipeline, workflow, step-by-step procedure, analysis order, or end-to-end process from raw data to biological interpretation.",
+              "Use PIPELINE_WORKFLOW when the user wants an actual analysis pipeline, workflow, step-by-step procedure, analysis order, or end-to-end process. This must be paper-grounded: infer the assay/domain and retrieve papers that show workflows used in that domain.",
               "Use METHOD_EXTRACTION when the user wants practical analysis methods, packages, software, tools, algorithms, models, or wants to know what methods were actually used in papers.",
-              "Important: if the user asks for a workflow/pipeline/analysis order, choose PIPELINE_WORKFLOW, not METHOD_EXTRACTION and not LITERATURE_REVIEW.",
+              "Important: if the user asks for a workflow/pipeline/analysis order, choose PIPELINE_WORKFLOW, not METHOD_EXTRACTION and not LITERATURE_REVIEW. A workflow request should be answered by synthesizing workflows used in relevant retrieved papers, not by listing generic tools only.",
               "Important: if the user asks what papers used, what researchers used, what analysis was done, which package/method/tool is used, or what can be used for actual data analysis, choose METHOD_EXTRACTION, not LITERATURE_REVIEW.",
               "Important: a question can mention papers, 논문, literature, or studies and still be METHOD_EXTRACTION if the goal is extracting methods/tools rather than recommending papers.",
               "Use RESEARCH_IDEA when the user asks what research can be done, project ideas, future directions, hypotheses, grant ideas, or actionable research topics.",
               "primary_domain must be one of: SPATIAL_BIOLOGY, CANCER_GENOMICS, SINGLE_CELL, IMMUNOLOGY, AGING, MULTIOMICS, AI_METHOD, GENERAL.",
               "If spatial/deep learning/cancer genomics appears, infer adjacent concepts such as spatial transcriptomics, histology, tumor microenvironment, multimodal AI, GNN, transformer, foundation model, immune niche, tumor evolution, and drug response.",
               "Create 3-4 concise English biomedical retrieval_queries for Paper_Talk DB.",
-              "For PIPELINE_WORKFLOW, retrieval_queries should include workflow, pipeline, raw data, QC, preprocessing, integration, interpretation, and the relevant assay/domain.",
+              "For PIPELINE_WORKFLOW, retrieval_queries must be domain-specific and paper-grounded. Include terms such as workflow, pipeline, used methods, preprocessing, QC, normalization, integration, downstream analysis, and the relevant assay/domain. For spatial questions include Visium/Xenium/CosMx/MERFISH, spatial domains, deconvolution, cell-cell interaction, histology/image analysis. For single-cell or multiome questions include scRNA, scATAC, multiome, Seurat/Signac WNN, ArchR, LIGER, GLUE, MultiVI, SnapATAC2, SCENIC/SCENIC+ when relevant.",
               "For METHOD_EXTRACTION, retrieval_queries should include method-oriented terms such as analysis method, package, software, algorithm, model, implementation, benchmark, and the relevant assay/domain.",
               "Return keys: is_research_related, question_type, paper_talk_intent, primary_domain, answer_style, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
             ].join(" ")
@@ -5834,6 +5860,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     const queries = Array.isArray(parsed.retrieval_queries)
       ? parsed.retrieval_queries.map(v => String(v || "").trim()).filter(Boolean)
       : [];
+    const retrievalQueryLimit = ["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(paperTalkIntent) ? 6 : 4;
 
     const inferred = {
       ...fallback,
@@ -5854,7 +5881,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
         (parsed.question_type || fallback.question_type),
       answer_style: paperTalkIntent === "PIPELINE_WORKFLOW" ? "end_to_end_workflow" : (paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" : (parsed.answer_style || fallback.answer_style)),
       key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v || "").trim()).filter(Boolean).slice(0, 12) : [],
-      retrieval_queries: queries.length ? queries.slice(0, 4) : buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent),
+      retrieval_queries: queries.length ? queries.slice(0, retrievalQueryLimit) : buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent),
       gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v || "").trim()).filter(Boolean).slice(0, 8) : [],
       interpreted_intent: String(parsed.interpreted_intent || fallback.interpreted_intent).slice(0, 500),
       hypothesis_angle: String(parsed.hypothesis_angle || "").slice(0, 500),
@@ -5864,7 +5891,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     if (inferred.is_research_related) {
       inferred.should_use_db_evidence = true;
       if (!inferred.retrieval_queries.includes(text)) inferred.retrieval_queries.unshift(text);
-      inferred.retrieval_queries = [...new Set(inferred.retrieval_queries)].slice(0, 4);
+      inferred.retrieval_queries = [...new Set(inferred.retrieval_queries)].slice(0, retrievalQueryLimit);
     }
     inferred.retrieval_query = inferred.retrieval_queries.join(", ");
 
@@ -9227,7 +9254,7 @@ ${String(userMessage || "").slice(0, 1200)}
     const shouldUseDbEvidence =
       typeof parsed.should_use_db_evidence === "boolean"
         ? parsed.should_use_db_evidence
-        : ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType);
+        : ["RESEARCH", "VALIDATION", "LITERATURE", "METHOD", "PIPELINE"].includes(questionType);
 
     return {
       question_type: questionType,
@@ -9259,7 +9286,7 @@ function normalizeQuestionType(value) {
 
 function normalizeAnswerStyle(value) {
   const label = String(value || "").trim().toLowerCase();
-  if (["educational_overview", "hypothesis_generation", "validation_plan", "literature_review", "end_to_end_workflow", "pipeline_workflow", "practical_method_table", "method_extraction", "concise_answer"].includes(label)) return label;
+  if (["educational_overview", "hypothesis_generation", "validation_plan", "literature_review", "end_to_end_workflow", "pipeline_workflow", "paper_grounded_workflow", "practical_method_table", "method_extraction", "concise_answer"].includes(label)) return label;
   return "concise_answer";
 }
 
@@ -9310,12 +9337,13 @@ function makeFallbackResearchIntent(userMessage) {
     .slice(0, 8);
 
   const shouldGenerateHypotheses = questionType === "RESEARCH";
-  const shouldUseDbEvidence = ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType);
+  const shouldUseDbEvidence = ["RESEARCH", "VALIDATION", "LITERATURE", "METHOD", "PIPELINE"].includes(questionType);
 
   const answerStyle =
     questionType === "CONCEPT" ? "educational_overview" :
     questionType === "RESEARCH" ? "hypothesis_generation" :
     questionType === "METHOD" ? "practical_method_table" :
+    questionType === "PIPELINE" ? "paper_grounded_workflow" :
     questionType === "VALIDATION" ? "validation_plan" :
     questionType === "LITERATURE" ? "literature_review" :
     "concise_answer";
@@ -9764,7 +9792,7 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
   }
 
   const semanticIntent = normalizePaperTalkIntentLabel(intent?.paper_talk_intent || "");
-  if (semanticIntent === "PIPELINE_WORKFLOW" || questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow") {
+  if (semanticIntent === "PIPELINE_WORKFLOW" || questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow" || answerStyle === "paper_grounded_workflow") {
     return "PIPELINE_WORKFLOW";
   }
 
@@ -9815,7 +9843,26 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
 
   if (questionType === "LITERATURE" || answerStyle === "literature_review") return "LITERATURE_REVIEW";
   if (questionType === "RESEARCH" || answerStyle === "hypothesis_generation") return "RESEARCH_DIRECTION";
-  if (questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow") return "PIPELINE_WORKFLOW";
+  if (questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow" || answerStyle === "paper_grounded_workflow") {
+    return `
+Selected mode: PAPER-GROUNDED DOMAIN-SPECIFIC ANALYSIS WORKFLOW.
+
+The user wants an actual analysis pipeline or workflow.
+The workflow must be synthesized from retrieved Paper_Talk DB papers in the requested domain, not from generic protocol knowledge first.
+Do not answer as trend recommendation.
+Do not recommend papers as reading material unless the user asks.
+
+Recommended structure:
+- Direct answer in the user's language.
+- First section: workflow patterns used or implied by retrieved papers, with exact DB titles only when they support a workflow/tool claim.
+- Second section: synthesized step-by-step workflow from raw data to biological interpretation.
+- For each step: purpose, input, DB-supported packages/tools/methods, general recommendation for missing steps, output, and QC/checkpoint.
+- For spatial questions, use spatial papers and spatial workflow components.
+- For single-cell/scRNA/scATAC/multiome questions, use single-cell/multiome papers and workflow components.
+- End with the simplest paper-consistent starting pipeline.
+    `.trim();
+  }
+
   if (questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") return "METHOD_EXTRACTION";
   if (questionType === "VALIDATION" || answerStyle === "validation_plan") return "VALIDATION_PLAN";
   if (questionType === "CONCEPT" || answerStyle === "educational_overview") return "CONCEPT_EXPLANATION";
@@ -9926,31 +9973,67 @@ GENERAL READABILITY RULES
     return `
 ${common}
 
-AUTOMATIC STYLE: PRACTICAL END-TO-END ANALYSIS WORKFLOW
+AUTOMATIC STYLE: PAPER-GROUNDED DOMAIN-SPECIFIC ANALYSIS WORKFLOW
 
-The user is asking for an actual analysis pipeline or workflow, not just a package list.
+The user is asking for an analysis pipeline/workflow.
+The answer must be grounded in workflows used in relevant papers from the retrieved Paper_Talk DB context.
+Do not give a generic workflow first.
 Do not answer as trends or paper recommendations.
 
-Required structure:
-1. Start with a short direct answer in the user's language.
-2. Give a step-by-step workflow from raw data to biological interpretation.
-3. For each step, include:
+Core behavior:
+1. Infer the domain from the question.
+   - If the user asks single-cell/scRNA/scATAC/multiome, use single-cell or multiome papers as the workflow basis.
+   - If the user asks spatial/spatial transcriptomics, use spatial transcriptomics/spatial omics papers as the workflow basis.
+   - If the user asks cancer, immune, aging, or another domain, keep the workflow specific to that domain and data type.
+2. First extract what workflows the retrieved papers actually used or imply.
+3. Then synthesize a practical workflow from those paper-grounded patterns.
+4. Only after that, add general practical recommendations when the DB context is thin or a step is missing.
+
+Required output structure:
+1. Start with a direct sentence in the user's language, for example:
+   "이건 generic workflow가 아니라, 관련 논문들에서 실제로 어떤 분석 흐름을 썼는지 기준으로 정리해야 합니다."
+
+2. Section: "논문에서 보이는 workflow 패턴"
+   Use a table with columns:
+   - 논문 / DB 근거 제목
+   - 데이터 타입
+   - 실제 분석 흐름
+   - 명시된 tool / method
+   - 내가 가져다 쓰면 좋은 부분
+   If retrieved DB context does not explicitly show the workflow or tools, say so clearly.
+
+3. Section: "종합 workflow"
+   Give a step-by-step workflow with columns:
+   - 단계
    - 목적
    - input
-   - recommended packages/tools
+   - 논문에서 확인된 tool/method
+   - 부족한 경우 보완할 general recommendation
    - output
    - QC/checkpoint
-4. For scRNA-seq + scATAC-seq or multiome data, include when relevant:
-   - FASTQ / Cell Ranger ARC or Cell Ranger ATAC
-   - scRNA QC, doublet removal, normalization, clustering, annotation
-   - scATAC QC, TSS enrichment, FRiP, peak calling, TF-IDF/LSI
-   - Seurat/Signac WNN for same-cell multiome
-   - ArchR and SnapATAC2 for scATAC/multiome workflows
-   - LIGER/iNMF, GLUE, MultiVI/scvi-tools, Harmony, and MOFA+ for integration/latent factors
-   - chromVAR, Cicero, SCENIC / SCENIC+ for regulatory interpretation
-5. Separate same-cell multiome workflow from separate scRNA + scATAC integration workflow when useful.
-6. Clearly mark DB-supported tools only when retrieved excerpts explicitly support them; otherwise label them as general practical recommendations.
-7. End with "실제로 시작한다면" and recommend the simplest starting pipeline first.
+
+4. Domain-specific expectations:
+   For scRNA-seq / scATAC-seq / multiome:
+   - FASTQ/count/fragment generation: Cell Ranger, Cell Ranger ARC, STARsolo, alevin-fry when relevant.
+   - scRNA QC/normalization/clustering/annotation: Seurat, Scanpy, SCTransform, SingleR/Azimuth/CellTypist when relevant.
+   - scATAC QC/peak/LSI/gene activity: ArchR, Signac, SnapATAC2, MACS2, TSS enrichment, FRiP.
+   - integration: Seurat/Signac WNN for same-cell multiome; LIGER/iNMF, GLUE, MultiVI/scvi-tools, Harmony, MOFA+ for cross-dataset or multi-omics integration when relevant.
+   - regulatory interpretation: chromVAR, Cicero, SCENIC/pySCENIC, SCENIC+.
+
+   For spatial transcriptomics / spatial omics:
+   - platform-aware preprocessing: Visium, Xenium, CosMx, MERFISH, Slide-seq, seqFISH when relevant.
+   - spot/cell QC and normalization: Seurat, Scanpy, Squidpy, Giotto when relevant.
+   - cell type deconvolution / mapping: cell2location, Tangram, RCTD, stereoscope, SPOTlight when relevant.
+   - spatial domain/niche detection: BayesSpace, SpaGCN, STAGATE, Squidpy, Giotto when relevant.
+   - spatial cell-cell interaction: CellChat, NicheNet, LIANA, Squidpy ligand-receptor analysis, MISTy when relevant.
+   - histology/image integration: Squidpy, Giotto, image features, segmentation, morphology-aware models when relevant.
+
+5. Evidence labeling:
+   - "DB-supported": only if a retrieved DB excerpt explicitly supports the paper/tool/workflow claim.
+   - "General practical recommendation": useful standard workflow step, but not directly confirmed in the retrieved DB excerpt.
+   - Never claim a specific paper used a tool unless the retrieved DB excerpt says or strongly supports it.
+
+6. End with "실제로 시작한다면" and recommend the simplest paper-consistent workflow first.
 
 Return the answer in the user's language.
   `.trim();
@@ -10136,8 +10219,9 @@ The user explicitly asked for papers, literature, references, sources, or paper-
 You may show only retrieved Paper_Talk DB titles and source metadata.
 For literature recommendation questions, organize titles under trend/theme sections rather than paper labels.
 For METHOD_EXTRACTION, organize by package/tool/method and analysis purpose, not by trend.
-For PIPELINE_WORKFLOW, organize by analysis step from raw data to interpretation, not by trend.
-Never invent papers, packages, datasets, methods, or implementation details outside the retrieved DB context.
+For PIPELINE_WORKFLOW, first extract workflow patterns from retrieved papers in the requested domain, then synthesize the analysis steps from raw data to interpretation. Do not give a generic workflow before paper-grounded patterns.
+For spatial workflow questions, use spatial papers as the grounding context. For single-cell/multiome workflow questions, use single-cell/multiome papers as the grounding context.
+Never invent papers, packages, datasets, methods, or implementation details outside the retrieved DB context. If a workflow step is a general recommendation rather than DB-supported, label it clearly.
     `.trim();
   }
 
@@ -10369,10 +10453,23 @@ Regulatory network / TF activity:
 - SCENIC+: joint gene regulatory inference using expression plus chromatin accessibility, useful for scRNA + scATAC/multiome.
 - Note spelling: if the user or DB says SENIC, treat it as likely SCENIC unless context clearly means another tool.
 
+Spatial transcriptomics / spatial omics workflow tools:
+- Seurat spatial / Scanpy / Squidpy / Giotto: spatial object handling, QC, normalization, spatial neighbors, visualization.
+- BayesSpace / SpaGCN / STAGATE: spatial domain or tissue niche detection.
+- cell2location / Tangram / RCTD / stereoscope / SPOTlight: cell type deconvolution or mapping from scRNA references to spatial data.
+- CellChat / NicheNet / LIANA / Squidpy ligand-receptor analysis / MISTy: spatial cell-cell communication, ligand-receptor, and microenvironment modeling.
+- Xenium / CosMx / MERFISH-specific workflows may require cell segmentation, transcript assignment, panel QC, and morphology-aware interpretation.
+- Visium workflows often require spot-level QC, histology image alignment, deconvolution, spatial domain detection, and downstream ligand-receptor/niche analysis.
+
+Paper-grounded workflow rule:
+- For workflow/pipeline questions, do not start from this catalog alone.
+- First inspect the retrieved Paper_Talk DB context and summarize workflows used by relevant papers in the requested domain.
+- Then use this catalog only to fill missing practical steps, clearly labeled as general practical recommendations.
+
 Expected answer behavior for this user request:
 - Start by saying that LIGER and SCENIC/SCENIC+ are indeed relevant, but their DB-supported status depends on whether retrieved excerpts explicitly contain them.
 - For broad "what tools are there" questions, give the practical tool list first, then DB evidence if available.
-- For workflow/pipeline questions, give the full step-by-step workflow first, then method choices within each step.
+- For workflow/pipeline questions, first extract workflow patterns from the retrieved papers in the requested domain, then give the synthesized step-by-step workflow with method choices within each step.
 - Do not let unrelated retrieved items such as generic reference mapping or map-building phrases replace the standard method list or workflow.
 `.trim();
 }
@@ -10392,11 +10489,11 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const shouldGenerateHypotheses = Boolean(intent.should_generate_hypotheses);
   const shouldUseDbEvidence =
     Boolean(intent.should_use_db_evidence) ||
-    ["RESEARCH", "METHOD", "VALIDATION", "LITERATURE"].includes(questionType);
+    ["RESEARCH", "METHOD", "PIPELINE", "VALIDATION", "LITERATURE"].includes(questionType);
 
   const isResearchRelated =
     shouldUseDbEvidence ||
-    ["RESEARCH", "METHOD", "VALIDATION", "LITERATURE"].includes(questionType) ||
+    ["RESEARCH", "METHOD", "PIPELINE", "VALIDATION", "LITERATURE"].includes(questionType) ||
     /paper_talk|db|논문|연구|literature|paper|papers|rna velocity|spatial|single-cell|single cell|genomics|cancer/i.test(String(userMessage || ""));
 
   const dbTitles = hasContext
@@ -10668,14 +10765,19 @@ Detected semantic intent: ${intent.paper_talk_intent || ""}
 Detected domain: ${intent.primary_domain || ""}
 
 If outputStyle is PIPELINE_WORKFLOW:
-- The user wants an actual end-to-end analysis pipeline/workflow, not just a tool list.
+- The user wants a paper-grounded analysis pipeline/workflow, not just a generic tool list.
 - Do NOT answer with trends or paper recommendations.
-- Use a step-by-step workflow from raw data to biological interpretation.
-- For each step include: purpose, input, recommended tools/packages, output, and QC/checkpoint.
+- First infer the domain from the question and use retrieved papers from that domain as the workflow basis.
+- For single-cell/scRNA/scATAC/multiome workflow questions, extract workflow patterns from single-cell or multiome papers.
+- For spatial/spatial transcriptomics workflow questions, extract workflow patterns from spatial papers.
+- Start with a section that summarizes workflow patterns visible in the retrieved Paper_Talk DB papers.
+- Then synthesize a step-by-step workflow from raw data to biological interpretation.
+- For each step include: purpose, input, DB-supported tools/methods, general recommendations for missing steps, output, and QC/checkpoint.
 - For scRNA-seq + scATAC-seq/multiome, include same-cell multiome and separate scRNA+scATAC alternatives when useful.
-- Include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, MOFA+, chromVAR, Cicero, and SCENIC/SCENIC+ when relevant.
+- For spatial transcriptomics, include platform-aware preprocessing, QC, normalization, deconvolution/mapping, spatial domain/niche analysis, cell-cell interaction, and image/histology integration when useful.
 - Mark DB-supported tools only when retrieved DB excerpts explicitly support them; otherwise mark them as general practical recommendations.
-- End with the simplest practical starting pipeline.
+- Never claim a specific paper used a tool/workflow unless the retrieved DB excerpt supports it.
+- End with the simplest paper-consistent starting pipeline.
 
 If outputStyle is METHOD_EXTRACTION:
 - The user wants practical packages/methods/tools actually used in papers.
@@ -10727,7 +10829,7 @@ Never answer a paper recommendation request with only a field summary.
       role: "system",
       content: hasContext
         ? (["LITERATURE_REVIEW", "SOURCE_TRACE", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle)
-          ? "A DB context is present. The user explicitly asked for papers/literature/sources, paper-grounded methods, or an analysis workflow. You may show retrieved EXACT_DB_TITLE values only when they support a method/workflow step. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method. For PIPELINE_WORKFLOW, organize by analysis step from raw data to interpretation. Do not use paper labels. Do not use external papers as DB evidence."
+          ? "A DB context is present. The user explicitly asked for papers/literature/sources, paper-grounded methods, or an analysis workflow. You may show retrieved EXACT_DB_TITLE values only when they support a method/workflow step. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method. For PIPELINE_WORKFLOW, first summarize workflow patterns from retrieved papers in the requested domain, then organize the synthesized workflow by analysis step from raw data to interpretation. Do not use paper labels. Do not use external papers as DB evidence."
           : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources. Answer the user's question first in a friendly explanatory way.")
         : "No DB context is present. Do not start with a Paper_Talk DB retrieval-failure sentence unless the user explicitly asked for sources/evidence. For ordinary concept, algorithm, method, or research-idea questions, answer the scientific question directly from general knowledge. Do not invent paper titles, authors, years, journals, sample sizes, or datasets."
     },
@@ -10803,7 +10905,7 @@ Do not force paper lists or research gaps unless asked.
     `.trim();
   }
 
-  if (questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow") {
+  if (questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow" || answerStyle === "paper_grounded_workflow") {
     return `
 Selected mode: PRACTICAL END-TO-END ANALYSIS WORKFLOW.
 
