@@ -25,7 +25,7 @@ export default {
         return json({
           hasKey: !!env.OPENAI_API_KEY,
           hasModel: !!env.OPENAI_MODEL,
-          model: env.OPENAI_MODEL || "gpt-5-mini"
+          model: env.OPENAI_MODEL || "gpt-4o"
         });
       }
 
@@ -388,71 +388,6 @@ async function readJsonResponseSafely(response, label = "HTTP request") {
   return data;
 }
 
-
-function extractOpenAIText(data) {
-  if (!data) return "";
-
-  if (typeof data.output_text === "string" && data.output_text.trim()) {
-    return data.output_text.trim();
-  }
-
-  const choiceMessage = data?.choices?.[0]?.message;
-
-  if (typeof choiceMessage?.content === "string" && choiceMessage.content.trim()) {
-    return choiceMessage.content.trim();
-  }
-
-  if (Array.isArray(choiceMessage?.content)) {
-    const text = choiceMessage.content
-      .map(part => {
-        if (!part) return "";
-        if (typeof part === "string") return part;
-        if (typeof part.text === "string") return part.text;
-        if (typeof part?.text?.value === "string") return part.text.value;
-        if (typeof part.content === "string") return part.content;
-        return "";
-      })
-      .join("\n")
-      .trim();
-
-    if (text) return text;
-  }
-
-  if (Array.isArray(data.output)) {
-    const text = data.output
-      .flatMap(item => Array.isArray(item?.content) ? item.content : [])
-      .map(part => {
-        if (!part) return "";
-        if (typeof part.text === "string") return part.text;
-        if (typeof part?.text?.value === "string") return part.text.value;
-        if (typeof part.content === "string") return part.content;
-        return "";
-      })
-      .join("\n")
-      .trim();
-
-    if (text) return text;
-  }
-
-  return "";
-}
-
-function getOpenAIErrorMessage(data, fallback = "OpenAI API returned no answer.") {
-  const text = extractOpenAIText(data);
-  if (text) return text;
-
-  if (data?.error?.message) return data.error.message;
-
-  const finishReason = data?.choices?.[0]?.finish_reason;
-  if (finishReason === "length") {
-    return "The model stopped because the token limit was reached. Please try again with a narrower question.";
-  }
-
-  if (finishReason) return `OpenAI finish_reason: ${finishReason}`;
-
-  return fallback;
-}
-
 async function testOpenAI(env) {
   if (!env.OPENAI_API_KEY) {
     return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
@@ -466,24 +401,25 @@ async function testOpenAI(env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5-mini",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           { role: "user", content: "Say hello in one short sentence." }
         ],
-        max_completion_tokens: 30
+        temperature: 0,
+        max_tokens: 30
       })
     });
 
     const data = await readJsonResponseSafely(response, "OpenAI test request");
     return json({
       ok: true,
-      model: env.OPENAI_MODEL || "gpt-5-mini",
-      answer: extractOpenAIText(data) || "No answer returned."
+      model: env.OPENAI_MODEL || "gpt-4o",
+      answer: data?.choices?.[0]?.message?.content || "No answer returned."
     });
   } catch (error) {
     return json({
       ok: false,
-      model: env.OPENAI_MODEL || "gpt-5-mini",
+      model: env.OPENAI_MODEL || "gpt-4o",
       error: error?.message || "Unknown OpenAI test error"
     }, 500);
   }
@@ -2439,7 +2375,7 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5-mini",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -2450,7 +2386,8 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
             content: prompt
           }
         ],
-        max_completion_tokens: maxTokens
+        temperature: 0,
+        max_tokens: maxTokens
       })
     });
 
@@ -2463,7 +2400,7 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
     }
 
     if (!res.ok) return "";
-    return extractOpenAIText(data);
+    return String(data?.choices?.[0]?.message?.content || "").trim();
   } catch {
     return "";
   } finally {
@@ -5502,7 +5439,7 @@ async function callOpenAIGeneralNoRetrieval(userMessage, env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5-mini",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -5526,7 +5463,8 @@ Plain text only.`
             content: String(userMessage || "").slice(0, 1200)
           }
         ],
-        max_completion_tokens: 1800
+        temperature: 0.2,
+        max_tokens: 1800
       })
     });
 
@@ -5542,7 +5480,7 @@ Plain text only.`
       return `OpenAI general request failed. HTTP ${res.status}. ${data?.error?.message || JSON.stringify(data).slice(0, 300)}`;
     }
 
-    return extractOpenAIText(data) || "No answer returned.";
+    return String(data?.choices?.[0]?.message?.content || "").trim() || "No answer returned.";
   } catch (error) {
     return `OpenAI general request failed safely: ${error?.message || error}`;
   } finally {
@@ -5688,7 +5626,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5-mini",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -5707,12 +5645,13 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
           },
           { role: "user", content: text.slice(0, 1200) }
         ],
-        max_completion_tokens: 520
+        temperature: 0,
+        max_tokens: 520
       })
     });
 
     const data = await readJsonResponseSafely(res, "OpenAI research intent inference request");
-    let raw = extractOpenAIText(data);
+    let raw = String(data?.choices?.[0]?.message?.content || "").trim();
     raw = raw.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
 
     const parsed = JSON.parse(raw);
@@ -7976,7 +7915,7 @@ async function expandQuestionForResearchRetrieval(userQuery, env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5-mini",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -7993,11 +7932,12 @@ async function expandQuestionForResearchRetrieval(userQuery, env) {
             content: String(userQuery || "").slice(0, 1000)
           }
         ],
+        temperature: 0
       })
     });
 
     const data = await readJsonResponseSafely(res, "OpenAI retrieval expansion request");
-    const value = extractOpenAIText(data);
+    const value = data?.choices?.[0]?.message?.content || "";
 
     return cleanFetchedArticleText(value)
       .replace(/^["']|["']$/g, "")
@@ -9029,7 +8969,7 @@ async function inferUserResearchIntent({ userMessage, recentMessages = [] }, env
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5-mini",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -9090,13 +9030,14 @@ ${String(userMessage || "").slice(0, 1200)}
             `.trim()
           }
         ],
-        max_completion_tokens: 800
+        temperature: 0,
+        max_tokens: 800
       })
     });
 
     const data = await readJsonResponseSafely(res, "OpenAI intent-classification request");
 
-    const content = extractOpenAIText(data);
+    const content = data?.choices?.[0]?.message?.content || "";
     const parsed = parseJsonObjectFromText(content);
 
     if (!parsed || typeof parsed !== "object") return fallback;
@@ -9394,7 +9335,7 @@ async function rewriteReportStyleAnswerIfNeeded({ originalAnswer, userMessage, c
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5-mini",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -9444,7 +9385,8 @@ Strict rewriting rules:
             ].join("\n")
           }
         ],
-        max_completion_tokens: 1800
+        temperature: 0,
+        max_tokens: 1800
       })
     });
 
@@ -9461,7 +9403,7 @@ Strict rewriting rules:
       return convertReportStyleAnswerLocally(answer);
     }
 
-    const rewritten = extractOpenAIText(data);
+    const rewritten = String(data?.choices?.[0]?.message?.content || "").trim();
 
     if (!rewritten) return convertReportStyleAnswerLocally(answer);
 
@@ -10437,9 +10379,10 @@ Never answer a paper recommendation request with only a field summary.
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5-mini",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages,
-        max_completion_tokens: hasContext ? 3000 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 2200 : 2600)
+        temperature: isResearchRelated ? 0 : 0.1,
+        max_tokens: hasContext ? 2600 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 1700 : 2100)
       })
     });
 
@@ -10456,7 +10399,7 @@ Never answer a paper recommendation request with only a field summary.
       return `OpenAI API error: ${data?.error?.message || `HTTP ${res.status}`}`;
     }
 
-    return extractOpenAIText(data) || getOpenAIErrorMessage(data, "No answer was generated. Please try again with a shorter question.");
+    return data?.choices?.[0]?.message?.content || "No answer was generated.";
   } catch (error) {
     if (error && error.name === "AbortError") {
       return "OpenAI API timeout after 70 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
