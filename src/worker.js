@@ -144,14 +144,7 @@ export default {
       }
 
       if (pathname === "/admin-specialist-gpts" || pathname === "/specialist-admin") {
-        return redirect(new URL("/admin-specialist-gpts.html?admin=1", request.url).toString());
-      }
-
-      // Safety fix: if a public navbar accidentally links to the admin HTML file,
-      // send normal visitors to the public Specialist GPT landing page instead.
-      // Admin access should use /specialist-admin or /admin-specialist-gpts.
-      if (pathname === "/admin-specialist-gpts.html" && url.searchParams.get("admin") !== "1") {
-        return redirect(new URL("/specialist-gpts.html", request.url).toString());
+        return redirect(new URL("/admin-specialist-gpts.html", request.url).toString());
       }
 
       if (pathname === "/research") {
@@ -162,10 +155,10 @@ export default {
         return redirect(new URL("/study.html", request.url).toString());
       }
 
-      // Public Specialist GPT pages are served directly by the Worker so a missing or
-      // accidentally overwritten static asset can never expose the Worker source code.
-      if (pathname === "/research-gpts" || pathname === "/specialist-gpts" || pathname === "/specialist-gpts.html") {
-        return specialistGptsLandingPage(request);
+      // Public Specialist GPT shortcuts should open the real static specialist-gpts.html asset.
+      // Do not intercept /specialist-gpts.html here, because that file exists separately in ASSETS.
+      if (pathname === "/research-gpts" || pathname === "/specialist-gpts") {
+        return redirect(new URL("/specialist-gpts.html", request.url).toString());
       }
 
       const specialistGptKeyFromRoute = getSpecialistGptKeyFromPathname(pathname);
