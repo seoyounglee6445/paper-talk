@@ -148,39 +148,28 @@
 
 
   <section class="card write-form">
-    <h2>Import Research Paper Full Text PDF / TXT</h2>
-    <p>Upload one or many actual paper PDF/TXT full texts. This is paper evidence, not Thinking Logic. The selected GPT will use this before abstract/metadata. Duplicate PDFs are checked inside the selected GPT DB only.</p>
+    <h2>Import Specialist GPT PDF / TXT Knowledge</h2>
+    <p>Upload PDF/TXT files directly into the selected Specialist GPT DB only. No title, URL, or Paper_Talk Vision GPT upload is shown here.</p>
 
     <form onsubmit="importResearchFullTextFile(event)">
       <div class="full-row">
-        <label>Target GPT DB</label>
+        <label>Target Specialist GPT DB</label>
         <select id="fullTextGptKey" required>
-          <option value="paper_talk">Paper_Talk Vision GPT</option>
           <option value="neuroscience">Neuro-GPT</option>
           <option value="cancer_genomics">Cancer Genomics GPT</option>
           <option value="single_cell">Single-cell GPT</option>
           <option value="spatial_biology">Spatial Biology GPT</option>
           <option value="mitochondria">Mitochondria GPT</option>
         </select>
-        <p class="post-meta">Important: choose the exact GPT DB. Paper_Talk Vision GPT and Neuro-GPT must not share imported PDFs.</p>
+        <p class="post-meta">Important: each Specialist GPT must use its own isolated DB. Paper_Talk Vision GPT upload is handled separately.</p>
       </div>
 
       <div class="full-row">
-        <label>Optional Paper Title or Article URL to Match</label>
-        <input id="fullTextPaperMatch" placeholder="Optional. Leave blank to match each PDF by its file name.">
-      </div>
-
-      <div class="full-row">
-        <label>Optional PDF Link</label>
-        <input id="fullTextPdfLink" placeholder="Optional PDF/file link">
-      </div>
-
-      <div class="full-row">
-        <label>Research Paper Full Text PDF / TXT File(s)</label>
+        <label>PDF / TXT File(s)</label>
         <input type="file" id="researchFullTextFile" accept=".pdf,.txt,text/plain,application/pdf" multiple required>
       </div>
 
-      <button type="submit">Import Research Paper Full Text File(s)</button>
+      <button type="submit">Upload to Selected Specialist GPT</button>
       <p id="researchFullTextStatus"></p>
       <div id="researchFullTextResultList"></div>
     </form>
@@ -1222,28 +1211,20 @@ async function importResearchFullTextFile(e) {
   const key = requireAdminKey();
   if (!key) return;
 
-  const matchInput = document.getElementById("fullTextPaperMatch");
-  const pdfLinkInput = document.getElementById("fullTextPdfLink");
   const fileInput = document.getElementById("researchFullTextFile");
   const status = document.getElementById("researchFullTextStatus");
   const resultList = document.getElementById("researchFullTextResultList");
 
-  const globalMatchValue = (matchInput.value || "").trim();
-  const pdfLink = (pdfLinkInput.value || "").trim();
   const gptKey = getGptKeyFromSelect("fullTextGptKey");
   const gptLabel = getGptLabel(gptKey);
   const files = Array.from(fileInput.files || []);
 
   if (!files.length) {
-    alert("Please select one or more research paper PDF or TXT files.");
+    alert("Please select one or more PDF or TXT files.");
     return;
   }
 
-  if (files.length > 1 && globalMatchValue && !confirm("You selected multiple files with one shared title/URL match. This will attach every selected PDF to the same matched paper if the Worker finds the same record. Continue?\n\nTip: Leave the match box empty for batch upload so each PDF is matched by its file name.")) {
-    return;
-  }
-
-  if (status) status.textContent = `Starting full-text import to ${gptLabel} for ${files.length} file(s)... Large batches are paced to reduce Worker 500/503 errors.`;
+  if (status) status.textContent = `Starting PDF/TXT import to ${gptLabel} for ${files.length} file(s)... Large batches are paced to reduce Worker 500/503 errors.`;
   if (resultList) resultList.innerHTML = "";
 
   const seenHashes = new Map();
@@ -1251,7 +1232,7 @@ async function importResearchFullTextFile(e) {
 
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index];
-    const fileName = file.name || `research-full-text-${index + 1}`;
+    const fileName = file.name || `specialist-gpt-file-${index + 1}`;
     const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
 
     try {
@@ -1284,9 +1265,6 @@ async function importResearchFullTextFile(e) {
 
       seenHashes.set(textHash, fileName);
 
-      const matchValue = globalMatchValue || titleFromFullTextFileName(fileName);
-      const isUrl = /^https?:\/\//i.test(matchValue);
-
       if (status) {
         status.textContent = `Uploading ${index + 1}/${files.length} to ${gptLabel}: ${fileName}`;
       }
@@ -1295,9 +1273,9 @@ async function importResearchFullTextFile(e) {
         key,
         payload: {
           gptKey,
-          title: isUrl ? "" : matchValue,
-          sourceUrl: isUrl ? matchValue : "",
-          pdfLink,
+          title: titleFromFullTextFileName(fileName),
+          sourceUrl: "",
+          pdfLink: "",
           fileName,
           sourceType: isPdf ? "pdf" : "text",
           text: uploadText
