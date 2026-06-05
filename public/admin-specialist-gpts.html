@@ -1,514 +1,496 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Specialist GPT Admin | Paper_Talk</title>
-  <link rel="stylesheet" href="/style.css">
-  <style>
-    .specialist-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin-top:16px; }
-    .specialist-card { border:1px solid #c7d2fe; background:#fff; border-radius:18px; padding:16px; cursor:pointer; transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease; min-height:116px; }
-    .specialist-card:hover { transform:translateY(-2px); box-shadow:0 14px 28px rgba(15,23,42,.08); }
-    .specialist-card.active { border-color:#1428a0; box-shadow:0 0 0 3px rgba(20,40,160,.12); }
-    .specialist-card.disabled { opacity:.58; cursor:not-allowed; background:#f8fafc; }
-    .specialist-card h3 { margin:0 0 8px; color:#1428a0; font-size:20px; }
-    .specialist-card p { margin:0; font-size:14px; line-height:1.45; color:#475569; }
-    .gpt-badge { display:inline-block; margin-bottom:8px; padding:4px 9px; border-radius:999px; background:#eef2ff; color:#1428a0; font-size:12px; font-weight:800; }
-    .gpt-badge.warn { background:#fffbeb; color:#92400e; }
-    .selected-target { margin-top:14px; padding:12px 14px; border:1px solid #c7d2fe; border-radius:14px; background:#f8fbff; color:#1428a0; font-weight:800; }
-    .admin-warning { margin-top:14px; padding:12px 14px; border:1px solid #fed7aa; border-radius:14px; background:#fff7ed; color:#9a3412; line-height:1.55; }
-    .compact-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0; }
-    .compact-actions input { max-width:340px; min-width:220px; }
-    .mini-table-wrap { margin-top:12px; border:1px solid #dbe3ff; border-radius:16px; overflow:auto; max-height:460px; background:#fff; }
-    table.mini-table { width:100%; border-collapse:collapse; font-size:13px; line-height:1.35; }
-    .mini-table th, .mini-table td { padding:8px 10px; border-bottom:1px solid #e5e7eb; vertical-align:top; text-align:left; }
-    .mini-table th { position:sticky; top:0; z-index:1; background:#f8fafc; color:#1428a0; font-weight:900; }
-    .mini-table tr:last-child td { border-bottom:0; }
-    .mini-title { font-weight:800; color:#0f172a; max-width:520px; word-break:break-word; }
-    .mini-muted { color:#64748b; font-size:12px; word-break:break-word; }
-    .mini-btn { padding:7px 10px; border-radius:999px; font-size:12px; white-space:nowrap; }
-    .danger-outline { border:1px solid #ef4444; background:#fff; color:#dc2626; }
-    .danger-outline:hover { background:#fee2e2; }
-    .upload-result-box { margin-top:12px; }
-    .small-note { color:#64748b; font-size:13px; line-height:1.5; }
-    @media (max-width:720px) { .compact-actions { align-items:stretch; } .compact-actions input, .compact-actions button { width:100%; } }
-  </style>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-WWSD3F58L6"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag("js", new Date());
+gtag("config", "G-WWSD3F58L6");
+</script>
+
+<title>Specialist GPTs - Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
+
+<style>
+body {
+  margin: 0;
+  background: #eef2ff;
+  color: #020617;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.header {
+  background: #1428a0;
+  color: #ffffff;
+}
+
+.nav {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 18px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nav a {
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 700;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.nav .logo {
+  margin-right: auto;
+  font-size: 28px;
+  font-weight: 900;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+@media (max-width: 1100px) {
+  .nav { gap: 10px; padding: 16px 18px; }
+  .nav .logo { font-size: 24px; }
+  .nav a { font-size: 14px; }
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 36px 32px 70px;
+}
+
+.auth-box {
+  text-align: right;
+  margin-bottom: 24px;
+}
+
+.auth-box #userText,
+.auth-box #guestInfo {
+  margin-right: 8px;
+}
+
+.signin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  color: #1428a0;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 14px 32px rgba(20,40,160,0.12);
+}
+
+.google-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #1428a0;
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.research-gpts-hero {
+  margin-top: 10px;
+  margin-bottom: 30px;
+}
+
+.research-gpts-hero h1 {
+  margin: 0 0 12px;
+  color: #1428a0;
+  font-size: 44px;
+  line-height: 1.1;
+}
+
+.research-gpts-hero p {
+  max-width: 820px;
+  line-height: 1.7;
+  font-size: 16px;
+}
+
+.gpt-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(260px, 1fr));
+  gap: 22px;
+  margin-top: 24px;
+}
+
+.gpt-card {
+  min-height: 190px;
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
+}
+
+.gpt-card h2 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #1428a0;
+  font-size: 24px;
+}
+
+.gpt-card p {
+  line-height: 1.6;
+  margin-bottom: 0;
+}
+
+.tag {
+  display: inline-block;
+  margin-bottom: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.clickable-card {
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.clickable-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 22px 48px rgba(0,0,0,0.08);
+}
+
+.coming-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.coming-card h2 {
+  margin: 0;
+  color: #64748b;
+}
+
+.password-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 9999;
+  padding: 20px;
+}
+
+.password-modal {
+  width: min(460px, 100%);
+  background: #ffffff;
+  border-radius: 24px;
+  border: 1px solid #b9c7ff;
+  padding: 28px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.22);
+}
+
+.password-modal h2 {
+  margin: 0 0 10px;
+  color: #1428a0;
+}
+
+.password-modal input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px 14px;
+  border: 1px solid #b9c7ff;
+  border-radius: 14px;
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.password-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.password-actions button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.password-submit {
+  background: #1428a0;
+  color: #ffffff;
+}
+
+.password-cancel {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.password-error {
+  margin-top: 12px;
+  color: #dc2626;
+  font-weight: 700;
+  min-height: 20px;
+}
+
+@media (max-width: 1100px) {
+  .gpt-grid {
+    grid-template-columns: repeat(2, minmax(260px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .nav {
+    align-items: flex-start;
+  }
+
+  .nav .logo {
+    width: 100%;
+  }
+
+  .container {
+    padding: 28px 18px 50px;
+  }
+
+  .auth-box {
+    text-align: left;
+  }
+
+  .research-gpts-hero h1 {
+    font-size: 34px;
+  }
+
+  .gpt-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gpt-card {
+    padding: 22px;
+  }
+}
+</style>
 </head>
 
 <body>
 <header class="header">
   <nav class="nav">
-    <div class="logo">Paper_Talk Admin</div>
+    <a href="/" class="logo">Paper_Talk</a>
     <a href="/">Home</a>
-    <a href="/specialist-admin">Research GPTs</a>
-    <a href="/research">Research Paper</a>
-    <a href="/study">Study Materials</a>
-    <a href="/community">Community</a>
-    <a href="/career">Career</a>
+    <a href="/research.html">Research Paper</a>
+    <a href="/study.html">Study Materials</a>
+    <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
+    <a href="/specialist-gpts.html">Specialist GPTs</a>
+    <a href="/community.html">Community</a>
+    <a href="/career.html">Career</a>
   </nav>
 </header>
 
 <main class="container">
-  <h1>Specialist GPT Admin</h1>
-  <p>Choose a Specialist GPT workspace, upload PDF/TXT knowledge, and manage stored files for that selected GPT only.</p>
 
-  <section class="card">
-    <h2>Specialist Admin Access</h2>
-    <p>Enter your Specialist Admin Key once. It will be saved in this browser for 1 hour.</p>
-    <label>Specialist Admin Key</label>
-    <input id="globalAdminKey" type="password" placeholder="Enter specialist admin key">
-    <button onclick="saveAdminKey()">Save Specialist Admin Key</button>
-    <button class="danger-btn" onclick="clearAdminKey()">Clear Specialist Admin Key</button>
-    <p id="adminKeyStatus"></p>
+  <div id="topLoginArea" class="auth-box" style="display:none;">
+    <span id="guestInfo">Sign in for free to use Specialist GPTs. </span>
+    <a id="loginBtn" class="signin-btn" href="/auth/google">
+      <span class="google-dot">G</span>
+      Sign in with Google
+    </a>
+  </div>
+
+  <div id="topLogoutArea" class="auth-box" style="display:none;">
+    <span id="userText"></span>
+    <a id="logoutBtn" class="signin-btn" href="/auth/logout">Logout</a>
+  </div>
+
+  <section class="research-gpts-hero">
+    <h1>Specialist GPTs</h1>
+    <p>
+      Private specialist GPT workspaces built on curated scientific knowledge.
+      Each GPT is designed around a specific research theme so researchers can ask focused scientific questions,
+      explore literature-based directions, and generate testable ideas.
+    </p>
   </section>
 
-  <div id="adminContent" style="display:none;">
-    <section class="card">
-      <h2>Select Specialist GPT</h2>
-      <p class="small-note">Select the target GPT before uploading or deleting. Future GPT cards can be enabled only after their isolated backend/DB route is ready.</p>
-      <div id="specialistGrid" class="specialist-grid"></div>
-      <div id="selectedTarget" class="selected-target"></div>
-      <div class="admin-warning">
-        This page never uploads to Paper_Talk Vision GPT. It only sends files with the selected Specialist GPT key.
-        For safe cleanup, bulk delete only deletes rows whose returned <code>gpt_key</code> exactly matches the selected GPT.
-      </div>
-    </section>
+  <section>
+    <div class="gpt-grid">
 
-    <section class="card write-form">
-      <h2>Upload PDF / TXT Knowledge</h2>
-      <p>Select one or more PDF/TXT files. No title or URL fields are shown here; the file name will be used internally as the document title.</p>
-      <form onsubmit="importSelectedFullTextFile(event)">
-        <div class="full-row">
-          <label>PDF / TXT File(s)</label>
-          <input type="file" id="researchFullTextFile" accept=".pdf,.txt,text/plain,application/pdf" multiple required>
-        </div>
-        <button type="submit" id="uploadButton">Upload PDF / TXT</button>
-        <p id="researchFullTextStatus"></p>
-        <div id="researchFullTextResultList" class="upload-result-box"></div>
-      </form>
-    </section>
+      <article
+        class="gpt-card clickable-card"
+        onclick="openPrivateNeuroGpt()"
+      >
+        <span class="tag">Private</span>
+        <h2>&#129504; Neuro-GPT</h2>
+        <p>from Sungmo Park</p>
+      </article>
 
-    <section class="card">
-      <h2>Stored PDF / TXT Files</h2>
-      <p>View, select, or delete uploaded files for the selected Specialist GPT.</p>
-      <div class="compact-actions">
-        <button onclick="loadStoredFullTextFiles()">Load Stored Files</button>
-        <button class="danger-btn" onclick="deleteCheckedStoredFiles()">Delete Checked Files</button>
-        <button class="danger-btn" onclick="deleteAllStoredFilesForSelectedGpt()">Delete ALL Files for Selected GPT</button>
-        <input id="storedFileSearch" placeholder="Filter displayed files..." oninput="renderStoredFullTextFiles()">
-      </div>
-      <p id="storedFullTextStatus"></p>
-      <div id="storedFullTextList"></div>
-    </section>
-  </div>
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+    </div>
+  </section>
+
 </main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<div id="neuroPasswordOverlay" class="password-overlay">
+  <div class="password-modal">
+    <h2>Private Neuro-GPT</h2>
+    <p>Please enter the password to access Neuro-GPT.</p>
+
+    <input
+      id="neuroPasswordInput"
+      type="password"
+      placeholder="Enter password"
+      autocomplete="off"
+    >
+
+    <div class="password-actions">
+      <button class="password-submit" type="button" onclick="submitNeuroPassword()">Enter</button>
+      <button class="password-cancel" type="button" onclick="closeNeuroPassword()">Cancel</button>
+    </div>
+
+    <div id="neuroPasswordError" class="password-error"></div>
+  </div>
+</div>
+
 <script>
-const ADMIN_KEY_STORAGE = "paperTalkSpecialistAdminKey";
-const ADMIN_KEY_EXPIRES = "paperTalkSpecialistAdminKeyExpires";
-const ONE_HOUR = 60 * 60 * 1000;
+function openPrivateNeuroGpt() {
+  const overlay = document.getElementById("neuroPasswordOverlay");
+  const input = document.getElementById("neuroPasswordInput");
+  const error = document.getElementById("neuroPasswordError");
 
-const GPTS = [
-  { key:"neuroscience", label:"Neuro-GPT", emoji:"🧠", badge:"Active", description:"Private neuroscience knowledge workspace.", enabled:true },
-  { key:"single_cell", label:"Single-cell GPT", emoji:"🧬", badge:"Coming Soon", description:"Single-cell and multiome knowledge workspace.", enabled:false },
-  { key:"cancer_genomics", label:"Cancer Genomics GPT", emoji:"🧫", badge:"Coming Soon", description:"Cancer genomics knowledge workspace.", enabled:false },
-  { key:"spatial_biology", label:"Spatial Biology GPT", emoji:"🗺️", badge:"Coming Soon", description:"Spatial transcriptomics and tissue biology workspace.", enabled:false },
-  { key:"mitochondria", label:"Mitochondria GPT", emoji:"⚡", badge:"Coming Soon", description:"Mitochondria biology knowledge workspace.", enabled:false }
-];
+  error.textContent = "";
+  input.value = "";
+  overlay.style.display = "flex";
 
-let selectedGptKey = "neuroscience";
-let storedFiles = [];
-let lastIgnoredStoredRows = 0;
-
-function normalizeGptKey(value) {
-  const raw = String(value || "neuroscience").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
-  const aliases = {
-    neuro:"neuroscience", neuro_gpt:"neuroscience", neuroscience:"neuroscience",
-    singlecell:"single_cell", single_cell:"single_cell", single_cell_gpt:"single_cell",
-    cancer:"cancer_genomics", cancer_genomics:"cancer_genomics",
-    spatial:"spatial_biology", spatial_biology:"spatial_biology",
-    mitochondria:"mitochondria", mitochondrial:"mitochondria"
-  };
-  return aliases[raw] || raw;
+  setTimeout(function() { input.focus(); }, 50);
 }
 
-function getSelectedGpt() { return GPTS.find(g => g.key === selectedGptKey) || GPTS[0]; }
-function getGptLabel(key) { const normalized = normalizeGptKey(key); return (GPTS.find(g => g.key === normalized) || {}).label || normalized; }
-
-function renderSpecialistCards() {
-  const grid = document.getElementById("specialistGrid");
-  if (!grid) return;
-  grid.innerHTML = GPTS.map(gpt => {
-    const active = gpt.key === selectedGptKey;
-    const disabled = !gpt.enabled;
-    const badgeClass = disabled ? "gpt-badge warn" : "gpt-badge";
-    return `
-      <article class="specialist-card ${active ? "active" : ""} ${disabled ? "disabled" : ""}" onclick="selectSpecialistGpt('${gpt.key}')">
-        <span class="${badgeClass}">${escapeHtml(gpt.badge)}</span>
-        <h3>${gpt.emoji} ${escapeHtml(gpt.label)}</h3>
-        <p>${escapeHtml(gpt.description)}</p>
-      </article>`;
-  }).join("");
+function closeNeuroPassword() {
+  document.getElementById("neuroPasswordOverlay").style.display = "none";
 }
 
-function selectSpecialistGpt(key) {
-  const normalized = normalizeGptKey(key);
-  const gpt = GPTS.find(item => item.key === normalized);
-  if (!gpt) return;
-  if (!gpt.enabled) {
-    alert(`${gpt.label} is Coming Soon. Enable it in this file only after its isolated backend/DB route is ready.`);
+async function submitNeuroPassword() {
+  const input = document.getElementById("neuroPasswordInput");
+  const error = document.getElementById("neuroPasswordError");
+  const password = input.value.trim();
+
+  error.textContent = "";
+
+  if (!password) {
+    error.textContent = "Please enter the password.";
+    input.focus();
     return;
   }
-  selectedGptKey = normalized;
-  storedFiles = [];
-  lastIgnoredStoredRows = 0;
-  const resultList = document.getElementById("researchFullTextResultList");
-  const storedList = document.getElementById("storedFullTextList");
-  const storedStatus = document.getElementById("storedFullTextStatus");
-  if (resultList) resultList.innerHTML = "";
-  if (storedList) storedList.innerHTML = "";
-  if (storedStatus) storedStatus.textContent = "";
-  renderSpecialistCards();
-  updateSelectedTargetText();
-}
 
-function updateSelectedTargetText() {
-  const selected = getSelectedGpt();
-  const target = document.getElementById("selectedTarget");
-  if (target) target.textContent = `Selected target DB: ${selected.label}`;
-  const uploadButton = document.getElementById("uploadButton");
-  if (uploadButton) uploadButton.textContent = `Upload PDF / TXT to ${selected.label}`;
-}
-
-function updateAdminContentVisibility() {
-  const content = document.getElementById("adminContent");
-  if (!content) return;
-  const key = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
-  const expires = Number(localStorage.getItem(ADMIN_KEY_EXPIRES) || 0);
-  content.style.display = key && Date.now() <= expires ? "block" : "none";
-}
-
-function escapeHtml(value) {
-  return String(value || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-}
-function encodeForInline(value) { return encodeURIComponent(String(value || "")); }
-function decodeFromInline(value) { try { return decodeURIComponent(String(value || "")); } catch { return String(value || ""); } }
-
-async function parseApiJsonOrText(res) {
-  const raw = await res.text();
-  try { return JSON.parse(raw || "{}"); }
-  catch { return { ok:false, error:`Server returned non-JSON response. HTTP ${res.status}. ${raw.replace(/\s+/g, " ").slice(0, 300)}` }; }
-}
-
-async function checkAdminKeyWithServer(key) {
   try {
-    const res = await fetch("/api/admin/specialist/check", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json", "X-Specialist-Admin-Key":key },
-      cache:"no-store"
+    const res = await fetch("/api/neuro-gpt/access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ password: password })
     });
-    const data = await res.json().catch(() => ({}));
-    return Boolean(res.ok && data.ok && data.authenticated);
-  } catch { return false; }
-}
 
-async function saveAdminKey() {
-  const key = document.getElementById("globalAdminKey").value.trim();
-  if (!key) { alert("Please enter specialist admin key."); return; }
-  const status = document.getElementById("adminKeyStatus");
-  if (status) status.textContent = "Checking specialist admin key...";
-  const valid = await checkAdminKeyWithServer(key);
-  if (!valid) {
-    localStorage.removeItem(ADMIN_KEY_STORAGE);
-    localStorage.removeItem(ADMIN_KEY_EXPIRES);
-    document.getElementById("globalAdminKey").value = "";
-    updateAdminKeyStatus();
-    updateAdminContentVisibility();
-    alert("Invalid specialist admin key.");
-    return;
-  }
-  localStorage.setItem(ADMIN_KEY_STORAGE, key);
-  localStorage.setItem(ADMIN_KEY_EXPIRES, String(Date.now() + ONE_HOUR));
-  updateAdminKeyStatus();
-  updateAdminContentVisibility();
-  alert("Specialist admin key saved for 1 hour.");
-}
+    const data = await res.json().catch(function() { return {}; });
 
-function clearAdminKey() {
-  localStorage.removeItem(ADMIN_KEY_STORAGE);
-  localStorage.removeItem(ADMIN_KEY_EXPIRES);
-  document.getElementById("globalAdminKey").value = "";
-  const status = document.getElementById("researchFullTextStatus");
-  const resultList = document.getElementById("researchFullTextResultList");
-  const storedStatus = document.getElementById("storedFullTextStatus");
-  const storedList = document.getElementById("storedFullTextList");
-  if (status) status.textContent = "";
-  if (resultList) resultList.innerHTML = "";
-  if (storedStatus) storedStatus.textContent = "";
-  if (storedList) storedList.innerHTML = "";
-  updateAdminKeyStatus();
-  updateAdminContentVisibility();
-}
-
-function getAdminKey() {
-  const key = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
-  const expires = Number(localStorage.getItem(ADMIN_KEY_EXPIRES) || 0);
-  if (!key || Date.now() > expires) { clearAdminKey(); return ""; }
-  return key;
-}
-function requireAdminKey() { const key = getAdminKey(); if (!key) { alert("Please save your specialist admin key first."); return ""; } return key; }
-function updateAdminKeyStatus() {
-  const status = document.getElementById("adminKeyStatus");
-  const key = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
-  const expires = Number(localStorage.getItem(ADMIN_KEY_EXPIRES) || 0);
-  if (!key || Date.now() > expires) { if (status) status.textContent = "Specialist admin key is not saved."; updateAdminContentVisibility(); return; }
-  const minutesLeft = Math.max(Math.ceil((expires - Date.now()) / 60000), 0);
-  if (status) status.textContent = `Specialist admin key saved. Expires in about ${minutesLeft} minutes.`;
-  updateAdminContentVisibility();
-}
-
-async function extractPdfTextFromFile(file) {
-  if (!window.pdfjsLib) throw new Error("PDF reader library did not load. Please refresh the page and try again.");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const maxPages = Math.min(pdf.numPages, 500);
-  const pages = [];
-  for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    const pageText = textContent.items.map(item => item.str || "").join(" ").replace(/\s+/g, " ").trim();
-    if (pageText) pages.push(`Page ${pageNumber}\n${pageText}`);
-  }
-  return pages.join("\n\n");
-}
-
-async function sha256Text(value) {
-  const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value || "")));
-  return Array.from(new Uint8Array(buffer)).map(byte => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function titleFromFullTextFileName(fileName) { return String(fileName || "").replace(/\.[^.]+$/, "").replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim() || "Specialist GPT uploaded document"; }
-function prepareFullTextForUpload(text) { return String(text || "").replace(/\r/g, "\n").replace(/[ \t]+/g, " ").replace(/\n{4,}/g, "\n\n\n").trim().slice(0, 12000); }
-
-async function uploadResearchFullTextPayloadWithRetries({ key, payload }) {
-  const baseText = String(payload.text || "");
-  const selected = getSelectedGpt();
-  const title = String(payload.title || payload.fileName || "Uploaded document").trim();
-  const fallbackText = [`${selected.label} PDF metadata-only fallback`, `Title: ${title}`, payload.fileName ? `File name: ${payload.fileName}` : "", baseText ? `Extracted preview: ${baseText.slice(0, 1200)}` : ""].filter(Boolean).join("\n");
-  const attempts = [{ label:"bounded", text:baseText.slice(0, 12000) }, { label:"small", text:baseText.slice(0, 4000) }, { label:"metadata_only", text:fallbackText.slice(0, 1800) }];
-  let lastResult = { ok:false, error:"Upload did not run." };
-  for (const attempt of attempts) {
-    const res = await fetch("/api/admin/specialist/fulltext/import", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json", "X-Specialist-Admin-Key":key },
-      body:JSON.stringify({ ...payload, text:attempt.text, importMode:attempt.label })
-    });
-    const result = await parseApiJsonOrText(res);
-    result._httpOk = res.ok;
-    result._attempt = attempt.label;
-    lastResult = result;
-    if (res.ok && result.ok) return result;
-    const msg = String(result.error || result.message || "");
-    const retryable = /non-JSON response|HTTP 500|HTTP 502|HTTP 503|HTTP 504|Worker|timeout/i.test(msg) || [500, 502, 503, 504].includes(res.status);
-    if (!retryable) return result;
-    await new Promise(resolve => setTimeout(resolve, 2500));
-  }
-  return lastResult;
-}
-
-async function importSelectedFullTextFile(e) {
-  e.preventDefault();
-  const key = requireAdminKey();
-  if (!key) return;
-  const selected = getSelectedGpt();
-  if (!selected.enabled) { alert(`${selected.label} is not enabled yet.`); return; }
-  const fileInput = document.getElementById("researchFullTextFile");
-  const status = document.getElementById("researchFullTextStatus");
-  const resultList = document.getElementById("researchFullTextResultList");
-  const files = Array.from(fileInput.files || []);
-  if (!files.length) { alert("Please select one or more PDF or TXT files."); return; }
-  if (status) status.textContent = `Starting import for ${selected.label}: ${files.length} file(s)...`;
-  if (resultList) resultList.innerHTML = "";
-  const seenHashes = new Map();
-  const results = [];
-  for (let index = 0; index < files.length; index += 1) {
-    const file = files[index];
-    const fileName = file.name || `specialist-gpt-full-text-${index + 1}`;
-    const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
-    try {
-      if (status) status.textContent = `Reading ${index + 1}/${files.length}: ${fileName}`;
-      const extractedText = isPdf ? await extractPdfTextFromFile(file) : await file.text();
-      const cleanText = String(extractedText || "").trim();
-      if (!cleanText || cleanText.length < 20) { results.push({ fileName, status:"failed", message:"Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version." }); continue; }
-      const uploadText = prepareFullTextForUpload(cleanText);
-      const textHash = await sha256Text(uploadText.replace(/\s+/g, " "));
-      if (seenHashes.has(textHash)) { results.push({ fileName, status:"skipped", message:`Duplicate in this batch. Same as: ${seenHashes.get(textHash)}` }); continue; }
-      seenHashes.set(textHash, fileName);
-      if (status) status.textContent = `Uploading ${index + 1}/${files.length} to ${selected.label}: ${fileName}`;
-      const result = await uploadResearchFullTextPayloadWithRetries({
-        key,
-        payload:{ gptKey:selectedGptKey, title:titleFromFullTextFileName(fileName), sourceUrl:"", pdfLink:"", fileName, sourceType:isPdf ? "pdf" : "text", text:uploadText }
-      });
-      if (!result._httpOk || !result.ok) { results.push({ fileName, status:"failed", message:result.error || result.message || "Full text import failed." }); continue; }
-      if (result.duplicate) { results.push({ fileName, status:"skipped", message:`Already imported: ${result.duplicateTitle || result.title || "existing document"}` }); continue; }
-      results.push({ fileName, status:"imported", message:`${result.title || titleFromFullTextFileName(fileName)} (${result.fullTextCharacters || 0} chars, ${result.chunks || 0} chunks)` });
-    } catch (error) {
-      results.push({ fileName, status:"failed", message:error?.message || String(error) });
+    if (res.ok && data && data.ok && data.authenticated) {
+      location.href = "/visium-gpt.html?gpt=neuroscience";
+      return;
     }
-    if (resultList) resultList.innerHTML = renderUploadResultsCompact(results);
-    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    error.textContent = data.error || "Incorrect password.";
+    input.value = "";
+    input.focus();
+  } catch {
+    error.textContent = "Password check failed. Please try again.";
+    input.focus();
   }
-  const imported = results.filter(r => r.status === "imported").length;
-  const skipped = results.filter(r => r.status === "skipped").length;
-  const failed = results.filter(r => r.status === "failed").length;
-  if (status) status.textContent = `Import complete for ${selected.label}. Imported: ${imported}, Skipped: ${skipped}, Failed: ${failed}.`;
-  if (resultList) resultList.innerHTML = renderUploadResultsCompact(results);
-  alert(`Import complete for ${selected.label}.\nImported: ${imported}\nSkipped: ${skipped}\nFailed: ${failed}`);
-  if (imported > 0) { e.target.reset(); loadStoredFullTextFiles(); }
 }
 
-function renderUploadResultsCompact(results) {
-  if (!results || !results.length) return "";
-  return `<div class="mini-table-wrap" style="max-height:260px;"><table class="mini-table"><thead><tr><th>Status</th><th>File</th><th>Message</th></tr></thead><tbody>${results.map(row => {
-    const icon = row.status === "imported" ? "✅" : row.status === "skipped" ? "⏭️" : "❌";
-    return `<tr><td>${icon} ${escapeHtml(row.status)}</td><td class="mini-title">${escapeHtml(row.fileName)}</td><td class="mini-muted">${escapeHtml(row.message)}</td></tr>`;
-  }).join("")}</tbody></table></div>`;
-}
+document.addEventListener("keydown", function(event) {
+  const overlay = document.getElementById("neuroPasswordOverlay");
+  const isOpen = overlay && overlay.style.display === "flex";
 
-async function loadStoredFullTextFiles() {
-  const key = requireAdminKey();
-  if (!key) return;
-  const selected = getSelectedGpt();
-  const status = document.getElementById("storedFullTextStatus");
-  const list = document.getElementById("storedFullTextList");
-  if (status) status.textContent = `Loading stored files for ${selected.label}...`;
-  if (list) list.innerHTML = "";
-  const params = new URLSearchParams({ gptKey:selectedGptKey, limit:"500" });
-  const res = await fetch("/api/admin/specialist/fulltext/list?" + params.toString(), { method:"GET", headers:{ "X-Specialist-Admin-Key":key } });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.ok) { if (status) status.textContent = data.error || data.message || `Failed to load stored files for ${selected.label}.`; return; }
-  const allRows = Array.isArray(data.files) ? data.files : [];
-  const safeRows = allRows.filter(file => normalizeGptKey(file.gpt_key || "") === selectedGptKey);
-  lastIgnoredStoredRows = allRows.length - safeRows.length;
-  storedFiles = safeRows;
-  renderStoredFullTextFiles();
-}
+  if (!isOpen) return;
 
-function getFilteredStoredFiles() {
-  const q = String(document.getElementById("storedFileSearch")?.value || "").trim().toLowerCase();
-  if (!q) return storedFiles;
-  return storedFiles.filter(file => [file.title, file.file_name, file.gpt_key, file.content_hash, file.created_at].filter(Boolean).join(" ").toLowerCase().includes(q));
-}
-
-function renderStoredFullTextFiles() {
-  const selected = getSelectedGpt();
-  const status = document.getElementById("storedFullTextStatus");
-  const list = document.getElementById("storedFullTextList");
-  if (!list) return;
-  const files = getFilteredStoredFiles();
-  const ignoredMessage = lastIgnoredStoredRows > 0 ? ` Ignored ${lastIgnoredStoredRows} row(s) because their gpt_key did not exactly match ${selected.key}.` : "";
-  if (status) status.textContent = `Stored files for ${selected.label}: ${storedFiles.length}. Showing: ${files.length}.${ignoredMessage}`;
-  if (!storedFiles.length) {
-    list.innerHTML = `<p>No stored files found for ${escapeHtml(selected.label)}. If old rows still appear elsewhere, deploy the Worker gpt_key filtering patch first.</p>`;
-    return;
+  if (event.key === "Enter") {
+    submitNeuroPassword();
   }
-  list.innerHTML = `<div class="mini-table-wrap"><table class="mini-table"><thead><tr><th style="width:36px;"><input type="checkbox" id="checkAllStoredRows" onchange="toggleAllStoredRows(this.checked)"></th><th>Title / File</th><th>GPT</th><th>Chunks</th><th>Chars</th><th>Uploaded</th><th>Action</th></tr></thead><tbody>${files.map(file => {
-    const globalIndex = storedFiles.indexOf(file);
-    const postId = encodeForInline(file.post_id || "");
-    const fileName = encodeForInline(file.file_name || "");
-    const contentHash = encodeForInline(file.content_hash || "");
-    const fileGptKey = encodeForInline(file.gpt_key || "");
-    return `<tr><td><input type="checkbox" class="stored-row-check" value="${globalIndex}"></td><td><div class="mini-title">${escapeHtml(file.title || "Untitled document")}</div><div class="mini-muted">${escapeHtml(file.file_name || "")}</div></td><td>${escapeHtml(file.gpt_key || "")}</td><td>${escapeHtml(file.chunks || 0)}</td><td>${escapeHtml(file.characters || 0)}</td><td class="mini-muted">${escapeHtml(file.created_at || "")}</td><td><button class="mini-btn danger-outline" onclick="deleteStoredFullTextFile('${postId}', '${fileName}', '${contentHash}', '${fileGptKey}')">Delete</button></td></tr>`;
-  }).join("")}</tbody></table></div>`;
-}
 
-function toggleAllStoredRows(checked) { document.querySelectorAll(".stored-row-check").forEach(box => { box.checked = Boolean(checked); }); }
-function getCheckedStoredFiles() {
-  const checked = Array.from(document.querySelectorAll(".stored-row-check:checked"));
-  const selected = [];
-  for (const box of checked) {
-    const index = Number(box.value);
-    if (Number.isInteger(index) && storedFiles[index]) selected.push(storedFiles[index]);
-  }
-  return selected;
-}
-
-async function deleteCheckedStoredFiles() {
-  const files = getCheckedStoredFiles();
-  if (!files.length) { alert("Please check one or more files to delete."); return; }
-  const selected = getSelectedGpt();
-  if (!confirm(`Delete ${files.length} checked file(s) from ${selected.label}?`)) return;
-  await deleteStoredFileBatch(files);
-}
-
-async function deleteAllStoredFilesForSelectedGpt() {
-  const key = requireAdminKey();
-  if (!key) return;
-  if (!storedFiles.length) await loadStoredFullTextFiles();
-  const selected = getSelectedGpt();
-  const files = storedFiles.filter(file => normalizeGptKey(file.gpt_key || "") === selectedGptKey);
-  if (!files.length) { alert(`No verified ${selected.label} files are loaded. Deploy the Worker gpt_key filtering patch first if old Paper_Talk rows are still mixed in.`); return; }
-  const firstConfirm = confirm(`Delete ALL ${files.length} stored PDF/TXT file(s) for ${selected.label}?\n\nThis only deletes rows whose gpt_key exactly equals "${selectedGptKey}".`);
-  if (!firstConfirm) return;
-  const typed = prompt(`Type DELETE ${selected.label} to confirm bulk delete.`);
-  if (typed !== `DELETE ${selected.label}`) { alert("Bulk delete cancelled. Confirmation text did not match."); return; }
-  await deleteStoredFileBatch(files);
-}
-
-async function deleteStoredFileBatch(files) {
-  const selected = getSelectedGpt();
-  const status = document.getElementById("storedFullTextStatus");
-  let deleted = 0, failed = 0;
-  for (let i = 0; i < files.length; i += 1) {
-    const file = files[i];
-    if (normalizeGptKey(file.gpt_key || "") !== selectedGptKey) { failed += 1; continue; }
-    if (status) status.textContent = `Deleting ${i + 1}/${files.length} from ${selected.label}: ${file.file_name || file.title || ""}`;
-    const ok = await deleteStoredFileObject(file, false);
-    if (ok) deleted += 1; else failed += 1;
-    await new Promise(resolve => setTimeout(resolve, 300));
-  }
-  if (status) status.textContent = `Delete complete for ${selected.label}. Deleted: ${deleted}, Failed/skipped: ${failed}.`;
-  alert(`Delete complete for ${selected.label}.\nDeleted: ${deleted}\nFailed/skipped: ${failed}`);
-  await loadStoredFullTextFiles();
-}
-
-async function deleteStoredFullTextFile(encodedPostId, encodedFileName, encodedContentHash, encodedGptKey) {
-  const file = { post_id:decodeFromInline(encodedPostId), file_name:decodeFromInline(encodedFileName), content_hash:decodeFromInline(encodedContentHash), gpt_key:decodeFromInline(encodedGptKey) };
-  const selected = getSelectedGpt();
-  if (normalizeGptKey(file.gpt_key || "") !== selectedGptKey) { alert(`This row is not verified as ${selected.label}. It will not be deleted.`); return; }
-  if (!confirm(`Delete stored PDF/TXT file from ${selected.label}?\n\n${file.file_name || "(no filename)"}`)) return;
-  const ok = await deleteStoredFileObject(file, true);
-  if (ok) { alert("Stored PDF/TXT file deleted."); await loadStoredFullTextFiles(); }
-}
-
-async function deleteStoredFileObject(file, showAlertOnError = true) {
-  const key = requireAdminKey();
-  if (!key) return false;
-  const gptKey = normalizeGptKey(file.gpt_key || "");
-  if (gptKey !== selectedGptKey) return false;
-  const res = await fetch("/api/admin/specialist/fulltext/delete", {
-    method:"POST",
-    headers:{ "Content-Type":"application/json", "X-Specialist-Admin-Key":key },
-    body:JSON.stringify({ postId:file.post_id || "", fileName:file.file_name || "", contentHash:file.content_hash || "", gptKey:selectedGptKey })
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.ok) { if (showAlertOnError) alert(data.error || data.message || "Delete failed."); return false; }
-  return true;
-}
-
-document.addEventListener("DOMContentLoaded", async () => {
-  renderSpecialistCards();
-  updateSelectedTargetText();
-  updateAdminKeyStatus();
-  const key = getAdminKey();
-  if (key) {
-    const valid = await checkAdminKeyWithServer(key);
-    if (!valid) { clearAdminKey(); alert("Saved specialist admin key is invalid or expired. Please enter the correct specialist admin key again."); return; }
-    updateAdminContentVisibility();
+  if (event.key === "Escape") {
+    closeNeuroPassword();
   }
 });
+
+async function initAuthBox() {
+  const topLoginArea = document.getElementById("topLoginArea");
+  const topLogoutArea = document.getElementById("topLogoutArea");
+  const userText = document.getElementById("userText");
+
+  try {
+    const res = await fetch("/api/me", { cache: "no-store", credentials: "include" });
+    const data = await res.json();
+
+    if (data && data.ok && data.user) {
+      topLoginArea.style.display = "none";
+      topLogoutArea.style.display = "block";
+      userText.textContent = "Signed in as " + (data.user.name || data.user.email || "Paper_Talk user");
+    } else {
+      topLoginArea.style.display = "block";
+      topLogoutArea.style.display = "none";
+    }
+  } catch {
+    topLoginArea.style.display = "block";
+    topLogoutArea.style.display = "none";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", initAuthBox);
 </script>
+
 </body>
 </html>
