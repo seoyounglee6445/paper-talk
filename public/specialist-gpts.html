@@ -1,42 +1,171 @@
-<section class="research-gpts-hero">
-  <h1>Specialist GPTs</h1>
-  <p>
-    Specialized GPT workspaces built on curated scientific knowledge.
-  </p>
-</section>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
 
-<section>
-  <div class="gpt-grid">
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-WWSD3F58L6"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-WWSD3F58L6');
+</script>
 
-    <article
-      class="gpt-card clickable-card"
-      onclick="location.href='/visium-gpt.html?gpt=neuroscience'"
-    >
-      <span class="tag">Available</span>
-      <h2>🧠 Neuroscience GPT</h2>
-      <p>Built on curated neuroscience literature.</p>
-    </article>
+<title>Specialist GPTs - Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
 
-    <article
-      class="gpt-card clickable-card"
-      onclick="location.href='/visium-gpt.html?gpt=neuro_sungmo'"
-    >
-      <span class="tag">Private</span>
-      <h2>🧠 Neuro-GPT</h2>
-      <p>from Sungmo Park</p>
-    </article>
+<style>
+.research-gpts-hero {
+  margin-top: 32px;
+  margin-bottom: 30px;
+}
 
-    <article class="gpt-card">
-      <h2>🚀 Coming Soon</h2>
-    </article>
+.research-gpts-hero h1 {
+  margin-bottom: 12px;
+}
 
-    <article class="gpt-card">
-      <h2>🚀 Coming Soon</h2>
-    </article>
+.research-gpts-hero p {
+  max-width: 760px;
+  line-height: 1.7;
+}
 
-    <article class="gpt-card">
-      <h2>🚀 Coming Soon</h2>
-    </article>
+.gpt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 22px;
+  margin-top: 24px;
+}
 
-  </div>
-</section>
+.gpt-card {
+  min-height: 190px;
+  background: white;
+  border: 1px solid #b9c7ff;
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
+}
+
+.gpt-card h2 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #1428a0;
+}
+
+.gpt-card p {
+  line-height: 1.6;
+}
+
+.gpt-card .tag {
+  display: inline-block;
+  margin-bottom: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #e8f0ff;
+  color: #1428a0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gpt-card .private-tag {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.clickable-card {
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.clickable-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 22px 48px rgba(0,0,0,0.08);
+}
+
+.coming-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.coming-card h2 {
+  margin: 0;
+  color: #64748b;
+}
+
+@media (max-width: 720px) {
+  .gpt-card {
+    padding: 22px;
+  }
+}
+</style>
+</head>
+
+<body>
+<header class="header">
+ <nav class="nav">
+  <a href="/" class="logo">Paper_Talk</a>
+  <a href="/">Home</a>
+  <a href="/research.html">Research Paper</a>
+  <a href="/study.html">Study Materials</a>
+  <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
+ <a href="/specialist-gpts.html">Specialist GPTs</a>
+  <a href="/community.html">Community</a>
+  <a href="/career.html">Career</a>
+</nav>
+</header>
+
+
+<main class="container">
+
+  <section class="research-gpts-hero">
+    <h1>Specialist GPTs</h1>
+    <p>
+      Specialized GPT workspaces built on curated scientific knowledge.
+      Each GPT is designed around a specific research theme so researchers can ask focused scientific questions,
+      explore literature-based directions, and generate testable ideas.
+    </p>
+  </section>
+
+  <section>
+    <div class="gpt-grid">
+
+      <article
+        class="gpt-card clickable-card"
+        onclick="location.href='/visium-gpt.html?gpt=neuroscience'"
+      >
+        <span class="tag">Available</span>
+        <h2>🧠 Neuroscience GPT</h2>
+        <p>Built on curated neuroscience literature.</p>
+      </article>
+
+      <article
+        class="gpt-card clickable-card"
+        onclick="location.href='/visium-gpt.html?gpt=neuro_sungmo'"
+      >
+        <span class="tag private-tag">Private</span>
+        <h2>🧠 Neuro-GPT</h2>
+        <p>from Sungmo Park</p>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>🚀 Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>🚀 Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>🚀 Coming Soon</h2>
+      </article>
+
+    </div>
+  </section>
+
+</main>
+</body>
+</html>
