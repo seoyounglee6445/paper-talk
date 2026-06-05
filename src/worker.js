@@ -438,11 +438,19 @@ function extractOpenAIText(data) {
 }
 
 function getOpenAIErrorMessage(data, fallback = "OpenAI API returned no answer.") {
-  return (
-    data?.error?.message ||
-    (data?.choices?.[0]?.finish_reason ? `OpenAI finish_reason: ${data.choices[0].finish_reason}` : "") ||
-    fallback
-  );
+  const text = extractOpenAIText(data);
+  if (text) return text;
+
+  if (data?.error?.message) return data.error.message;
+
+  const finishReason = data?.choices?.[0]?.finish_reason;
+  if (finishReason === "length") {
+    return "The model stopped because the token limit was reached. Please try again with a narrower question.";
+  }
+
+  if (finishReason) return `OpenAI finish_reason: ${finishReason}`;
+
+  return fallback;
 }
 
 async function testOpenAI(env) {
@@ -10431,7 +10439,7 @@ Never answer a paper recommendation request with only a field summary.
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5-mini",
         messages,
-        max_completion_tokens: hasContext ? 2000 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 1200 : 1600)
+        max_completion_tokens: hasContext ? 3000 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 2200 : 2600)
       })
     });
 
