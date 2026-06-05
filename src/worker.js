@@ -25,7 +25,7 @@ export default {
         return json({
           hasKey: !!env.OPENAI_API_KEY,
           hasModel: !!env.OPENAI_MODEL,
-          model: env.OPENAI_MODEL || "gpt-5"
+          model: env.OPENAI_MODEL || "gpt-4o"
         });
       }
 
