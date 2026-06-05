@@ -8,7 +8,38 @@ OPENAI_MODEL = "gpt-4o"
 [assets]
 directory = "./public"
 
+# 기존 Paper_Talk Vision GPT 전용 DB
 [[d1_databases]]
-binding = "DB"
+binding = "DB_PAPER_TALK"
 database_name = "paper-talk-db"
 database_id = "5b33c4d2-9d1d-47f0-993f-a694c2b05d8a"
+
+# Neuro-GPT 전용 DB
+[[d1_databases]]
+binding = "DB_NEUROSCIENCE"
+database_name = "neuro-gpt-db"
+database_id = "NEURO_DB_ID_여기에_입력"
+
+# Cancer Genomics GPT 전용 DB
+[[d1_databases]]
+binding = "DB_CANCER_GENOMICS"
+database_name = "cancer-genomics-gpt-db"
+database_id = "CANCER_DB_ID_여기에_입력"
+
+# Single-cell GPT 전용 DB
+[[d1_databases]]
+binding = "DB_SINGLE_CELL"
+database_name = "single-cell-gpt-db"
+database_id = "SINGLE_CELL_DB_ID_여기에_입력"
+
+# Spatial Biology GPT 전용 DB
+[[d1_databases]]
+binding = "DB_SPATIAL_BIOLOGY"
+database_name = "spatial-biology-gpt-db"
+database_id = "SPATIAL_DB_ID_여기에_입력"
+
+# Mitochondria GPT 전용 DB
+[[d1_databases]]
+binding = "DB_MITOCHONDRIA"
+database_name = "mitochondria-gpt-db"
+database_id = "MITOCHONDRIA_DB_ID_여기에_입력"
