@@ -109,7 +109,7 @@
     <a href="/">Home</a>
     <a href="/admin.html">Site Admin</a>
     <a href="/admin-gpt.html">GPT Usage</a>
-    <a href="/specialist-gpts.html">Specialist GPTs</a>
+    <a href="/admin-specialist-gpts.html">Specialist Admin</a>
     <a href="/research.html">Research Paper</a>
     <a href="/study.html">Study Materials</a>
   </nav>
@@ -162,31 +162,31 @@
         </article>
 
         <article class="specialist-card disabled" data-gpt-card="mitochondria">
-          <span class="tag coming-tag">Coming Soon</span>
-          <h3>Coming Soon</h3>
-          <p class="small-note">Separate knowledge upload slot reserved.</p>
-          <button onclick="selectSpecialistGpt('mitochondria')">Select Slot</button>
+          <span class="tag">Available</span>
+          <h3>🧬 Mitochondria GPT</h3>
+          <p class="small-note">Upload mitochondria papers, reviews, disease biology, and methods.</p>
+          <button onclick="selectSpecialistGpt('mitochondria')">Select</button>
         </article>
 
         <article class="specialist-card disabled" data-gpt-card="single_cell">
-          <span class="tag coming-tag">Coming Soon</span>
-          <h3>Coming Soon</h3>
-          <p class="small-note">Separate knowledge upload slot reserved.</p>
-          <button onclick="selectSpecialistGpt('single_cell')">Select Slot</button>
+          <span class="tag">Available</span>
+          <h3>🧫 Single-cell GPT</h3>
+          <p class="small-note">Upload single-cell papers, protocols, benchmarking, and analysis guides.</p>
+          <button onclick="selectSpecialistGpt('single_cell')">Select</button>
         </article>
 
         <article class="specialist-card disabled" data-gpt-card="spatial_biology">
-          <span class="tag coming-tag">Coming Soon</span>
-          <h3>Coming Soon</h3>
-          <p class="small-note">Separate knowledge upload slot reserved.</p>
-          <button onclick="selectSpecialistGpt('spatial_biology')">Select Slot</button>
+          <span class="tag">Available</span>
+          <h3>🗺️ Spatial Biology GPT</h3>
+          <p class="small-note">Upload spatial transcriptomics, Visium, imaging, and tissue biology knowledge.</p>
+          <button onclick="selectSpecialistGpt('spatial_biology')">Select</button>
         </article>
 
         <article class="specialist-card disabled" data-gpt-card="cancer_genomics">
-          <span class="tag coming-tag">Coming Soon</span>
-          <h3>Coming Soon</h3>
-          <p class="small-note">Separate knowledge upload slot reserved.</p>
-          <button onclick="selectSpecialistGpt('cancer_genomics')">Select Slot</button>
+          <span class="tag">Available</span>
+          <h3>🧪 Cancer Genomics GPT</h3>
+          <p class="small-note">Upload cancer genomics papers, tumor evolution, variants, cohorts, and methods.</p>
+          <button onclick="selectSpecialistGpt('cancer_genomics')">Select</button>
         </article>
 
       </div>
@@ -247,10 +247,10 @@ let selectedGptKey = "neuroscience";
 
 const GPT_LABELS = {
   neuroscience: "Neuroscience GPT",
-  mitochondria: "Coming Soon",
-  single_cell: "Coming Soon",
-  spatial_biology: "Coming Soon",
-  cancer_genomics: "Coming Soon"
+  mitochondria: "Mitochondria GPT",
+  single_cell: "Single-cell GPT",
+  spatial_biology: "Spatial Biology GPT",
+  cancer_genomics: "Cancer Genomics GPT"
 };
 
 function escapeHtml(value) {
