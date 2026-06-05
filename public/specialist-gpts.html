@@ -199,11 +199,6 @@ body {
   color: #1428a0;
 }
 
-.password-modal p {
-  margin: 0 0 16px;
-  line-height: 1.6;
-}
-
 .password-modal input {
   width: 100%;
   box-sizing: border-box;
@@ -370,13 +365,6 @@ const NEURO_PRIVATE_PASSWORD = "engram";
 const NEURO_ACCESS_SESSION_KEY = "neuro_gpt_private_access";
 
 function openPrivateNeuroGpt() {
-  const saved = sessionStorage.getItem(NEURO_ACCESS_SESSION_KEY);
-
-  if (saved === "ok") {
-    location.href = "/visium-gpt.html?gpt=neuroscience";
-    return;
-  }
-
   const overlay = document.getElementById("neuroPasswordOverlay");
   const input = document.getElementById("neuroPasswordInput");
   const error = document.getElementById("neuroPasswordError");
