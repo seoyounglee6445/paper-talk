@@ -174,6 +174,77 @@ body {
   color: #64748b;
 }
 
+.password-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 9999;
+  padding: 20px;
+}
+
+.password-modal {
+  width: min(460px, 100%);
+  background: #ffffff;
+  border-radius: 24px;
+  border: 1px solid #b9c7ff;
+  padding: 28px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.22);
+}
+
+.password-modal h2 {
+  margin: 0 0 10px;
+  color: #1428a0;
+}
+
+.password-modal p {
+  margin: 0 0 16px;
+  line-height: 1.6;
+}
+
+.password-modal input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px 14px;
+  border: 1px solid #b9c7ff;
+  border-radius: 14px;
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.password-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.password-actions button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.password-submit {
+  background: #1428a0;
+  color: #ffffff;
+}
+
+.password-cancel {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.password-error {
+  margin-top: 12px;
+  color: #dc2626;
+  font-weight: 700;
+  min-height: 20px;
+}
+
 @media (max-width: 720px) {
   .nav {
     align-items: flex-start;
@@ -273,28 +344,84 @@ body {
 
 </main>
 
+<div id="neuroPasswordOverlay" class="password-overlay">
+  <div class="password-modal">
+    <h2>Private Neuro-GPT</h2>
+    <p>Please enter the password to access Neuro-GPT.</p>
+
+    <input
+      id="neuroPasswordInput"
+      type="password"
+      placeholder="Enter password"
+      autocomplete="off"
+    >
+
+    <div class="password-actions">
+      <button class="password-submit" type="button" onclick="submitNeuroPassword()">Enter</button>
+      <button class="password-cancel" type="button" onclick="closeNeuroPassword()">Cancel</button>
+    </div>
+
+    <div id="neuroPasswordError" class="password-error"></div>
+  </div>
+</div>
+
 <script>
 const NEURO_PRIVATE_PASSWORD = "engram";
+const NEURO_ACCESS_SESSION_KEY = "neuro_gpt_private_access";
 
 function openPrivateNeuroGpt() {
-  const saved = sessionStorage.getItem("neuro_gpt_private_access");
+  const saved = sessionStorage.getItem(NEURO_ACCESS_SESSION_KEY);
 
   if (saved === "ok") {
     location.href = "/visium-gpt.html?gpt=neuroscience";
     return;
   }
 
-  const password = prompt("Enter password for private Neuro-GPT");
+  const overlay = document.getElementById("neuroPasswordOverlay");
+  const input = document.getElementById("neuroPasswordInput");
+  const error = document.getElementById("neuroPasswordError");
 
-  if (password === null) return;
+  error.textContent = "";
+  input.value = "";
+  overlay.style.display = "flex";
+
+  setTimeout(() => input.focus(), 50);
+}
+
+function closeNeuroPassword() {
+  document.getElementById("neuroPasswordOverlay").style.display = "none";
+}
+
+function submitNeuroPassword() {
+  const input = document.getElementById("neuroPasswordInput");
+  const error = document.getElementById("neuroPasswordError");
+  const password = input.value.trim();
 
   if (password === NEURO_PRIVATE_PASSWORD) {
-    sessionStorage.setItem("neuro_gpt_private_access", "ok");
+    sessionStorage.setItem(NEURO_ACCESS_SESSION_KEY, "ok");
     location.href = "/visium-gpt.html?gpt=neuroscience";
-  } else {
-    alert("Incorrect password.");
+    return;
   }
+
+  error.textContent = "Incorrect password.";
+  input.value = "";
+  input.focus();
 }
+
+document.addEventListener("keydown", (event) => {
+  const overlay = document.getElementById("neuroPasswordOverlay");
+  const isOpen = overlay && overlay.style.display === "flex";
+
+  if (!isOpen) return;
+
+  if (event.key === "Enter") {
+    submitNeuroPassword();
+  }
+
+  if (event.key === "Escape") {
+    closeNeuroPassword();
+  }
+});
 
 async function initAuthBox() {
   const topLoginArea = document.getElementById("topLoginArea");
