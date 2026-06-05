@@ -213,7 +213,7 @@ body.guest-mode .gpt-sidebar {
 <main class="container">
 
   <div id="topLoginArea" class="auth-box" style="display:none;">
-    <span id="guestInfo">Sign in for free to get 20 questions per month. </span>
+    <span id="guestInfo">Sign in for free to get 50 questions per month. </span>
     <a id="loginBtn" class="btn" href="/auth/google">Sign in with Google</a>
   </div>
 
@@ -229,7 +229,7 @@ body.guest-mode .gpt-sidebar {
   It answers using Research Paper knowledge added by Paper_Talk.<br>
   The research database is updated daily with newly indexed publications.<br><br>
   Guest usage: Try 3 questions. <br>
-  Signed-in usage: 20 questions per user per month.
+  Signed-in usage: 50 questions per user per month.
 </p>
 
   <section id="loginBox" class="login-required-box" style="display:none;">
@@ -291,7 +291,7 @@ function applySpecialistGptBranding() {
       Specialized GPT workspace built on curated neuroscience literature.<br><br>
       Ask about neurodegeneration, Alzheimer's disease, Parkinson's disease, brain aging, synaptic biology, neural circuits, validation, gaps, or research ideas.<br><br>
       Guest usage: Try 3 questions. <br>
-      Signed-in usage: 20 questions per user per month.
+      Signed-in usage: 50 questions per user per month.
     `;
   }
 }
@@ -721,7 +721,7 @@ function updateQuotaText(remaining, limit, guest = false) {
   if (!quotaText) return;
 
   const safeRemaining = Math.max(Number(remaining || 0), 0);
-  const safeLimit = Number(limit || (guest ? GUEST_LIMIT : 20));
+  const safeLimit = Number(limit || (guest ? GUEST_LIMIT : 50));
 
   if (guest) {
     quotaText.textContent = `Free questions left today: ${safeRemaining}/${safeLimit}`;
