@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
 
@@ -10,259 +9,188 @@
 <script>
 window.dataLayer = window.dataLayer || [];
 function gtag(){dataLayer.push(arguments);}
-gtag("js", new Date());
-gtag("config", "G-WWSD3F58L6");
+gtag('js', new Date());
+gtag('config', 'G-WWSD3F58L6');
 </script>
 
-<title>Specialist GPTs - Paper_Talk</title>
+<title>Paper_Talk Vision GPT</title>
 <link rel="stylesheet" href="/style.css">
 
 <style>
-body {
-  margin: 0;
-  background: #eef2ff;
-  color: #020617;
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-.header {
-  background: #1428a0;
-  color: #ffffff;
-}
-
-.nav {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 18px 28px;
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  flex-wrap: wrap;
-}
-
-.nav a {
-  color: #ffffff;
-  text-decoration: none;
-  font-weight: 700;
-}
-
-.nav .logo {
-  margin-right: auto;
-  font-size: 28px;
-  font-weight: 900;
-}
-
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 36px 32px 70px;
-}
-
 .auth-box {
   text-align: right;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .auth-box #userText,
 .auth-box #guestInfo {
   margin-right: 8px;
 }
-
-.signin-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 22px;
-  border-radius: 999px;
-  background: #ffffff;
-  border: 1px solid #b9c7ff;
-  color: #1428a0;
-  font-weight: 800;
-  text-decoration: none;
-  box-shadow: 0 14px 32px rgba(20,40,160,0.12);
-}
-
-.google-dot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  background: #1428a0;
-  color: #ffffff;
-  font-weight: 900;
-}
-
-.research-gpts-hero {
-  margin-top: 10px;
-  margin-bottom: 30px;
-}
-
-.research-gpts-hero h1 {
-  margin: 0 0 12px;
-  color: #1428a0;
-  font-size: 44px;
-  line-height: 1.1;
-}
-
-.research-gpts-hero p {
-  max-width: 820px;
-  line-height: 1.7;
-  font-size: 16px;
-}
-
-.gpt-grid {
+.gpt-layout {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: 280px 1fr;
   gap: 22px;
   margin-top: 24px;
 }
 
-.gpt-card {
-  min-height: 190px;
-  background: #ffffff;
+body.guest-mode .gpt-layout {
+  grid-template-columns: 1fr;
+}
+
+body.guest-mode .gpt-sidebar {
+  display: none;
+}
+
+.gpt-sidebar,
+.gpt-chat,
+.login-required-box {
+  background: white;
   border: 1px solid #b9c7ff;
   border-radius: 24px;
   padding: 28px;
   box-shadow: 0 18px 40px rgba(0,0,0,0.04);
 }
 
-.gpt-card h2 {
-  margin-top: 0;
-  margin-bottom: 12px;
+.thread-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.thread-item {
+  flex: 1;
+  text-align: left;
+  padding: 10px;
+  border: 1px solid #b9c7ff;
+  border-radius: 8px;
+  background: #f8f8f8;
   color: #1428a0;
-  font-size: 24px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.gpt-card p {
-  line-height: 1.6;
-  margin-bottom: 0;
+.thread-item.active {
+  background: #e8f0ff;
+  border-color: #1428a0;
 }
 
-.tag {
-  display: inline-block;
-  margin-bottom: 14px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: #fef3c7;
-  color: #92400e;
-  font-size: 13px;
+.delete-thread-btn {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ef4444;
+  color: white;
+  border: none;
+  cursor: pointer;
   font-weight: 700;
 }
 
-.clickable-card {
-  cursor: pointer;
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
-}
-
-.clickable-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 22px 48px rgba(0,0,0,0.08);
-}
-
-.coming-card {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  background: #f8fafc;
-}
-
-.coming-card h2 {
-  margin: 0;
-  color: #64748b;
-}
-
-.password-overlay {
-  position: fixed;
-  inset: 0;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: rgba(15, 23, 42, 0.45);
-  z-index: 9999;
-  padding: 20px;
-}
-
-.password-modal {
-  width: min(460px, 100%);
-  background: #ffffff;
-  border-radius: 24px;
-  border: 1px solid #b9c7ff;
-  padding: 28px;
-  box-shadow: 0 24px 70px rgba(0,0,0,0.22);
-}
-
-.password-modal h2 {
-  margin: 0 0 10px;
-  color: #1428a0;
-}
-
-.password-modal input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 13px 14px;
-  border: 1px solid #b9c7ff;
-  border-radius: 14px;
-  font-size: 16px;
+.chat-box {
+  height: 520px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 16px;
+  padding: 16px;
+  background: #fafafa;
   margin-bottom: 12px;
 }
 
-.password-actions {
+.message {
+  margin-bottom: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.message.user {
+  background: #e8f0ff;
+}
+
+.message.assistant {
+  background: #ffffff;
+  border: 1px solid #ddd;
+}
+
+.message.assistant .signup-inline-btn {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: #1428a0;
+  color: #ffffff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.chat-input-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  align-items: center;
   flex-wrap: wrap;
 }
 
-.password-actions button {
-  border: none;
-  border-radius: 999px;
-  padding: 12px 18px;
-  font-weight: 800;
-  cursor: pointer;
+#messageInput {
+  flex: 1 1 320px;
+  min-height: 44px;
+  padding: 10px;
 }
 
-.password-submit {
-  background: #1428a0;
-  color: #ffffff;
-}
-
-.password-cancel {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-.password-error {
-  margin-top: 12px;
-  color: #dc2626;
+#quotaText {
+  display: inline-block;
+  align-self: center;
+  font-size: 13px;
+  color: #1428a0;
   font-weight: 700;
-  min-height: 20px;
+  white-space: nowrap;
+  margin: 4px 0;
 }
 
-@media (max-width: 720px) {
-  .nav {
-    align-items: flex-start;
+#sendBtn,
+#stopBtn {
+  flex: 0 0 auto;
+}
+
+#stopBtn {
+  background: #ef4444;
+}
+
+@media (max-width: 900px) {
+  .gpt-layout {
+    grid-template-columns: 1fr;
   }
 
-  .nav .logo {
+  #messageInput {
+    flex: 1 1 100%;
     width: 100%;
   }
 
-  .container {
-    padding: 28px 18px 50px;
+  #quotaText {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .gpt-sidebar,
+  .gpt-chat,
+  .login-required-box {
+    padding: 18px;
   }
 
-  .auth-box {
-    text-align: left;
+  .chat-box {
+    height: 420px;
   }
 
-  .research-gpts-hero h1 {
-    font-size: 34px;
+  .chat-input-row {
+    align-items: stretch;
   }
 
-  .gpt-card {
-    padding: 22px;
+  #quotaText {
+    width: 100%;
+  }
+
+  #sendBtn,
+  #stopBtn {
+    width: 100%;
   }
 }
 </style>
@@ -270,190 +198,581 @@ body {
 
 <body>
 <header class="header">
-  <nav class="nav">
-    <a href="/" class="logo">Paper_Talk</a>
-    <a href="/">Home</a>
-    <a href="/research.html">Research Paper</a>
-    <a href="/study.html">Study Materials</a>
-    <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
-    <a href="/specialist-gpts.html">Specialist GPTs</a>
-    <a href="/community.html">Community</a>
-    <a href="/career.html">Career</a>
-  </nav>
+ <nav class="nav">
+  <a href="/" class="logo">Paper_Talk</a>
+  <a href="/">Home</a>
+  <a href="/research.html">Research Paper</a>
+  <a href="/study.html">Study Materials</a>
+  <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
+  <a href="/specialist-gpts.html">Specialist GPTs</a>
+  <a href="/community.html">Community</a>
+  <a href="/career.html">Career</a>
+</nav>
 </header>
 
 <main class="container">
 
   <div id="topLoginArea" class="auth-box" style="display:none;">
-    <span id="guestInfo">Sign in for free to use Specialist GPTs. </span>
-    <a id="loginBtn" class="signin-btn" href="/auth/google">
-      <span class="google-dot">G</span>
-      Sign in with Google
-    </a>
+    <span id="guestInfo">Sign in for free to get 50 questions per month. </span>
+    <a id="loginBtn" class="btn" href="/auth/google">Sign in with Google</a>
   </div>
 
   <div id="topLogoutArea" class="auth-box" style="display:none;">
     <span id="userText"></span>
-    <a id="logoutBtn" class="signin-btn" href="/auth/logout">Logout</a>
+    <a id="logoutBtn" class="btn danger-btn" href="/auth/logout">Logout</a>
   </div>
 
-  <section class="research-gpts-hero">
-    <h1>Specialist GPTs</h1>
-    <p>
-      Private specialist GPT workspaces built on curated scientific knowledge.
-      Each GPT is designed around a specific research theme so researchers can ask focused scientific questions,
-      explore literature-based directions, and generate testable ideas.
-    </p>
+  <h1>Paper_Talk Vision GPT</h1>
+
+ <p>
+  Private GPT workspace for Paper_Talk users.<br><br>
+  It answers using Research Paper knowledge added by Paper_Talk.<br>
+  The research database is updated daily with newly indexed publications.<br><br>
+  Guest usage: Try 3 questions. <br>
+  Signed-in usage: 50 questions per user per month.
+</p>
+
+  <section id="loginBox" class="login-required-box" style="display:none;">
+    <h2>Free sign-in available</h2>
+    <p>Please sign in with Google to continue after your free guest questions.</p>
+    <a class="btn" href="/auth/google">Sign in with Google</a>
   </section>
 
-  <section>
-    <div class="gpt-grid">
+  <section id="gptApp" class="gpt-layout" style="display:none;">
+    <aside class="gpt-sidebar">
+      <button id="newThreadBtn">+ New Chat</button>
+      <hr>
+      <div id="threadList"></div>
+    </aside>
 
-      <article
-        class="gpt-card clickable-card"
-        onclick="openPrivateNeuroGpt()"
-      >
-        <span class="tag">Private</span>
-        <h2>&#129504; Neuro-GPT</h2>
-        <p>from Sungmo Park</p>
-      </article>
+    <section class="gpt-chat">
+      <div id="chatBox" class="chat-box"></div>
 
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
+      <div class="chat-input-row">
+ <textarea
+  id="messageInput"
+  placeholder="Thinking may take 10–30 sec.
+Ask about papers, validation, gaps, or research ideas..."
+></textarea>
+        
+        <span id="quotaText">Free questions left today: 3/3</span>
 
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-    </div>
+        <button id="sendBtn">Send</button>
+        <button id="stopBtn" style="display:none;">Cancel</button>
+      </div>
+    </section>
   </section>
 
 </main>
 
-<div id="neuroPasswordOverlay" class="password-overlay">
-  <div class="password-modal">
-    <h2>Private Neuro-GPT</h2>
-    <p>Please enter the password to access Neuro-GPT.</p>
-
-    <input
-      id="neuroPasswordInput"
-      type="password"
-      placeholder="Enter password"
-      autocomplete="off"
-    >
-
-    <div class="password-actions">
-      <button class="password-submit" type="button" onclick="submitNeuroPassword()">Enter</button>
-      <button class="password-cancel" type="button" onclick="closeNeuroPassword()">Cancel</button>
-    </div>
-
-    <div id="neuroPasswordError" class="password-error"></div>
-  </div>
-</div>
-
 <script>
-function openPrivateNeuroGpt() {
-  const overlay = document.getElementById("neuroPasswordOverlay");
-  const input = document.getElementById("neuroPasswordInput");
-  const error = document.getElementById("neuroPasswordError");
+let currentUser = null;
+let currentThreadId = null;
+let chatController = null;
+let isSending = false;
+let isGuestMode = true;
 
-  error.textContent = "";
-  input.value = "";
-  overlay.style.display = "flex";
+const urlParams = new URLSearchParams(window.location.search);
+function normalizeGptKey(value) {
+  const raw = String(value || "paper_talk")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
 
-  setTimeout(() => input.focus(), 50);
+  const aliases = {
+    paper: "paper_talk",
+    paper_talk: "paper_talk",
+    vision: "paper_talk",
+    vision_gpt: "paper_talk",
+    neuro: "neuroscience",
+    neuroscience: "neuroscience",
+    neuro_gpt: "neuroscience",
+    neuro_sungmo: "neuroscience"
+  };
+
+  return aliases[raw] || "paper_talk";
 }
 
-function closeNeuroPassword() {
-  document.getElementById("neuroPasswordOverlay").style.display = "none";
+const GPT_KEY = normalizeGptKey(urlParams.get("gpt") || urlParams.get("gptKey"));
+const GPT_TITLE = GPT_KEY === "neuroscience" ? "Neuroscience GPT" : "Paper_Talk Vision GPT";
+
+const GUEST_LIMIT = 3;
+
+
+function applySpecialistGptBranding() {
+  document.title = `${GPT_TITLE} - Paper_Talk`;
+
+  const h1 = document.querySelector("main h1");
+  if (h1) h1.textContent = GPT_TITLE;
+
+  const intro = document.querySelector("main > p");
+  if (intro && GPT_KEY === "neuroscience") {
+    intro.innerHTML = `
+      Specialized GPT workspace built on curated neuroscience literature.<br><br>
+      Ask about neurodegeneration, Alzheimer's disease, Parkinson's disease, brain aging, synaptic biology, neural circuits, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `;
+  }
 }
 
-async function submitNeuroPassword() {
-  const input = document.getElementById("neuroPasswordInput");
-  const error = document.getElementById("neuroPasswordError");
-  const password = input.value.trim();
+async function readJsonSafely(response, label = "API request") {
+  const contentType = response.headers.get("Content-Type") || "";
+  const rawText = await response.text();
 
-  error.textContent = "";
+  try {
+    return JSON.parse(rawText);
+  } catch (error) {
+    const preview = rawText
+      .replace(/\s+/g, " ")
+      .slice(0, 300);
 
-  if (!password) {
-    error.textContent = "Please enter the password.";
-    input.focus();
+    throw new Error(
+      `${label} returned a non-JSON response. HTTP ${response.status}. ` +
+      `This usually means the Worker route is not deployed or the request is being served by an HTML page. ` +
+      `Content-Type: ${contentType || "unknown"}. Preview: ${preview}`
+    );
+  }
+}
+
+
+// Local fallback only for display before the server returns real guest quota.
+// The actual guest limit must be enforced in the Worker by IP hash.
+function getLocalGuestUsedToday() {
+  const today = new Date().toISOString().slice(0, 10);
+  const raw = localStorage.getItem("pt_guest_gpt_usage") || "{}";
+  let data = {};
+
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    data = {};
+  }
+
+  if (data.date !== today) return 0;
+  return Number(data.used || 0);
+}
+
+function setLocalGuestUsedToday(used) {
+  const today = new Date().toISOString().slice(0, 10);
+  localStorage.setItem("pt_guest_gpt_usage", JSON.stringify({
+    date: today,
+    used: Number(used || 0)
+  }));
+}
+
+function setupEventListeners() {
+  document.getElementById("newThreadBtn").addEventListener("click", createThread);
+  document.getElementById("sendBtn").addEventListener("click", sendMessage);
+  document.getElementById("stopBtn").addEventListener("click", stopMessage);
+
+  document.getElementById("messageInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+}
+
+document.addEventListener("DOMContentLoaded", init);
+
+async function init() {
+  setupEventListeners();
+  applySpecialistGptBranding();
+
+  const meRes = await fetch("/api/me", {
+    cache: "no-store",
+    credentials: "include"
+  });
+  const me = await readJsonSafely(meRes, "/api/me");
+
+  if (!me.ok || !me.user) {
+    isGuestMode = true;
+    currentUser = null;
+    currentThreadId = null;
+
+    document.body.classList.add("guest-mode");
+    document.getElementById("topLoginArea").style.display = "block";
+    document.getElementById("topLogoutArea").style.display = "none";
+    document.getElementById("loginBox").style.display = "none";
+    document.getElementById("gptApp").style.display = "grid";
+
+    const localUsed = getLocalGuestUsedToday();
+    updateQuotaText(Math.max(GUEST_LIMIT - localUsed, 0), GUEST_LIMIT, true);
+
+    const box = document.getElementById("chatBox");
+    box.innerHTML = `
+  <p class="empty-posts">
+    Start a free preview conversation with ${GPT_TITLE}.<br><br>
+    You can ask 3 questions without signing in.
+  </p>
+`;
     return;
   }
 
+  isGuestMode = false;
+  currentUser = me.user;
+
+  document.body.classList.remove("guest-mode");
+  document.getElementById("topLoginArea").style.display = "none";
+  document.getElementById("topLogoutArea").style.display = "block";
+  document.getElementById("userText").textContent =
+    `Signed in as ${currentUser.name || currentUser.email}`;
+  document.getElementById("gptApp").style.display = "grid";
+
+  if (me.quota) {
+    updateQuotaText(me.quota.remaining, me.quota.limit, false);
+  }
+
+  await loadThreads();
+}
+
+async function loadThreads() {
+  if (isGuestMode) return;
+
+  const res = await fetch(`/api/gpt/threads?gptKey=${encodeURIComponent(GPT_KEY)}`, {
+    cache: "no-store",
+    credentials: "include"
+  });
+  const data = await readJsonSafely(res, "API request");
+
+  const list = document.getElementById("threadList");
+  list.innerHTML = "";
+
+  if (!data.ok) {
+    list.innerHTML = `<p>${escapeHtml(data.error || "Failed to load chats.")}</p>`;
+    return;
+  }
+
+  if (!data.threads || data.threads.length === 0) {
+    await createThread();
+    return;
+  }
+
+  data.threads.forEach(thread => {
+    const row = document.createElement("div");
+    row.className = "thread-row";
+
+    const btn = document.createElement("button");
+    btn.className = "thread-item" + (thread.id === currentThreadId ? " active" : "");
+    btn.textContent = thread.title || "New chat";
+    btn.onclick = () => selectThread(thread.id);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "delete-thread-btn";
+    delBtn.textContent = "Delete";
+    delBtn.onclick = () => deleteThread(thread.id);
+
+    row.appendChild(btn);
+    row.appendChild(delBtn);
+    list.appendChild(row);
+  });
+
+  if (!currentThreadId) {
+    await selectThread(data.threads[0].id);
+  }
+}
+
+async function createThread() {
+  if (isSending || isGuestMode) return;
+
+  const res = await fetch("/api/gpt/threads", {
+    method: "POST",
+    cache: "no-store",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "New chat", gptKey: GPT_KEY })
+  });
+
+  const data = await readJsonSafely(res, "API request");
+
+  if (!data.ok) {
+    alert(data.error || "Failed to create chat.");
+    return;
+  }
+
+  currentThreadId = data.thread.id;
+  await loadThreads();
+  await loadMessages();
+}
+
+async function selectThread(threadId) {
+  if (isSending || isGuestMode) return;
+
+  currentThreadId = threadId;
+  await loadThreads();
+  await loadMessages();
+}
+
+async function deleteThread(threadId) {
+  if (isSending || isGuestMode) return;
+
+  if (!confirm("Delete this chat?")) return;
+
+  const res = await fetch(`/api/gpt/threads/${encodeURIComponent(threadId)}?gptKey=${encodeURIComponent(GPT_KEY)}`, {
+    method: "DELETE",
+    cache: "no-store",
+    credentials: "include"
+  });
+
+  const data = await readJsonSafely(res, "API request");
+
+  if (!data.ok) {
+    alert(data.error || "Failed to delete chat.");
+    return;
+  }
+
+  if (currentThreadId === threadId) {
+    currentThreadId = null;
+  }
+
+  await loadThreads();
+}
+
+async function loadMessages() {
+  if (isGuestMode) return;
+
+  const box = document.getElementById("chatBox");
+  box.innerHTML = "";
+
+  if (!currentThreadId) return;
+
+  const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}&gptKey=${encodeURIComponent(GPT_KEY)}`, {
+    cache: "no-store",
+    credentials: "include"
+  });
+  const data = await readJsonSafely(res, "API request");
+
+  if (!data.ok) {
+    box.innerHTML = `<p>${escapeHtml(data.error || "Failed to load messages.")}</p>`;
+    return;
+  }
+
+  if (!data.messages || data.messages.length === 0) {
+    box.innerHTML = `<p class="empty-posts">Start a new conversation with ${GPT_TITLE}.</p>`;
+    return;
+  }
+
+  data.messages.forEach(msg => {
+    addMessage(msg.role, msg.content);
+  });
+
+  scrollChatToBottom();
+}
+
+async function sendMessage() {
+  if (isSending) return;
+
+  const input = document.getElementById("messageInput");
+  const sendBtn = document.getElementById("sendBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const text = input.value.trim();
+
+  if (!text) return;
+
+  if (isGuestMode) {
+    const localUsed = getLocalGuestUsedToday();
+    if (localUsed >= GUEST_LIMIT) {
+      addSignupMessage("You have used all 3 free guest questions for today. Please sign in with Google for free to continue using ${GPT_TITLE}.", "/auth/google");
+      updateQuotaText(0, GUEST_LIMIT, true);
+      return;
+    }
+  }
+
+  isSending = true;
+  input.value = "";
+  sendBtn.style.display = "none";
+  stopBtn.style.display = "inline-block";
+
+  addMessage("user", text);
+  addMessage("assistant", `Analyzing your question...\nSearching the ${GPT_TITLE} knowledge base...\nPreparing a grounded answer...`);
+  scrollChatToBottom();
+
+  chatController = new AbortController();
+  let timedOut = false;
+
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    if (chatController) chatController.abort();
+  }, 120000);
+
   try {
-    const res = await fetch("/api/neuro-gpt/access", {
+    const res = await fetch("/api/gpt/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
       credentials: "include",
-      body: JSON.stringify({ password })
+      signal: chatController.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId: isGuestMode ? null : currentThreadId,
+        message: text,
+        gptKey: GPT_KEY
+      })
     });
 
-    const data = await res.json().catch(() => ({}));
+    const data = await readJsonSafely(res, "API request");
 
-    if (res.ok && data && data.ok && data.authenticated) {
-      location.href = "/visium-gpt.html?gpt=neuroscience";
+    removeLastProgress();
+
+    if (!data.ok) {
+      if (data.signupUrl) {
+        addSignupMessage(
+          data.error || "You have used all free guest questions. Please sign in with Google for free to continue.",
+          data.signupUrl
+        );
+      } else {
+        addMessage("assistant", data.error || "Something went wrong.");
+      }
+
+      if (data.quota) {
+        updateQuotaText(data.quota.remaining, data.quota.limit, Boolean(data.guest));
+        if (data.guest) {
+          setLocalGuestUsedToday(Number(data.quota.used || (data.quota.limit - data.quota.remaining) || GUEST_LIMIT));
+        }
+      }
+
       return;
     }
 
-    error.textContent = data.error || "Incorrect password.";
-    input.value = "";
-    input.focus();
-  } catch {
-    error.textContent = "Password check failed. Please try again.";
-    input.focus();
-  }
-}
-
-document.addEventListener("keydown", (event) => {
-  const overlay = document.getElementById("neuroPasswordOverlay");
-  const isOpen = overlay && overlay.style.display === "flex";
-
-  if (!isOpen) return;
-
-  if (event.key === "Enter") {
-    submitNeuroPassword();
-  }
-
-  if (event.key === "Escape") {
-    closeNeuroPassword();
-  }
-});
-
-async function initAuthBox() {
-  const topLoginArea = document.getElementById("topLoginArea");
-  const topLogoutArea = document.getElementById("topLogoutArea");
-  const userText = document.getElementById("userText");
-
-  try {
-    const res = await fetch("/api/me", { cache: "no-store", credentials: "include" });
-    const data = await res.json();
-
-    if (data && data.ok && data.user) {
-      topLoginArea.style.display = "none";
-      topLogoutArea.style.display = "block";
-      userText.textContent = "Signed in as " + (data.user.name || data.user.email || "Paper_Talk user");
-    } else {
-      topLoginArea.style.display = "block";
-      topLogoutArea.style.display = "none";
+    if (data.threadId) {
+      currentThreadId = data.threadId;
     }
-  } catch {
-    topLoginArea.style.display = "block";
-    topLogoutArea.style.display = "none";
+
+    await typeWriterMessage(data.answer || "No answer was generated.");
+
+    if (data.quota) {
+      updateQuotaText(data.quota.remaining, data.quota.limit, Boolean(data.guest || isGuestMode));
+      if (data.guest || isGuestMode) {
+        setLocalGuestUsedToday(Number(data.quota.used || (data.quota.limit - data.quota.remaining) || 0));
+      }
+    }
+
+    if (!isGuestMode) {
+      await loadThreads();
+    }
+
+    scrollChatToBottom();
+
+  } catch (error) {
+    removeLastProgress();
+
+    if (error.name === "AbortError") {
+      addMessage(
+        "assistant",
+        timedOut
+          ? "Request timed out after 120 seconds. Please try a narrower question."
+          : "Request cancelled."
+      );
+    } else {
+      addMessage("assistant", error.message || "Request failed.");
+    }
+  } finally {
+    clearTimeout(timeout);
+    chatController = null;
+    isSending = false;
+    sendBtn.style.display = "inline-block";
+    stopBtn.style.display = "none";
   }
 }
 
-document.addEventListener("DOMContentLoaded", initAuthBox);
-</script>
+function stopMessage() {
+  if (chatController) {
+    chatController.abort();
+  }
+}
 
+function removeLastProgress() {
+  const messages = document.querySelectorAll(".message.assistant");
+  const last = messages[messages.length - 1];
+
+  if (
+    last &&
+    (
+      last.textContent.includes("Analyzing your question...") ||
+      last.textContent.includes("Searching the Paper_Talk research database...") ||
+      last.textContent.includes("Preparing a grounded answer...")
+    )
+  ) {
+    last.remove();
+  }
+}
+
+function addMessage(role, content) {
+  const box = document.getElementById("chatBox");
+  const div = document.createElement("div");
+  div.className = `message ${role}`;
+  div.textContent = content;
+  box.appendChild(div);
+}
+
+async function typeWriterMessage(text) {
+  const box = document.getElementById("chatBox");
+  const div = document.createElement("div");
+  div.className = "message assistant";
+  box.appendChild(div);
+
+  const value = String(text || "");
+  let current = "";
+
+  for (let i = 0; i < value.length; i++) {
+    current += value[i];
+    div.textContent = current;
+    box.scrollTop = box.scrollHeight;
+
+    // Faster on spaces/new lines so long research answers do not feel too slow.
+    const delay = value[i] === " " || value[i] === "\n" ? 2 : 8;
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
+}
+
+function addSignupMessage(message, signupUrl) {
+  const box = document.getElementById("chatBox");
+  const div = document.createElement("div");
+  div.className = "message assistant";
+
+  const text = document.createElement("div");
+  text.textContent = message;
+
+  const link = document.createElement("a");
+  link.href = signupUrl || "/auth/google";
+  link.className = "signup-inline-btn";
+  link.textContent = "Sign in with Google for free";
+
+  div.appendChild(text);
+  div.appendChild(link);
+  box.appendChild(div);
+  scrollChatToBottom();
+}
+
+function scrollChatToBottom() {
+  const box = document.getElementById("chatBox");
+  box.scrollTop = box.scrollHeight;
+}
+
+function updateQuotaText(remaining, limit, guest = false) {
+  const quotaText = document.getElementById("quotaText");
+
+  if (!quotaText) return;
+
+  const safeRemaining = Math.max(Number(remaining || 0), 0);
+  const safeLimit = Number(limit || (guest ? GUEST_LIMIT : 50));
+
+  if (guest) {
+    quotaText.textContent = `Free questions left today: ${safeRemaining}/${safeLimit}`;
+  } else {
+    quotaText.textContent = `Questions left: ${safeRemaining}/${safeLimit}`;
+  }
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+</script>
 </body>
 </html>
