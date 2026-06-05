@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v77 multilingual user-first answer patch
+Paper_Talk Worker v78 total GPT quota + safe research-gpts route patch
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea routing.
 - User-first answer behavior: answer the scientific question first.
@@ -112,39 +112,41 @@ export default {
       }
 
       if (pathname === "/admin" || pathname === "/admin.html") {
-        return env.ASSETS.fetch(new Request(new URL("/admin.html", request.url)));
+        return fetchAsset(env, request, "/admin.html");
       }
 
       if (pathname === "/admin-gpt" || pathname === "/admin-gpt.html") {
-        return env.ASSETS.fetch(new Request(new URL("/admin-gpt.html", request.url)));
+        return fetchAsset(env, request, "/admin-gpt.html");
       }
 
       if (pathname === "/research") {
-        return env.ASSETS.fetch(new Request(new URL("/research.html", request.url)));
+        return fetchAsset(env, request, "/research.html");
       }
 
       if (pathname === "/study") {
-        return env.ASSETS.fetch(new Request(new URL("/study.html", request.url)));
+        return fetchAsset(env, request, "/study.html");
       }
 
       if (pathname === "/visium-gpt") {
-        return env.ASSETS.fetch(new Request(new URL("/visium-gpt.html", request.url)));
+        return fetchAsset(env, request, "/visium-gpt.html");
       }
 
-     if (pathname === "/research-gpts") {
-  return env.ASSETS.fetch(new Request(new URL("/specialist-gpts.html", request.url)));
-}
+      // Research GPTs page aliases.
+      // /research-gpts and /specialist-gpts both serve the same Specialist GPT admin page.
+      if (pathname === "/research-gpts" || pathname === "/specialist-gpts") {
+        return fetchAsset(env, request, "/specialist-gpts.html");
+      }
 
       if (pathname === "/neuroscience-gpt") {
-        return env.ASSETS.fetch(new Request(new URL("/visium-gpt.html?gpt=neuroscience", request.url)));
+        return fetchAsset(env, request, "/visium-gpt.html?gpt=neuroscience");
       }
 
       if (pathname === "/community") {
-        return env.ASSETS.fetch(new Request(new URL("/community.html", request.url)));
+        return fetchAsset(env, request, "/community.html");
       }
 
       if (pathname === "/career") {
-        return env.ASSETS.fetch(new Request(new URL("/career.html", request.url)));
+        return fetchAsset(env, request, "/career.html");
       }
 
       if (pathname.startsWith("/api/")) {
@@ -169,6 +171,14 @@ export default {
     }
   }
 };
+
+function fetchAsset(env, request, assetPath) {
+  if (!env.ASSETS) {
+    return new Response("ASSETS binding is missing. Check wrangler.toml [assets] binding = \"ASSETS\".", { status: 500 });
+  }
+
+  return env.ASSETS.fetch(new Request(new URL(assetPath, request.url)));
+}
 
 function corsHeaders() {
   return {
@@ -196,6 +206,11 @@ function json(data, status = 200, headers = {}) {
 // Specialist GPT data isolation
 // ======================================
 const DEFAULT_GPT_KEY = "paper_talk";
+
+// Monthly GPT quota is shared across all GPT modes for each signed-in user.
+// Paper_Talk Vision GPT + Neuroscience GPT + any future Specialist GPTs = 20 total / month.
+const SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT = 20;
+const GUEST_GPT_DAILY_LIMIT = 3;
 
 const ALLOWED_GPT_KEYS = new Set([
   "paper_talk",
@@ -5893,8 +5908,8 @@ async function gptChat(request, env) {
         signupRequired: isGuest,
         signupUrl: isGuest ? "/auth/google" : null,
         error: isGuest
-          ? "You have used all 3 free guest questions today. Please sign up for free with Google to continue with 20 questions per month."
-          : "Monthly limit reached. You have used all 20 questions for this month. Your quota will reset automatically next month.",
+          ? "You have used all 3 free guest questions today. Please sign up for free with Google to continue with 20 total GPT questions per month."
+          : "Monthly limit reached. You have used all 20 total GPT questions for this month across Paper_Talk Vision GPT and all Specialist GPTs. Your quota will reset automatically next month.",
         quota: {
           used: quotaBefore.used,
           limit: quotaBefore.limit,
@@ -6198,7 +6213,7 @@ async function getLegacyMonthlyMessageCount(userId, monthKey, env) {
 }
 
 async function getMonthlyGptQuota(userId, env, user = null) {
-  const monthlyLimit = 20;
+  const monthlyLimit = SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT;
   const now = new Date();
   const monthKey = getCurrentMonthKey(now);
 
@@ -6282,7 +6297,7 @@ async function getGuestGptQuota(request, env) {
   const todayKey = getTodayKey(now);
   const visitorIp = getVisitorIp(request);
   const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
-  const guestLimit = 3;
+  const guestLimit = GUEST_GPT_DAILY_LIMIT;
 
   await ensureGuestGptDailyUsageTable(env);
 
