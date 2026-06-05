@@ -5573,6 +5573,7 @@ function normalizePaperTalkIntentLabel(value) {
     "LITERATURE_REVIEW",
     "RESEARCH_IDEA",
     "METHOD_EXTRACTION",
+    "PIPELINE_WORKFLOW",
     "CONCEPT",
     "VALIDATION",
     "COMPARISON",
@@ -5584,8 +5585,19 @@ function normalizePaperTalkIntentLabel(value) {
   if (v === "LITERATURE" || v === "REVIEW" || v === "TREND" || v === "TRENDS") return "LITERATURE_REVIEW";
   if (v === "RESEARCH" || v === "RESEARCH_DIRECTION" || v === "RESEARCH_INSIGHT" || v === "IDEA" || v === "PROJECT_IDEA") return "RESEARCH_IDEA";
 
-  // v80: practical analysis-method / package / pipeline requests are not concept explanations.
-  // They should be routed to a paper-grounded method extraction answer.
+  // v82: distinguish tool/method extraction from end-to-end workflow requests.
+  if ([
+    "PIPELINE",
+    "WORKFLOW",
+    "PIPELINE_WORKFLOW",
+    "ANALYSIS_PIPELINE",
+    "ANALYSIS_WORKFLOW",
+    "END_TO_END_PIPELINE",
+    "STEP_BY_STEP_WORKFLOW",
+    "PIPELINE_EXTRACTION",
+    "WORKFLOW_EXTRACTION"
+  ].includes(v)) return "PIPELINE_WORKFLOW";
+
   if ([
     "METHOD",
     "METHODS",
@@ -5597,9 +5609,7 @@ function normalizePaperTalkIntentLabel(value) {
     "METHOD_EXTRACTION",
     "TOOL_EXTRACTION",
     "PACKAGE_EXTRACTION",
-    "PIPELINE_EXTRACTION",
-    "SOFTWARE_EXTRACTION",
-    "WORKFLOW_EXTRACTION"
+    "SOFTWARE_EXTRACTION"
   ].includes(v)) return "METHOD_EXTRACTION";
 
   if (v === "EXPLANATION") return "CONCEPT";
@@ -5624,6 +5634,7 @@ function heuristicPaperTalkPlanner(message) {
   let literatureScore = 0;
   let ideaScore = 0;
   let methodScore = 0;
+  let pipelineScore = 0;
   let validationScore = 0;
   let comparisonScore = 0;
   let conceptScore = 0;
@@ -5633,19 +5644,23 @@ function heuristicPaperTalkPlanner(message) {
   add(/(what research|project idea|research idea|future direction|promising|hypothesis|뭘 연구|어떤 연구|연구.*아이디어|연구.*주제|연구.*방향|앞으로|향후|유망|가설|할 수 있을까|하면 좋을까|접목)/i, 3, s => ideaScore += s);
 
   // Fallback only. Primary routing is done by the LLM planner below.
-  // This catches obvious package/tool/method/workflow questions when OpenAI intent inference is unavailable.
-  add(/(package|packages|software|tool|tools|library|libraries|method|methods|methodology|pipeline|workflow|algorithm|implementation|code|model|models|패키지|툴|도구|소프트웨어|방법론|분석법|분석 방법|파이프라인|워크플로우|알고리즘|구현|모델)/i, 4, s => methodScore += s);
-  add(/(논문|paper|papers|study|studies).{0,60}(썼|사용|used|applied|implemented|분석|방법|패키지|도구|툴|software|method|package|tool|pipeline|workflow)/i, 5, s => methodScore += s);
+  // Pipeline/workflow requests should produce a step-by-step workflow, not just a tool list.
+  add(/(pipeline|workflow|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step|analysis\s+order|procedure|파이프라인|워크플로우|분석\s*순서|분석\s*단계|단계별|전체\s*분석|처음부터|raw\s*data\s*to|FASTQ.*interpretation)/i, 6, s => pipelineScore += s);
+
+  // This catches obvious package/tool/method questions when OpenAI intent inference is unavailable.
+  add(/(package|packages|software|tool|tools|library|libraries|method|methods|methodology|algorithm|implementation|code|model|models|패키지|툴|도구|소프트웨어|방법론|분석법|분석 방법|알고리즘|구현|모델)/i, 4, s => methodScore += s);
+  add(/(논문|paper|papers|study|studies).{0,60}(썼|사용|used|applied|implemented|분석|방법|패키지|도구|툴|software|method|package|tool|algorithm|model)/i, 5, s => methodScore += s);
 
   add(/(validate|validation|experiment|검증|실험 설계|확인하려면|어떻게 증명)/i, 3, s => validationScore += s);
   add(/(compare|comparison|versus| vs |차이|비교|다른 점)/i, 3, s => comparisonScore += s);
   add(/(what is|explain|definition|개념|설명|무엇|뭐야|정의)/i, 2, s => conceptScore += s);
 
   let paperTalkIntent = "GENERAL";
-  const best = Math.max(literatureScore, ideaScore, methodScore, validationScore, comparisonScore, conceptScore);
+  const best = Math.max(literatureScore, ideaScore, methodScore, pipelineScore, validationScore, comparisonScore, conceptScore);
   if (best > 0) {
-    // Tie-breaker: if the user is asking what was actually used, method extraction wins over literature/trend.
-    if (methodScore === best) paperTalkIntent = "METHOD_EXTRACTION";
+    // Tie-breaker: workflow wins over method list; method extraction wins over literature/trend.
+    if (pipelineScore === best) paperTalkIntent = "PIPELINE_WORKFLOW";
+    else if (methodScore === best) paperTalkIntent = "METHOD_EXTRACTION";
     else if (literatureScore === best) paperTalkIntent = "LITERATURE_REVIEW";
     else if (ideaScore === best) paperTalkIntent = "RESEARCH_IDEA";
     else if (validationScore === best) paperTalkIntent = "VALIDATION";
@@ -5654,9 +5669,14 @@ function heuristicPaperTalkPlanner(message) {
   }
 
   let primaryDomain = "GENERAL";
-  if (/(spatial|visium|xenium|cosmx|merfish|spatial transcriptomics|공간|공간 전사체|공간전사체)/i.test(text)) primaryDomain = "SPATIAL_BIOLOGY";
+  const hasScRnaSignal = /(scrna|sc\s*rna|single[-\s]?cell\s+rna|single[-\s]?cell|싱글셀|단일세포|rna[-\s]?seq|전사체)/i.test(text);
+  const hasScAtacSignal = /(scatac|sc\s*atac|single[-\s]?cell\s+atac|atac[-\s]?seq|chromatin|크로마틴|accessibility|접근성|epigenomic|epigenomics|후성유전체)/i.test(text);
+
+  if (hasScRnaSignal && hasScAtacSignal) primaryDomain = "MULTIOMICS";
+  else if (hasScAtacSignal) primaryDomain = "MULTIOMICS";
+  else if (/(spatial|visium|xenium|cosmx|merfish|spatial transcriptomics|공간|공간 전사체|공간전사체)/i.test(text)) primaryDomain = "SPATIAL_BIOLOGY";
   else if (/(cancer|tumou?r|oncology|clone|clonal|암|종양|항암|전이)/i.test(text)) primaryDomain = "CANCER_GENOMICS";
-  else if (/(single-cell|single cell|scrna|싱글셀|단일세포)/i.test(text)) primaryDomain = "SINGLE_CELL";
+  else if (hasScRnaSignal) primaryDomain = "SINGLE_CELL";
   else if (/(immune|immunology|t cell|b cell|myeloid|면역)/i.test(text)) primaryDomain = "IMMUNOLOGY";
   else if (/(multiomics|multi-omics|proteomics|epigenomics|멀티오믹스)/i.test(text)) primaryDomain = "MULTIOMICS";
   else if (/(deep learning|machine learning|foundation model|transformer|gnn|diffusion|딥러닝|머신러닝|파운데이션|트랜스포머)/i.test(text)) primaryDomain = "AI_METHOD";
@@ -5688,10 +5708,31 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
     queries.push("recent review trend state of the art important papers");
   }
 
-  if (paperTalkIntent === "METHOD_EXTRACTION") {
+  if (paperTalkIntent === "PIPELINE_WORKFLOW") {
     queries.push(
-      "analysis method package software tool workflow pipeline algorithm implementation benchmark",
-      "single cell spatial transcriptomics scRNA scATAC integration package method tool pipeline",
+      "end to end analysis workflow pipeline raw data QC preprocessing integration interpretation",
+      "single cell multiome scRNA scATAC workflow FASTQ Cell Ranger ARC Seurat Signac WNN ArchR SnapATAC2",
+      "scRNA scATAC multiome pipeline LIGER iNMF GLUE MultiVI scvi-tools Harmony MOFA+ SCENIC SCENIC+ chromVAR Cicero"
+    );
+  }
+
+  if (paperTalkIntent === "METHOD_EXTRACTION") {
+    const asksSingleCellChromatin =
+      primaryDomain === "SINGLE_CELL" ||
+      primaryDomain === "MULTIOMICS" ||
+      /(scrna|sc\s*rna|single[-\s]?cell|싱글셀|단일세포|scatac|sc\s*atac|atac[-\s]?seq|chromatin|크로마틴|multi[-\s]?omics|멀티오믹스)/i.test(t);
+
+    if (asksSingleCellChromatin) {
+      // Put the standard method catalog query before generic method queries so it is not dropped by the retrieval-query cap.
+      queries.push(
+        "LIGER iNMF Seurat Signac WNN ArchR GLUE MultiVI scvi-tools SnapATAC2 Harmony MOFA+ SCENIC SCENIC+ pySCENIC chromVAR Cicero cisTopic Cell Ranger RNA ATAC",
+        "scRNA scATAC multiome integration LIGER Seurat WNN Signac ArchR GLUE MultiVI SnapATAC2 Harmony MOFA SCENIC"
+      );
+    }
+
+    queries.push(
+      "analysis method package software tool algorithm implementation benchmark",
+      "single cell spatial transcriptomics scRNA scATAC integration package method tool",
       "used methods software packages tools models algorithms in papers"
     );
   }
@@ -5700,7 +5741,8 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
     queries.push("research gap future direction hypothesis validation project idea");
   }
 
-  return [...new Set(queries.filter(Boolean))].slice(0, 4);
+  const queryLimit = ["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(paperTalkIntent) ? 6 : 4;
+  return [...new Set(queries.filter(Boolean))].slice(0, queryLimit);
 }
 async function inferPaperTalkResearchIntentForChat(userMessage, env) {
   const text = String(userMessage || "").trim();
@@ -5712,6 +5754,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     question_type:
       heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
       heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" :
+      heuristic.paperTalkIntent === "PIPELINE_WORKFLOW" ? "PIPELINE" :
       heuristic.paperTalkIntent === "METHOD_EXTRACTION" ? "METHOD" :
       heuristic.paperTalkIntent === "VALIDATION" ? "VALIDATION" :
       heuristic.paperTalkIntent === "COMPARISON" ? "COMPARISON" :
@@ -5722,9 +5765,10 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     answer_style:
       heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "paper_recommendation_by_theme" :
       heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "actionable_project_ideas" :
+      heuristic.paperTalkIntent === "PIPELINE_WORKFLOW" ? "end_to_end_workflow" :
       heuristic.paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" :
       "calm_research_mentor",
-    should_generate_hypotheses: heuristic.paperTalkIntent === "RESEARCH_IDEA" || (heuristic.paperTalkIntent !== "METHOD_EXTRACTION" && /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text)),
+    should_generate_hypotheses: heuristic.paperTalkIntent === "RESEARCH_IDEA" || (!["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(heuristic.paperTalkIntent) && /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text)),
     should_use_db_evidence: !isLikelyGeneralQuestionFast(text) || heuristic.paperTalkIntent !== "GENERAL",
     interpreted_intent: text.slice(0, 500),
     key_entities: [],
@@ -5757,16 +5801,19 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
               "You are the semantic intent, domain, and retrieval planner for Paper_Talk, a DB-grounded biomedical research GPT.",
               "Do not rely on fixed keywords. Infer the user's real task from the whole sentence and conversation context.",
               "Return strict JSON only.",
-              "paper_talk_intent must be one of: LITERATURE_REVIEW, RESEARCH_IDEA, METHOD_EXTRACTION, CONCEPT, VALIDATION, COMPARISON, PAPER_SUMMARY, SOURCE_TRACE, GENERAL.",
+              "paper_talk_intent must be one of: LITERATURE_REVIEW, RESEARCH_IDEA, METHOD_EXTRACTION, PIPELINE_WORKFLOW, CONCEPT, VALIDATION, COMPARISON, PAPER_SUMMARY, SOURCE_TRACE, GENERAL.",
               "Use LITERATURE_REVIEW only when the user wants papers to read, recent trends, hot topics, representative studies, paper recommendations, or field overview.",
-              "Use METHOD_EXTRACTION when the user wants practical analysis methods, packages, software, tools, algorithms, models, workflows, pipelines, or wants to know what methods were actually used in papers.",
-              "Important: if the user asks what papers used, what researchers used, what analysis was done, which package/method/tool/pipeline is used, or what can be used for actual data analysis, choose METHOD_EXTRACTION, not LITERATURE_REVIEW.",
+              "Use PIPELINE_WORKFLOW when the user wants an actual analysis pipeline, workflow, step-by-step procedure, analysis order, or end-to-end process from raw data to biological interpretation.",
+              "Use METHOD_EXTRACTION when the user wants practical analysis methods, packages, software, tools, algorithms, models, or wants to know what methods were actually used in papers.",
+              "Important: if the user asks for a workflow/pipeline/analysis order, choose PIPELINE_WORKFLOW, not METHOD_EXTRACTION and not LITERATURE_REVIEW.",
+              "Important: if the user asks what papers used, what researchers used, what analysis was done, which package/method/tool is used, or what can be used for actual data analysis, choose METHOD_EXTRACTION, not LITERATURE_REVIEW.",
               "Important: a question can mention papers, 논문, literature, or studies and still be METHOD_EXTRACTION if the goal is extracting methods/tools rather than recommending papers.",
               "Use RESEARCH_IDEA when the user asks what research can be done, project ideas, future directions, hypotheses, grant ideas, or actionable research topics.",
               "primary_domain must be one of: SPATIAL_BIOLOGY, CANCER_GENOMICS, SINGLE_CELL, IMMUNOLOGY, AGING, MULTIOMICS, AI_METHOD, GENERAL.",
               "If spatial/deep learning/cancer genomics appears, infer adjacent concepts such as spatial transcriptomics, histology, tumor microenvironment, multimodal AI, GNN, transformer, foundation model, immune niche, tumor evolution, and drug response.",
               "Create 3-4 concise English biomedical retrieval_queries for Paper_Talk DB.",
-              "For METHOD_EXTRACTION, retrieval_queries should include method-oriented terms such as analysis method, package, software, workflow, pipeline, algorithm, model, implementation, benchmark, and the relevant assay/domain.",
+              "For PIPELINE_WORKFLOW, retrieval_queries should include workflow, pipeline, raw data, QC, preprocessing, integration, interpretation, and the relevant assay/domain.",
+              "For METHOD_EXTRACTION, retrieval_queries should include method-oriented terms such as analysis method, package, software, algorithm, model, implementation, benchmark, and the relevant assay/domain.",
               "Return keys: is_research_related, question_type, paper_talk_intent, primary_domain, answer_style, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
             ].join(" ")
           },
@@ -5795,16 +5842,17 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
       primary_domain: primaryDomain,
       is_research_related: Boolean(parsed.is_research_related) || paperTalkIntent !== "GENERAL",
       should_use_db_evidence: Boolean(parsed.should_use_db_evidence || parsed.is_research_related || paperTalkIntent !== "GENERAL"),
-      should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses || paperTalkIntent === "RESEARCH_IDEA") && paperTalkIntent !== "METHOD_EXTRACTION",
+      should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses || paperTalkIntent === "RESEARCH_IDEA") && !["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(paperTalkIntent),
       question_type:
         paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
         paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" :
+        paperTalkIntent === "PIPELINE_WORKFLOW" ? "PIPELINE" :
         paperTalkIntent === "METHOD_EXTRACTION" ? "METHOD" :
         paperTalkIntent === "VALIDATION" ? "VALIDATION" :
         paperTalkIntent === "COMPARISON" ? "COMPARISON" :
         paperTalkIntent === "CONCEPT" ? "CONCEPT" :
         (parsed.question_type || fallback.question_type),
-      answer_style: paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" : (parsed.answer_style || fallback.answer_style),
+      answer_style: paperTalkIntent === "PIPELINE_WORKFLOW" ? "end_to_end_workflow" : (paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" : (parsed.answer_style || fallback.answer_style)),
       key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v || "").trim()).filter(Boolean).slice(0, 12) : [],
       retrieval_queries: queries.length ? queries.slice(0, 4) : buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent),
       gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v || "").trim()).filter(Boolean).slice(0, 8) : [],
@@ -6434,7 +6482,7 @@ async function gptChat(request, env) {
 
     const finalOutputStyle = forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: autoIntent, hasContext: context.length > 0 });
 
-    if (!isSupportingPaperFollowUp(message) && !["LITERATURE_REVIEW", "METHOD_EXTRACTION", "RESEARCH_INSIGHT", "RESEARCH_SYNTHESIS"].includes(finalOutputStyle)) {
+    if (!isSupportingPaperFollowUp(message) && !["LITERATURE_REVIEW", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW", "RESEARCH_INSIGHT", "RESEARCH_SYNTHESIS"].includes(finalOutputStyle)) {
       assistantText = hideAccidentalPaperListFromNormalAnswer(assistantText);
       assistantText = hideInternalEvidenceLeaksFromNormalAnswer(assistantText);
     }
@@ -9203,14 +9251,15 @@ ${String(userMessage || "").slice(0, 1200)}
 
 function normalizeQuestionType(value) {
   const label = String(value || "").trim().toUpperCase();
-  if (["CONCEPT", "RESEARCH", "METHOD", "VALIDATION", "LITERATURE", "GENERAL"].includes(label)) return label;
+  if (["CONCEPT", "RESEARCH", "METHOD", "PIPELINE", "VALIDATION", "LITERATURE", "GENERAL"].includes(label)) return label;
+  if (["PIPELINE_WORKFLOW", "WORKFLOW", "ANALYSIS_PIPELINE", "ANALYSIS_WORKFLOW", "END_TO_END_PIPELINE"].includes(label)) return "PIPELINE";
   if (["METHODS", "METHODOLOGY", "ANALYSIS_METHOD", "ANALYSIS_METHODS", "PRACTICAL_METHOD"].includes(label)) return "METHOD";
   return "GENERAL";
 }
 
 function normalizeAnswerStyle(value) {
   const label = String(value || "").trim().toLowerCase();
-  if (["educational_overview", "hypothesis_generation", "validation_plan", "literature_review", "practical_method_table", "method_extraction", "concise_answer"].includes(label)) return label;
+  if (["educational_overview", "hypothesis_generation", "validation_plan", "literature_review", "end_to_end_workflow", "pipeline_workflow", "practical_method_table", "method_extraction", "concise_answer"].includes(label)) return label;
   return "concise_answer";
 }
 
@@ -9220,10 +9269,12 @@ function inferQuestionTypeHeuristically(userMessage) {
   const conceptPattern = /(what is|what are|define|definition|meaning|overview|explain|introduction to|개념|정의|뜻|무슨 뜻|뭐야|뭐지|무엇|설명|개요)/i;
   const researchPattern = /(research idea|hypothesis|hypotheses|knowledge gap|gap|future direction|what should i study|study idea|project idea|연구 주제|연구 아이디어|가설|연구 방향|뭘 연구|무슨 연구|future work)/i;
   const validationPattern = /(validate|validation|experiment|experimental design|protocol|control|statistic|analysis plan|test this|검증|실험|프로토콜|대조군|분석 방법|어떻게 확인)/i;
-  const methodPattern = /(package|packages|software|tool|tools|method|methods|pipeline|workflow|algorithm|implementation|model|패키지|툴|도구|방법론|분석법|파이프라인|워크플로우|알고리즘|구현|모델)/i;
+  const pipelinePattern = /(pipeline|workflow|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step|analysis\s+order|procedure|파이프라인|워크플로우|분석\s*순서|분석\s*단계|단계별|전체\s*분석|처음부터)/i;
+  const methodPattern = /(package|packages|software|tool|tools|method|methods|algorithm|implementation|model|패키지|툴|도구|방법론|분석법|알고리즘|구현|모델)/i;
   const literaturePattern = /(paper|papers|literature|review|summarize|related studies|논문|문헌|리뷰|요약|관련 연구)/i;
 
   if (researchPattern.test(message)) return "RESEARCH";
+  if (pipelinePattern.test(message)) return "PIPELINE";
   if (validationPattern.test(message)) return "VALIDATION";
   if (methodPattern.test(message)) return "METHOD";
   if (literaturePattern.test(message)) return "LITERATURE";
@@ -9713,12 +9764,20 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
   }
 
   const semanticIntent = normalizePaperTalkIntentLabel(intent?.paper_talk_intent || "");
+  if (semanticIntent === "PIPELINE_WORKFLOW" || questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow") {
+    return "PIPELINE_WORKFLOW";
+  }
+
   if (semanticIntent === "METHOD_EXTRACTION" || questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") {
     return "METHOD_EXTRACTION";
   }
 
   // Fallback only. The main route should come from the LLM intent planner above.
-  if (/(논문|paper|papers|study|studies).{0,60}(썼|사용|used|applied|implemented|분석|방법|패키지|도구|툴|software|method|package|tool|pipeline|workflow)|(?:package|packages|software|tool|tools|method|methods|pipeline|workflow|algorithm|model|패키지|툴|도구|방법론|분석법|파이프라인|워크플로우|알고리즘|모델)/i.test(raw)) {
+  if (/(pipeline|workflow|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step|analysis\s+order|procedure|파이프라인|워크플로우|분석\s*순서|분석\s*단계|단계별|전체\s*분석|처음부터)/i.test(raw)) {
+    return "PIPELINE_WORKFLOW";
+  }
+
+  if (/(논문|paper|papers|study|studies).{0,60}(썼|사용|used|applied|implemented|분석|방법|패키지|도구|툴|software|method|package|tool)|(?:package|packages|software|tool|tools|method|methods|algorithm|model|패키지|툴|도구|방법론|분석법|알고리즘|모델)/i.test(raw)) {
     return "METHOD_EXTRACTION";
   }
 
@@ -9746,7 +9805,7 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
     return "COMPARISON";
   }
 
-  if (/(방법론|method|pipeline|workflow|algorithm|분석법|분석\s*파이프라인|어떻게\s*분석|tool|툴)/i.test(raw)) {
+  if (/(방법론|method|algorithm|분석법|어떻게\s*분석|tool|툴)/i.test(raw)) {
     return "METHOD_EXPLANATION";
   }
 
@@ -9756,6 +9815,7 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
 
   if (questionType === "LITERATURE" || answerStyle === "literature_review") return "LITERATURE_REVIEW";
   if (questionType === "RESEARCH" || answerStyle === "hypothesis_generation") return "RESEARCH_DIRECTION";
+  if (questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow") return "PIPELINE_WORKFLOW";
   if (questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") return "METHOD_EXTRACTION";
   if (questionType === "VALIDATION" || answerStyle === "validation_plan") return "VALIDATION_PLAN";
   if (questionType === "CONCEPT" || answerStyle === "educational_overview") return "CONCEPT_EXPLANATION";
@@ -9766,6 +9826,7 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
 function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
   const semanticIntent = normalizePaperTalkIntentLabel(intent?.paper_talk_intent || "");
 
+  if (semanticIntent === "PIPELINE_WORKFLOW") return "PIPELINE_WORKFLOW";
   if (semanticIntent === "METHOD_EXTRACTION") return "METHOD_EXTRACTION";
   if (semanticIntent === "LITERATURE_REVIEW") return "LITERATURE_REVIEW";
   if (semanticIntent === "RESEARCH_IDEA") return "RESEARCH_INSIGHT";
@@ -9782,6 +9843,8 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
       return "SOURCE_TRACE";
     case "LITERATURE_REVIEW":
       return "LITERATURE_REVIEW";
+    case "PIPELINE_WORKFLOW":
+      return "PIPELINE_WORKFLOW";
     case "METHOD_EXTRACTION":
       return "METHOD_EXTRACTION";
     case "FOLLOW_UP_MORE":
@@ -9859,6 +9922,40 @@ GENERAL READABILITY RULES
 - If DB evidence is used internally but the user did not ask for sources, do not expose paper labels or source tracing.
   `.trim();
 
+  if (outputStyle === "PIPELINE_WORKFLOW") {
+    return `
+${common}
+
+AUTOMATIC STYLE: PRACTICAL END-TO-END ANALYSIS WORKFLOW
+
+The user is asking for an actual analysis pipeline or workflow, not just a package list.
+Do not answer as trends or paper recommendations.
+
+Required structure:
+1. Start with a short direct answer in the user's language.
+2. Give a step-by-step workflow from raw data to biological interpretation.
+3. For each step, include:
+   - 목적
+   - input
+   - recommended packages/tools
+   - output
+   - QC/checkpoint
+4. For scRNA-seq + scATAC-seq or multiome data, include when relevant:
+   - FASTQ / Cell Ranger ARC or Cell Ranger ATAC
+   - scRNA QC, doublet removal, normalization, clustering, annotation
+   - scATAC QC, TSS enrichment, FRiP, peak calling, TF-IDF/LSI
+   - Seurat/Signac WNN for same-cell multiome
+   - ArchR and SnapATAC2 for scATAC/multiome workflows
+   - LIGER/iNMF, GLUE, MultiVI/scvi-tools, Harmony, and MOFA+ for integration/latent factors
+   - chromVAR, Cicero, SCENIC / SCENIC+ for regulatory interpretation
+5. Separate same-cell multiome workflow from separate scRNA + scATAC integration workflow when useful.
+6. Clearly mark DB-supported tools only when retrieved excerpts explicitly support them; otherwise label them as general practical recommendations.
+7. End with "실제로 시작한다면" and recommend the simplest starting pipeline first.
+
+Return the answer in the user's language.
+  `.trim();
+}
+
   if (outputStyle === "METHOD_EXTRACTION") {
     return `
 ${common}
@@ -9896,6 +9993,7 @@ Preferred answer structure:
 6. You may show retrieved paper titles because the user asked what papers used.
 7. Never invent package names, paper titles, datasets, sample sizes, or implementation details.
 8. End with a short "실제로 시작한다면" recommendation: 3-5 packages/methods to try first.
+9. For scRNA-seq + scATAC-seq or multiome analysis, do not omit standard practical tools such as LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, MOFA+, and SCENIC/SCENIC+ when relevant; label each as DB-supported only if retrieved excerpts explicitly support it.
 
 Return the answer in the user's language.
     `.trim();
@@ -9996,6 +10094,7 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
   const sectionStyles = new Set([
     "RESEARCH_INSIGHT",
     "RESEARCH_SYNTHESIS",
+    "PIPELINE_WORKFLOW",
     "VALIDATION_PLAN",
     "CONCEPT_EXPLANATION",
     "COMPARISON",
@@ -10027,7 +10126,7 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
 }
 
 function buildStrictInternalEvidenceInstruction({ outputStyle, hasContext }) {
-  const sourceRequested = ["SOURCE_TRACE", "LITERATURE_REVIEW", "METHOD_EXTRACTION"].includes(outputStyle);
+  const sourceRequested = ["SOURCE_TRACE", "LITERATURE_REVIEW", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle);
 
   if (sourceRequested) {
     return `
@@ -10037,6 +10136,7 @@ The user explicitly asked for papers, literature, references, sources, or paper-
 You may show only retrieved Paper_Talk DB titles and source metadata.
 For literature recommendation questions, organize titles under trend/theme sections rather than paper labels.
 For METHOD_EXTRACTION, organize by package/tool/method and analysis purpose, not by trend.
+For PIPELINE_WORKFLOW, organize by analysis step from raw data to interpretation, not by trend.
 Never invent papers, packages, datasets, methods, or implementation details outside the retrieved DB context.
     `.trim();
   }
@@ -10183,7 +10283,7 @@ async function normalizeFinalAnswerToUserIntentStyle({ answer, userMessage, outp
   // Only explicit paper/literature/source modes may expose paper titles or paper labels.
   // Research idea / research insight answers should use DB evidence internally and show
   // project-level synthesis only. If the user later asks for sources, SOURCE_TRACE will show them.
-  if (["SOURCE_TRACE", "LITERATURE_REVIEW", "METHOD_EXTRACTION"].includes(outputStyle)) {
+  if (["SOURCE_TRACE", "LITERATURE_REVIEW", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle)) {
     return formatAnswerForReadability(original, outputStyle);
   }
 
@@ -10212,6 +10312,71 @@ function forceLocalResearchInsightLayout(answer) {
   return text;
 }
 
+function buildPracticalMethodCatalogForPrompt({ userMessage, intent, outputStyle }) {
+  if (!["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle)) return "";
+
+  const text = [
+    userMessage || "",
+    intent?.interpreted_intent || "",
+    intent?.primary_domain || "",
+    Array.isArray(intent?.key_entities) ? intent.key_entities.join(" ") : ""
+  ].join(" ").toLowerCase();
+
+  const domain = String(intent?.primary_domain || "").toUpperCase();
+  const isSingleCellOrMultiome =
+    domain === "SINGLE_CELL" ||
+    domain === "MULTIOMICS" ||
+    /(scrna|sc\s*rna|single[-\s]?cell|싱글셀|단일세포|scatac|sc\s*atac|atac[-\s]?seq|chromatin|크로마틴|multi[-\s]?omics|멀티오믹스)/i.test(text);
+
+  if (!isSingleCellOrMultiome) return "";
+
+  return `
+PRACTICAL METHOD CATALOG FOR METHOD_EXTRACTION / PIPELINE_WORKFLOW
+
+Use this as a practical method prior, not as paper evidence.
+This catalog exists so broad tool questions do not get answered with random retrieved paper metadata.
+
+Critical rule:
+- Always separate DB-supported methods from general practical recommendations.
+- If a method below is not explicitly present in the retrieved DB excerpt, label it as "general practical recommendation / retrieved DB excerpt에서 직접 확인되지는 않음".
+- Do not claim a specific paper used a method unless the retrieved DB excerpt explicitly supports it.
+- For scRNA-seq + scATAC-seq or multiome questions, the answer should include the standard practical tools below when relevant.
+
+scRNA-seq core analysis:
+- Seurat: QC, normalization, clustering, annotation, integration, visualization.
+- Scanpy: Python-based QC, preprocessing, clustering, annotation, visualization.
+- Cell Ranger / STARsolo / alevin-fry: read processing and count matrix generation.
+
+scATAC-seq core analysis:
+- ArchR: scATAC QC, peak calling, LSI, clustering, gene activity, trajectory, multiome integration.
+- Signac: Seurat-compatible scATAC analysis, peak/gene activity, motif/accessibility analysis.
+- SnapATAC2: scalable scATAC analysis and atlas-scale workflows.
+- chromVAR: motif deviation / TF activity from chromatin accessibility.
+- Cicero: co-accessibility and cis-regulatory interaction inference.
+- cisTopic / pycisTopic: topic modeling for chromatin accessibility.
+
+scRNA-seq + scATAC-seq integration / multiome:
+- Seurat + Signac WNN: weighted-nearest-neighbor multiome integration.
+- ArchR integration: links scATAC with scRNA references and gene activity.
+- LIGER / iNMF: integrative non-negative matrix factorization for cross-modality or cross-dataset integration.
+- GLUE: graph-linked unified embedding for single-cell multi-omics integration.
+- MultiVI / scvi-tools: probabilistic deep generative model for paired/unpaired scRNA + scATAC integration.
+- Harmony: batch correction/integration, often used around embeddings rather than full regulatory modeling.
+- MOFA+: factor analysis for multi-omics latent factors.
+
+Regulatory network / TF activity:
+- SCENIC / pySCENIC: gene regulatory network and regulon activity from scRNA-seq.
+- SCENIC+: joint gene regulatory inference using expression plus chromatin accessibility, useful for scRNA + scATAC/multiome.
+- Note spelling: if the user or DB says SENIC, treat it as likely SCENIC unless context clearly means another tool.
+
+Expected answer behavior for this user request:
+- Start by saying that LIGER and SCENIC/SCENIC+ are indeed relevant, but their DB-supported status depends on whether retrieved excerpts explicitly contain them.
+- For broad "what tools are there" questions, give the practical tool list first, then DB evidence if available.
+- For workflow/pipeline questions, give the full step-by-step workflow first, then method choices within each step.
+- Do not let unrelated retrieved items such as generic reference mapping or map-building phrases replace the standard method list or workflow.
+`.trim();
+}
+
 async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env) {
   context = trimContextForChat(context);
   const hasContext = context.length > 0;
@@ -10221,6 +10386,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const adaptiveStyleInstruction = buildAdaptiveStyleInstruction({ outputStyle, hasContext, userMessage });
   const multilingualInstruction = buildMultilingualAnswerInstruction(userMessage);
   const strictInternalEvidenceInstruction = buildStrictInternalEvidenceInstruction({ outputStyle, hasContext });
+  const practicalMethodCatalog = buildPracticalMethodCatalogForPrompt({ userMessage, intent, outputStyle });
   const questionType = normalizeQuestionType(intent.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent.answer_style || "concise_answer");
   const shouldGenerateHypotheses = Boolean(intent.should_generate_hypotheses);
@@ -10417,8 +10583,9 @@ Forbidden section labels unless the user explicitly asks for them:
 - Suggested next study or validation
 
 Paper/source visibility rule:
-- In LITERATURE_REVIEW, SOURCE_TRACE, and METHOD_EXTRACTION modes, you may show retrieved DB paper titles.
+- In LITERATURE_REVIEW, SOURCE_TRACE, METHOD_EXTRACTION, and PIPELINE_WORKFLOW modes, you may show retrieved DB paper titles.
 - In METHOD_EXTRACTION mode, show paper titles only to support a listed package/tool/method and organize by analysis purpose, not by trend.
+- In PIPELINE_WORKFLOW mode, show paper titles only to support a workflow step or tool choice and organize by analysis order, not by trend.
 - In normal RESEARCH_INSIGHT, RESEARCH_SYNTHESIS, VALIDATION, CONCEPT, COMPARISON, or GENERAL answers, do NOT show 논문 A/B/C labels, paper titles, URLs, journals, authors, DOI/PMID, or source lists.
 - For broad research-direction questions, synthesize across retrieved DB papers silently and give project-level research ideas.
 - If the user later asks for sources/evidence/references in any language, SOURCE_TRACE will show the stored sources separately.
@@ -10487,6 +10654,10 @@ ${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
       role: "system",
       content: strictDbRule
     },
+    ...(practicalMethodCatalog ? [{
+      role: "system",
+      content: practicalMethodCatalog
+    }] : []),
     {
       role: "system",
       content: `
@@ -10495,6 +10666,16 @@ PAPER_TALK V72 OUTPUT OVERRIDE
 Detected output style: ${outputStyle}
 Detected semantic intent: ${intent.paper_talk_intent || ""}
 Detected domain: ${intent.primary_domain || ""}
+
+If outputStyle is PIPELINE_WORKFLOW:
+- The user wants an actual end-to-end analysis pipeline/workflow, not just a tool list.
+- Do NOT answer with trends or paper recommendations.
+- Use a step-by-step workflow from raw data to biological interpretation.
+- For each step include: purpose, input, recommended tools/packages, output, and QC/checkpoint.
+- For scRNA-seq + scATAC-seq/multiome, include same-cell multiome and separate scRNA+scATAC alternatives when useful.
+- Include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, MOFA+, chromVAR, Cicero, and SCENIC/SCENIC+ when relevant.
+- Mark DB-supported tools only when retrieved DB excerpts explicitly support them; otherwise mark them as general practical recommendations.
+- End with the simplest practical starting pipeline.
 
 If outputStyle is METHOD_EXTRACTION:
 - The user wants practical packages/methods/tools actually used in papers.
@@ -10545,8 +10726,8 @@ Never answer a paper recommendation request with only a field summary.
     {
       role: "system",
       content: hasContext
-        ? (["LITERATURE_REVIEW", "SOURCE_TRACE", "METHOD_EXTRACTION"].includes(outputStyle)
-          ? "A DB context is present. The user explicitly asked for papers/literature/sources or paper-grounded methods, so you may show retrieved EXACT_DB_TITLE values. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method, not by trend. Do not use paper labels. Do not use external papers as DB evidence."
+        ? (["LITERATURE_REVIEW", "SOURCE_TRACE", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle)
+          ? "A DB context is present. The user explicitly asked for papers/literature/sources, paper-grounded methods, or an analysis workflow. You may show retrieved EXACT_DB_TITLE values only when they support a method/workflow step. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method. For PIPELINE_WORKFLOW, organize by analysis step from raw data to interpretation. Do not use paper labels. Do not use external papers as DB evidence."
           : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources. Answer the user's question first in a friendly explanatory way.")
         : "No DB context is present. Do not start with a Paper_Talk DB retrieval-failure sentence unless the user explicitly asked for sources/evidence. For ordinary concept, algorithm, method, or research-idea questions, answer the scientific question directly from general knowledge. Do not invent paper titles, authors, years, journals, sample sizes, or datasets."
     },
@@ -10619,6 +10800,24 @@ Selected mode: CONCEPT EXPLANATION.
 Explain clearly in the user's language, like a senior research mentor.
 Use examples when useful.
 Do not force paper lists or research gaps unless asked.
+    `.trim();
+  }
+
+  if (questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow") {
+    return `
+Selected mode: PRACTICAL END-TO-END ANALYSIS WORKFLOW.
+
+The user wants an actual analysis pipeline or workflow, not just a package list.
+Do not answer as trend recommendation.
+Do not recommend papers as reading material unless the user asks.
+Use retrieved Paper_Talk DB evidence when it supports a workflow step, but clearly separate DB-supported tools from general practical recommendations.
+
+Recommended structure:
+- Direct answer in the user's language.
+- Step-by-step workflow from raw data to biological interpretation.
+- For each step: purpose, input, recommended packages/tools, output, and QC/checkpoint.
+- For scRNA-seq + scATAC-seq or multiome, separate same-cell multiome from separate-dataset integration when useful.
+- End with the simplest starting pipeline.
     `.trim();
   }
 
