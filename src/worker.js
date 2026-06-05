@@ -7129,8 +7129,33 @@ function isPaperHighlightOrShortSummaryFollowUp(message) {
   return shortEnough && hasFollowUpTask && !hasNewLongScientificTitle;
 }
 
+function isAutomaticPreviousContextFollowUp(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!text) return false;
+
+  // Very short Korean/English follow-ups should automatically inherit the previous
+  // paper/topic context. The user should not have to repeat the paper title.
+  // Examples: "하이라이트를 줘", "한줄로", "영어로", "좀 더 자세히",
+  // "앞에는 논문 하이라이트를 한줄만 달라고", "translate", "make it shorter".
+  const shortEnough = text.length <= 320;
+
+  const explicitFollowUpTask = /(하이라이트|highlight|highlights|핵심|중요\s*부분|중요한\s*부분|takeaway|takeaways|key\s*point|key\s*points|main\s*finding|main\s*findings|요약|summary|summari[sz]e|resumen|résumé|résume|sumario|한\s*줄|한줄|1\s*줄|one[-\s]?line|one\s*sentence|짧게|간단히|briefly|shortly|concise|좀\s*더|더\s*자세히|자세히|풀어서|영어로|한국어로|한글로|일본어로|중국어로|다국어|multilingual|multi[-\s]?language|번역|translate|translation|다시|rewrite|rephrase|paraphrase|앞에는|위에는|방금|아까|이\s*논문|그\s*논문|this\s+paper|that\s+paper|previous\s+paper|above|it|this|that)/i.test(text);
+
+  const isJustFormatInstruction = /^(하이라이트(를)?\s*줘|하이라이트만|핵심만|요약해줘|요약|한\s*줄로?|한줄로?|1\s*줄로?|영어로(\s*줘)?|한국어로(\s*줘)?|한글로(\s*줘)?|짧게|간단히|다시|more|shorter|longer|translate|summari[sz]e|highlight)$/i.test(text);
+
+  // If the user pasted a new long scientific title, treat it as a new paper query,
+  // not as a follow-up. Otherwise inherit the previous context.
+  const hasNewLongScientificTitle = /[A-Za-z0-9][A-Za-z0-9:+,()\/[\] ._-]{55,}/.test(text) && !/(이\s*논문|그\s*논문|this\s+paper|that\s+paper|앞에는|위에는|방금|아까)/i.test(text);
+
+  return shortEnough && (explicitFollowUpTask || isJustFormatInstruction) && !hasNewLongScientificTitle;
+}
+
 function isContextualThreadFollowUpRequest(message) {
-  return isContinuationMoreRequest(message) || isPaperHighlightOrShortSummaryFollowUp(message);
+  return (
+    isContinuationMoreRequest(message) ||
+    isPaperHighlightOrShortSummaryFollowUp(message) ||
+    isAutomaticPreviousContextFollowUp(message)
+  );
 }
 
 function isExplicitSourceTraceRequest(message) {
@@ -7156,6 +7181,28 @@ async function getRecentThreadMessagesForContinuation({ threadId, userId, env, l
   `).bind(threadId, userId, limit).all();
 
   return (rows.results || []).reverse();
+}
+
+
+function getFollowUpAnswerLanguageOverride(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!text) return "";
+
+  // Explicit target language should override the language of older context.
+  // This prevents a short follow-up such as "in English" from being answered in Korean
+  // only because the previous message/context was Korean.
+  if (/(영어로|영문으로|english|in english|to english)/i.test(text)) return "English";
+  if (/(한국어로|한글로|한글|korean|in korean|to korean)/i.test(text)) return "Korean";
+  if (/(일본어로|일어로|japanese|in japanese|to japanese)/i.test(text)) return "Japanese";
+  if (/(중국어로|중문으로|chinese|in chinese|to chinese)/i.test(text)) return "Chinese";
+
+  // Language-neutral multilingual request. Use English as the safe fallback unless
+  // the user names exact target languages in the same request.
+  if (/(다국어|여러\s*언어|multilingual|multi[-\s]?language|several languages|multiple languages)/i.test(text)) {
+    return "Multilingual";
+  }
+
+  return "";
 }
 
 function buildContinuationQuestionFromHistory({ currentMessage, recentMessages }) {
@@ -7187,12 +7234,31 @@ function buildContinuationQuestionFromHistory({ currentMessage, recentMessages }
     ? previousAssistantMessages[previousAssistantMessages.length - 1].slice(0, 1800)
     : "";
 
+  const languageOverride = getFollowUpAnswerLanguageOverride(current);
+
   return [
-    topicUser ? `이전 사용자의 주제: ${topicUser}` : "",
-    lastAssistant ? `직전 답변 요약/context: ${lastAssistant}` : "",
-    `현재 사용자의 follow-up 요청: ${current}`,
+    "AUTO-CONTEXT FOLLOW-UP MODE",
+    "The current user message is a short follow-up. Automatically inherit the previous paper/topic context.",
+    "Do NOT ask the user what topic or paper they mean.",
+    "Do NOT answer generically.",
+    languageOverride ? `ANSWER_LANGUAGE_OVERRIDE: ${languageOverride}` : "",
+    "LANGUAGE RULE:",
+    "- The CURRENT_FOLLOW_UP_REQUEST controls the answer language and format.",
+    "- If the current request names a target language, answer in that target language.",
+    "- If the current request asks for multilingual output, provide a compact multilingual answer and do not default to Korean.",
+    "- If no target language is named, answer in the language of the current user request; if it is too short or language-neutral, keep the previous assistant answer language.",
+    "- Never force Korean just because older context contains Korean text.",
+    topicUser ? `PREVIOUS_USER_TOPIC: ${topicUser}` : "",
+    lastAssistant ? `PREVIOUS_ASSISTANT_CONTEXT: ${lastAssistant}` : "",
+    `CURRENT_FOLLOW_UP_REQUEST: ${current}`,
     "",
-    "요청 해석: 사용자는 같은 주제/같은 논문에 대한 follow-up을 하고 있습니다. 이전 논문 제목, 이전 사용자 질문, 직전 답변 context를 반드시 유지하세요. 현재 요청이 '하이라이트', '한줄', '영어로', '요약'이면 주제를 다시 묻지 말고 이전 논문/주제에 대해 그 형식 그대로 답하세요. 이전 답변을 반복하지 말고, 필요한 만큼만 이어서 답하세요. 이전 요청이 논문 추천이었다면 추가 논문 추천으로 답하세요."
+    "Required behavior:",
+    "1. Use PREVIOUS_USER_TOPIC and PREVIOUS_ASSISTANT_CONTEXT as the target paper/topic.",
+    "2. If the user asks for a highlight, key point, takeaway, or equivalent in any language, give the highlight of that previous paper/topic directly.",
+    "3. If the user asks for one line or one sentence, answer in exactly one concise sentence.",
+    "4. If the user asks for translation or rewriting into a target language, translate or rewrite the previous answer/topic accordingly.",
+    "5. If the previous context contains a paper title, keep that paper as the subject.",
+    "6. Never ask for clarification unless there is truly no previous context."
   ].filter(Boolean).join("\\n");
 }
 
@@ -7567,8 +7633,32 @@ async function gptChat(request, env) {
 
     await cancelRuntime.throwIfCanceled();
     const inferredIntent = await inferPaperTalkResearchIntentForChat(effectiveMessage, env, cancelRuntime);
+
+    // If the current message is an automatically detected follow-up, do not let
+    // the intent planner downgrade it to a generic question. The target is the
+    // previous paper/topic stored in effectiveMessage.
+    if (forcedOutputStyle) {
+      inferredIntent.is_research_related = true;
+      inferredIntent.should_use_db_evidence = true;
+
+      if (forcedOutputStyle === "PAPER_SUMMARY") {
+        inferredIntent.paper_talk_intent = "PAPER_SUMMARY";
+        inferredIntent.question_type = "LITERATURE";
+        inferredIntent.answer_style = "paper_summary";
+        inferredIntent.interpreted_intent = "Short follow-up asking for a highlight/summary/format change of the previous paper or topic.";
+      } else if (forcedOutputStyle === "LITERATURE_REVIEW") {
+        inferredIntent.paper_talk_intent = "LITERATURE_REVIEW";
+        inferredIntent.question_type = "LITERATURE";
+        inferredIntent.answer_style = "paper_recommendation_by_theme";
+      } else if (forcedOutputStyle === "RESEARCH_INSIGHT") {
+        inferredIntent.paper_talk_intent = "RESEARCH_IDEA";
+        inferredIntent.question_type = "RESEARCH";
+        inferredIntent.answer_style = "actionable_project_ideas";
+      }
+    }
+
     await cancelRuntime.throwIfCanceled();
-    const generalOrBroad = isLikelyGeneralQuestionFast(effectiveMessage) && !inferredIntent.is_research_related;
+    const generalOrBroad = forcedOutputStyle ? false : (isLikelyGeneralQuestionFast(effectiveMessage) && !inferredIntent.is_research_related);
     let context = [];
 
     // v56 research-purpose GPT policy:
@@ -7618,7 +7708,7 @@ async function gptChat(request, env) {
           thinkingLogicFrameworks: [],
           pastFrameworks: [],
           generatedFramework: "",
-          recentMessages: [],
+          recentMessages: recentMessagesForContinuation,
           autoIntent,
           strictActivePaperLocked: false
         }, env, cancelRuntime);
@@ -11090,6 +11180,24 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
 function detectUserLanguage(text) {
   const value = String(text || "").trim();
 
+  const overrideMatch = value.match(/ANSWER_LANGUAGE_OVERRIDE:\s*(English|Korean|Japanese|Chinese|Multilingual)/i);
+  if (overrideMatch) {
+    const label = overrideMatch[1].toLowerCase();
+    if (label === "english") return "English";
+    if (label === "korean") return "Korean";
+    if (label === "japanese") return "Japanese";
+    if (label === "chinese") return "Chinese";
+    if (label === "multilingual") return "Multilingual";
+  }
+
+  // Explicit target-language phrases in the current user instruction should win
+  // over older retrieved/context text that may contain Korean, English, or mixed language.
+  if (/(영어로|영문으로|in english|to english|answer in english)/i.test(value)) return "English";
+  if (/(한국어로|한글로|in korean|to korean|answer in korean)/i.test(value)) return "Korean";
+  if (/(일본어로|일어로|in japanese|to japanese)/i.test(value)) return "Japanese";
+  if (/(중국어로|중문으로|in chinese|to chinese)/i.test(value)) return "Chinese";
+  if (/(다국어|여러\s*언어|multilingual|multi[-\s]?language|multiple languages|several languages)/i.test(value)) return "Multilingual";
+
   if (/[가-힣]/.test(value)) return "Korean";
   if (/[\u3040-\u30ff]/.test(value)) return "Japanese";
   if (/[\u4e00-\u9fff]/.test(value)) return "Chinese";
@@ -11101,6 +11209,21 @@ function detectUserLanguage(text) {
 function buildMultilingualAnswerInstruction(userMessage) {
   const language = detectUserLanguage(userMessage);
 
+  if (language === "Multilingual") {
+    return `
+MULTILINGUAL LANGUAGE POLICY
+
+Detected user language request: Multilingual
+
+Answer in a compact multilingual format.
+Do not default to Korean merely because previous context or retrieved DB context contains Korean.
+If the user names exact target languages, use those languages.
+If the user only says "multilingual" or "다국어", use English as the primary language and add short parallel versions in 1-2 additional common languages only when useful.
+
+Paper titles, gene names, software names, model names, and technical terms may remain in their original language.
+`.trim();
+  }
+
   return `
 MULTILINGUAL LANGUAGE POLICY
 
@@ -11108,6 +11231,10 @@ Detected user language: ${language}
 
 Answer entirely in ${language}.
 Do not mix languages in section titles, explanations, summaries, paper recommendation labels, research ideas, or conclusions.
+
+Important follow-up rule:
+- If the current user request explicitly asks for a target language, that target language overrides older conversation context.
+- Do not answer in Korean only because older context or retrieved DB context contains Korean.
 
 If the user asks in English:
 - Use English section titles such as "Why this matters", "Recommended papers", "How to read this", "Next research ideas".
