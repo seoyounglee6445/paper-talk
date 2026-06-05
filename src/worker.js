@@ -811,96 +811,489 @@ function html(data, status = 200, headers = {}) {
 }
 
 function specialistGptsLandingPage(request) {
-  const cards = [
-    {
-      key: "neuroscience",
-      path: "/neuroscience-gpt",
-      title: "Neuroscience GPT",
-      badge: "Private",
-      description: "Curated neuroscience knowledge base for paper-grounded brain and engram questions."
-    },
-    {
-      key: "mitochondria",
-      path: "/mitochondria-gpt",
-      title: "Mitochondria GPT",
-      badge: "Specialist",
-      description: "Mitochondrial biology, metabolism, organelle stress, and disease-focused literature support."
-    },
-    {
-      key: "single_cell",
-      path: "/single-cell-gpt",
-      title: "Single-cell GPT",
-      badge: "Specialist",
-      description: "scRNA-seq, scATAC-seq, multiome integration, cell annotation, and analysis workflow guidance."
-    },
-    {
-      key: "spatial_biology",
-      path: "/spatial-biology-gpt",
-      title: "Spatial Biology GPT",
-      badge: "Specialist",
-      description: "Spatial transcriptomics, Visium, tissue domains, deconvolution, and spatial omics interpretation."
-    },
-    {
-      key: "cancer_genomics",
-      path: "/cancer-genomics-gpt",
-      title: "Cancer Genomics GPT",
-      badge: "Specialist",
-      description: "Cancer genomics, biomarkers, clonal evolution, variants, signatures, and translational omics."
-    }
-  ];
-
-  const cardHtml = cards.map(card => `
-    <a class="card" href="${card.path}" data-gpt="${card.key}">
-      <span class="badge">${card.badge}</span>
-      <h2>${card.title}</h2>
-      <p>${card.description}</p>
-      <span class="open">Open ${card.title} →</span>
-    </a>
-  `).join("\n");
-
-  return html(`<!doctype html>
-<html lang="ko">
+  return html(`<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Specialist GPTs | Paper_Talk</title>
-  <style>
-    :root { color-scheme: light; --bg:#f8fafc; --panel:#ffffff; --ink:#111827; --muted:#64748b; --line:#e5e7eb; --brand:#2563eb; --soft:#eff6ff; }
-    * { box-sizing: border-box; }
-    body { margin:0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
-    header { padding:42px 20px 22px; text-align:center; }
-    .wrap { width:min(1120px, calc(100% - 32px)); margin:0 auto; }
-    .eyebrow { display:inline-flex; gap:8px; align-items:center; padding:7px 12px; border:1px solid var(--line); border-radius:999px; color:var(--brand); background:var(--soft); font-weight:700; font-size:13px; }
-    h1 { margin:18px 0 10px; font-size:clamp(32px, 5vw, 56px); line-height:1.05; letter-spacing:-0.04em; }
-    .lead { margin:0 auto; max-width:760px; color:var(--muted); font-size:17px; line-height:1.65; }
-    .grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:16px; padding:24px 0 50px; }
-    .card { display:block; min-height:230px; padding:24px; border:1px solid var(--line); border-radius:24px; background:var(--panel); color:inherit; text-decoration:none; box-shadow:0 14px 40px rgba(15,23,42,.06); transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
-    .card:hover { transform:translateY(-3px); border-color:#bfdbfe; box-shadow:0 18px 50px rgba(37,99,235,.13); }
-    .badge { display:inline-flex; padding:6px 10px; border-radius:999px; background:#f1f5f9; color:#334155; font-size:12px; font-weight:800; }
-    .card h2 { margin:22px 0 10px; font-size:24px; letter-spacing:-0.02em; }
-    .card p { margin:0; color:var(--muted); line-height:1.58; }
-    .open { display:inline-block; margin-top:22px; color:var(--brand); font-weight:800; }
-    .note { margin:0 auto 40px; padding:16px 18px; max-width:860px; border:1px solid var(--line); border-radius:18px; background:#fff; color:#475569; line-height:1.6; }
-    @media (max-width: 860px) { .grid { grid-template-columns:1fr; } header { text-align:left; } .lead { margin:0; } }
-  </style>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-WWSD3F58L6"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag("js", new Date());
+gtag("config", "G-WWSD3F58L6");
+</script>
+
+<title>Specialist GPTs - Paper_Talk</title>
+<link rel="stylesheet" href="/style.css">
+
+<style>
+body {
+  margin: 0;
+  background: #eef2ff;
+  color: #020617;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.header {
+  background: #1428a0;
+  color: #ffffff;
+}
+
+.nav {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 18px 28px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+
+.nav a {
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.nav .logo {
+  margin-right: auto;
+  font-size: 28px;
+  font-weight: 900;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 36px 32px 70px;
+}
+
+.auth-box {
+  text-align: right;
+  margin-bottom: 24px;
+}
+
+.auth-box #userText,
+.auth-box #guestInfo {
+  margin-right: 8px;
+}
+
+.signin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  color: #1428a0;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 14px 32px rgba(20,40,160,0.12);
+}
+
+.google-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #1428a0;
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.research-gpts-hero {
+  margin-top: 10px;
+  margin-bottom: 30px;
+}
+
+.research-gpts-hero h1 {
+  margin: 0 0 12px;
+  color: #1428a0;
+  font-size: 44px;
+  line-height: 1.1;
+}
+
+.research-gpts-hero p {
+  max-width: 820px;
+  line-height: 1.7;
+  font-size: 16px;
+}
+
+.gpt-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(260px, 1fr));
+  gap: 22px;
+  margin-top: 24px;
+}
+
+.gpt-card {
+  min-height: 190px;
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
+}
+
+.gpt-card h2 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #1428a0;
+  font-size: 24px;
+}
+
+.gpt-card p {
+  line-height: 1.6;
+  margin-bottom: 0;
+}
+
+.tag {
+  display: inline-block;
+  margin-bottom: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.clickable-card {
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.clickable-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 22px 48px rgba(0,0,0,0.08);
+}
+
+.coming-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.coming-card h2 {
+  margin: 0;
+  color: #64748b;
+}
+
+.password-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 9999;
+  padding: 20px;
+}
+
+.password-modal {
+  width: min(460px, 100%);
+  background: #ffffff;
+  border-radius: 24px;
+  border: 1px solid #b9c7ff;
+  padding: 28px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.22);
+}
+
+.password-modal h2 {
+  margin: 0 0 10px;
+  color: #1428a0;
+}
+
+.password-modal input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px 14px;
+  border: 1px solid #b9c7ff;
+  border-radius: 14px;
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.password-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.password-actions button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.password-submit {
+  background: #1428a0;
+  color: #ffffff;
+}
+
+.password-cancel {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.password-error {
+  margin-top: 12px;
+  color: #dc2626;
+  font-weight: 700;
+  min-height: 20px;
+}
+
+@media (max-width: 1100px) {
+  .gpt-grid {
+    grid-template-columns: repeat(2, minmax(260px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .nav {
+    align-items: flex-start;
+  }
+
+  .nav .logo {
+    width: 100%;
+  }
+
+  .container {
+    padding: 28px 18px 50px;
+  }
+
+  .auth-box {
+    text-align: left;
+  }
+
+  .research-gpts-hero h1 {
+    font-size: 34px;
+  }
+
+  .gpt-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gpt-card {
+    padding: 22px;
+  }
+}
+</style>
 </head>
+
 <body>
-  <header>
-    <div class="wrap">
-      <span class="eyebrow">Paper_Talk Specialist GPTs</span>
-      <h1>Choose a domain GPT</h1>
-      <p class="lead">각 GPT는 같은 채팅 API를 쓰되, gpt_key로 지식 베이스를 분리합니다. static HTML이 없어도 이 Worker 내장 페이지가 안전하게 열립니다.</p>
+<header class="header">
+  <nav class="nav">
+    <a href="/" class="logo">Paper_Talk</a>
+    <a href="/">Home</a>
+    <a href="/research.html">Research Paper</a>
+    <a href="/study.html">Study Materials</a>
+    <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
+    <a href="/specialist-gpts.html">Specialist GPTs</a>
+    <a href="/community.html">Community</a>
+    <a href="/career.html">Career</a>
+  </nav>
+</header>
+
+<main class="container">
+
+  <div id="topLoginArea" class="auth-box" style="display:none;">
+    <span id="guestInfo">Sign in for free to use Specialist GPTs. </span>
+    <a id="loginBtn" class="signin-btn" href="/auth/google">
+      <span class="google-dot">G</span>
+      Sign in with Google
+    </a>
+  </div>
+
+  <div id="topLogoutArea" class="auth-box" style="display:none;">
+    <span id="userText"></span>
+    <a id="logoutBtn" class="signin-btn" href="/auth/logout">Logout</a>
+  </div>
+
+  <section class="research-gpts-hero">
+    <h1>Specialist GPTs</h1>
+    <p>
+      Private specialist GPT workspaces built on curated scientific knowledge.
+      Each GPT is designed around a specific research theme so researchers can ask focused scientific questions,
+      explore literature-based directions, and generate testable ideas.
+    </p>
+  </section>
+
+  <section>
+    <div class="gpt-grid">
+
+      <article
+        class="gpt-card clickable-card"
+        onclick="openPrivateNeuroGpt()"
+      >
+        <span class="tag">Private</span>
+        <h2>&#129504; Neuro-GPT</h2>
+        <p>from Sungmo Park</p>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
+      </article>
+
     </div>
-  </header>
-  <main class="wrap">
-    <section class="grid" aria-label="Specialist GPT list">
-      ${cardHtml}
-    </section>
-    <p class="note">Neuroscience GPT는 private 모드입니다. 접속 후 비밀번호를 입력하면 24시간 동안 쿠키로 인증됩니다.</p>
-  </main>
+  </section>
+
+</main>
+
+<div id="neuroPasswordOverlay" class="password-overlay">
+  <div class="password-modal">
+    <h2>Private Neuro-GPT</h2>
+    <p>Please enter the password to access Neuro-GPT.</p>
+
+    <input
+      id="neuroPasswordInput"
+      type="password"
+      placeholder="Enter password"
+      autocomplete="off"
+    >
+
+    <div class="password-actions">
+      <button class="password-submit" type="button" onclick="submitNeuroPassword()">Enter</button>
+      <button class="password-cancel" type="button" onclick="closeNeuroPassword()">Cancel</button>
+    </div>
+
+    <div id="neuroPasswordError" class="password-error"></div>
+  </div>
+</div>
+
+<script>
+function openPrivateNeuroGpt() {
+  const overlay = document.getElementById("neuroPasswordOverlay");
+  const input = document.getElementById("neuroPasswordInput");
+  const error = document.getElementById("neuroPasswordError");
+
+  error.textContent = "";
+  input.value = "";
+  overlay.style.display = "flex";
+
+  setTimeout(function() { input.focus(); }, 50);
+}
+
+function closeNeuroPassword() {
+  document.getElementById("neuroPasswordOverlay").style.display = "none";
+}
+
+async function submitNeuroPassword() {
+  const input = document.getElementById("neuroPasswordInput");
+  const error = document.getElementById("neuroPasswordError");
+  const password = input.value.trim();
+
+  error.textContent = "";
+
+  if (!password) {
+    error.textContent = "Please enter the password.";
+    input.focus();
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/neuro-gpt/access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ password: password })
+    });
+
+    const data = await res.json().catch(function() { return {}; });
+
+    if (res.ok && data && data.ok && data.authenticated) {
+      location.href = "/visium-gpt.html?gpt=neuroscience";
+      return;
+    }
+
+    error.textContent = data.error || "Incorrect password.";
+    input.value = "";
+    input.focus();
+  } catch {
+    error.textContent = "Password check failed. Please try again.";
+    input.focus();
+  }
+}
+
+document.addEventListener("keydown", function(event) {
+  const overlay = document.getElementById("neuroPasswordOverlay");
+  const isOpen = overlay && overlay.style.display === "flex";
+
+  if (!isOpen) return;
+
+  if (event.key === "Enter") {
+    submitNeuroPassword();
+  }
+
+  if (event.key === "Escape") {
+    closeNeuroPassword();
+  }
+});
+
+async function initAuthBox() {
+  const topLoginArea = document.getElementById("topLoginArea");
+  const topLogoutArea = document.getElementById("topLogoutArea");
+  const userText = document.getElementById("userText");
+
+  try {
+    const res = await fetch("/api/me", { cache: "no-store", credentials: "include" });
+    const data = await res.json();
+
+    if (data && data.ok && data.user) {
+      topLoginArea.style.display = "none";
+      topLogoutArea.style.display = "block";
+      userText.textContent = "Signed in as " + (data.user.name || data.user.email || "Paper_Talk user");
+    } else {
+      topLoginArea.style.display = "block";
+      topLogoutArea.style.display = "none";
+    }
+  } catch {
+    topLoginArea.style.display = "block";
+    topLogoutArea.style.display = "none";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", initAuthBox);
+</script>
+
 </body>
 </html>`);
 }
+
 
 function specialistGptChatPage(request) {
   const url = new URL(request.url);
@@ -10527,7 +10920,7 @@ function enforceStrictUserOutputFormat(answer, userMessage) {
 
 // v72 note: legacy normalizePaperTalkIntentLabel was removed to avoid duplicate top-level declaration.
 
-function detectPaperTalkUserIntent(userMessage, intent = null) {
+function detectPaperTalkUserIntent(userMessage, intent = null, hasContext = false) {
   const raw = String(userMessage || "");
   const questionType = normalizeQuestionType(intent?.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent?.answer_style || "concise_answer");
@@ -10639,7 +11032,7 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
   if (semanticIntent === "PAPER_SUMMARY") return "PAPER_SUMMARY";
   if (semanticIntent === "SOURCE_TRACE") return "SOURCE_TRACE";
 
-  const detectedIntent = detectPaperTalkUserIntent(userMessage, intent);
+  const detectedIntent = detectPaperTalkUserIntent(userMessage, intent, hasContext);
 
   switch (detectedIntent) {
     case "SOURCE_TRACE":
