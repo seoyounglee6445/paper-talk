@@ -1,7 +1,11 @@
+```js
 let currentUser = null;
 
 async function loadAuth() {
-  const res = await fetch("/api/me");
+  const res = await fetch("/api/me", {
+    cache: "no-store",
+    credentials: "include"
+  });
   const data = await res.json();
 
   currentUser = data.ok ? data.user : null;
@@ -28,7 +32,10 @@ async function loadPosts({ section, type = "", page = 1, target = "postList" }) 
   const params = new URLSearchParams({ section, page });
   if (type) params.set("type", type);
 
-  const res = await fetch("/api/posts?" + params.toString());
+  const res = await fetch("/api/posts?" + params.toString(), {
+    cache: "no-store",
+    credentials: "include"
+  });
   const data = await res.json();
 
   const box = document.getElementById(target);
@@ -96,6 +103,8 @@ function showEditForm(id) {
 async function updateMyPost(id) {
   const res = await fetch("/api/my/update", {
     method: "POST",
+    cache: "no-store",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       id,
@@ -122,6 +131,8 @@ async function deleteMyPost(id) {
 
   const res = await fetch("/api/my/delete", {
     method: "POST",
+    cache: "no-store",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id })
   });
@@ -145,6 +156,8 @@ async function submitPost(e) {
 
   const res = await fetch("/api/posts", {
     method: "POST",
+    cache: "no-store",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data)
   });
@@ -164,7 +177,11 @@ async function submitPost(e) {
 async function deleteAccount() {
   if (!confirm("Delete your account? This cannot be undone.")) return;
 
-  const res = await fetch("/api/delete-account", { method: "POST" });
+  const res = await fetch("/api/delete-account", {
+    method: "POST",
+    cache: "no-store",
+    credentials: "include"
+  });
   const data = await res.json();
 
   if (!data.ok) {
@@ -194,6 +211,7 @@ function labelType(type) {
     paper: "Research Paper",
     study_post: "Study",
     methodology: "Methodology",
+    methodology_page: "Methodology",
     blog: "Blog"
   };
 
@@ -213,3 +231,14 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
+function countTodayVisit() {
+  fetch("/api/public/visits/today", {
+    method: "GET",
+    cache: "no-store",
+    credentials: "include"
+  }).catch(() => {});
+}
+
+document.addEventListener("DOMContentLoaded", countTodayVisit);
+```
