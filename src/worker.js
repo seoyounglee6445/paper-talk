@@ -7115,6 +7115,24 @@ function isContinuationMoreRequest(message) {
   );
 }
 
+function isPaperHighlightOrShortSummaryFollowUp(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!text) return false;
+
+  // Short follow-ups such as "하이라이트를 줘", "한줄로", "영어로 줘",
+  // "아니 앞에는 논문 하이라이트를 한줄만 달라고" must keep the previous
+  // paper/topic context instead of being treated as a brand-new generic question.
+  const shortEnough = text.length <= 260;
+  const hasFollowUpTask = /(?:하이라이트|highlight|핵심|중요\s*부분|중요한\s*부분|takeaway|key\s*point|main\s*finding|summary|summari[sz]e|요약|한\s*줄|한줄|1\s*줄|one[-\s]?line|one\s*sentence|짧게|간단히|영어로|한국어로|한글로|번역|다시|rewrite|rephrase|앞에는|위에는|방금|아까|이\s*논문|그\s*논문|this\s+paper|that\s+paper|previous\s+paper|above)/i.test(text);
+  const hasNewLongScientificTitle = /[A-Za-z0-9][A-Za-z0-9:+,()\/[\] ._-]{45,}/.test(text);
+
+  return shortEnough && hasFollowUpTask && !hasNewLongScientificTitle;
+}
+
+function isContextualThreadFollowUpRequest(message) {
+  return isContinuationMoreRequest(message) || isPaperHighlightOrShortSummaryFollowUp(message);
+}
+
 function isExplicitSourceTraceRequest(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -7147,7 +7165,7 @@ function buildContinuationQuestionFromHistory({ currentMessage, recentMessages }
   const previousUserMessages = messages
     .filter(m => m.role === "user")
     .map(m => String(m.content || "").trim())
-    .filter(Boolean);
+    .filter(v => v && v !== current);
 
   const previousAssistantMessages = messages
     .filter(m => m.role === "assistant")
@@ -7174,7 +7192,7 @@ function buildContinuationQuestionFromHistory({ currentMessage, recentMessages }
     lastAssistant ? `직전 답변 요약/context: ${lastAssistant}` : "",
     `현재 사용자의 follow-up 요청: ${current}`,
     "",
-    "요청 해석: 사용자는 같은 주제에서 추가 후보/추가 설명을 원합니다. 이전 답변을 반복하지 말고, 같은 주제의 Paper_Talk DB 근거를 더 활용해 이어서 답하세요. 이전 요청이 논문 추천이었다면 추가 논문 추천으로 답하세요."
+    "요청 해석: 사용자는 같은 주제/같은 논문에 대한 follow-up을 하고 있습니다. 이전 논문 제목, 이전 사용자 질문, 직전 답변 context를 반드시 유지하세요. 현재 요청이 '하이라이트', '한줄', '영어로', '요약'이면 주제를 다시 묻지 말고 이전 논문/주제에 대해 그 형식 그대로 답하세요. 이전 답변을 반복하지 말고, 필요한 만큼만 이어서 답하세요. 이전 요청이 논문 추천이었다면 추가 논문 추천으로 답하세요."
   ].filter(Boolean).join("\\n");
 }
 
@@ -7188,6 +7206,10 @@ function inferContinuationOutputStyle({ currentMessage, previousTopic, previousA
     /(논문\s*추천|관련\s*논문|트렌디한\s*논문|추천\s*논문|paper recommendation|related papers|recent papers|latest papers)/i.test(combined)
   ) {
     return "LITERATURE_REVIEW";
+  }
+
+  if (isPaperHighlightOrShortSummaryFollowUp(currentMessage)) {
+    return "PAPER_SUMMARY";
   }
 
   if (isResearchDirectionRequest(previousTopic) || /(유망|앞으로|연구\s*방향|future direction|promising|research direction|아이디어|가설|gap)/i.test(combined)) {
@@ -7470,7 +7492,7 @@ async function gptChat(request, env) {
     let effectiveMessage = message;
     let forcedOutputStyle = "";
 
-    if (!isGuest && isContinuationMoreRequest(message)) {
+    if (!isGuest && isContextualThreadFollowUpRequest(message)) {
       recentMessagesForContinuation = await getRecentThreadMessagesForContinuation({
         threadId,
         userId: user.id,
@@ -7487,7 +7509,7 @@ async function gptChat(request, env) {
         .filter(m => m.role === "user")
         .map(m => String(m.content || "").trim())
         .reverse()
-        .find(v => v && !isContinuationMoreRequest(v) && !isExplicitSourceTraceRequest(v)) || "";
+        .find(v => v && v !== message && !isContextualThreadFollowUpRequest(v) && !isExplicitSourceTraceRequest(v)) || "";
 
       const previousAssistant = recentMessagesForContinuation
         .filter(m => m.role === "assistant")
@@ -7546,7 +7568,7 @@ async function gptChat(request, env) {
     await cancelRuntime.throwIfCanceled();
     const inferredIntent = await inferPaperTalkResearchIntentForChat(effectiveMessage, env, cancelRuntime);
     await cancelRuntime.throwIfCanceled();
-    const generalOrBroad = isLikelyGeneralQuestionFast(message) && !inferredIntent.is_research_related;
+    const generalOrBroad = isLikelyGeneralQuestionFast(effectiveMessage) && !inferredIntent.is_research_related;
     let context = [];
 
     // v56 research-purpose GPT policy:
