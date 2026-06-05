@@ -107,7 +107,9 @@
   <nav class="nav">
     <a href="/" class="logo">Paper_Talk Admin</a>
     <a href="/">Home</a>
-    <a href="/admin-specialist-gpts.html">Specialist Admin</a>
+    <a href="/admin.html">Site Admin</a>
+    <a href="/admin-gpt.html">GPT Usage</a>
+    <a href="/specialist-gpts.html">Specialist GPTs</a>
     <a href="/research.html">Research Paper</a>
     <a href="/study.html">Study Materials</a>
   </nav>
@@ -160,31 +162,31 @@
         </article>
 
         <article class="specialist-card disabled" data-gpt-card="mitochondria">
-          <span class="tag">Available</span>
-          <h3>🧬 Mitochondria GPT</h3>
-          <p class="small-note">Upload mitochondria papers, reviews, disease biology, and methods.</p>
-          <button onclick="selectSpecialistGpt('mitochondria')">Select</button>
+          <span class="tag coming-tag">Coming Soon</span>
+          <h3>Coming Soon</h3>
+          <p class="small-note">Separate knowledge upload slot reserved.</p>
+          <button onclick="selectSpecialistGpt('mitochondria')">Select Slot</button>
         </article>
 
         <article class="specialist-card disabled" data-gpt-card="single_cell">
-          <span class="tag">Available</span>
-          <h3>🧫 Single-cell GPT</h3>
-          <p class="small-note">Upload single-cell papers, protocols, benchmarking, and analysis guides.</p>
-          <button onclick="selectSpecialistGpt('single_cell')">Select</button>
+          <span class="tag coming-tag">Coming Soon</span>
+          <h3>Coming Soon</h3>
+          <p class="small-note">Separate knowledge upload slot reserved.</p>
+          <button onclick="selectSpecialistGpt('single_cell')">Select Slot</button>
         </article>
 
         <article class="specialist-card disabled" data-gpt-card="spatial_biology">
-          <span class="tag">Available</span>
-          <h3>🗺️ Spatial Biology GPT</h3>
-          <p class="small-note">Upload spatial transcriptomics, Visium, imaging, and tissue biology knowledge.</p>
-          <button onclick="selectSpecialistGpt('spatial_biology')">Select</button>
+          <span class="tag coming-tag">Coming Soon</span>
+          <h3>Coming Soon</h3>
+          <p class="small-note">Separate knowledge upload slot reserved.</p>
+          <button onclick="selectSpecialistGpt('spatial_biology')">Select Slot</button>
         </article>
 
         <article class="specialist-card disabled" data-gpt-card="cancer_genomics">
-          <span class="tag">Available</span>
-          <h3>🧪 Cancer Genomics GPT</h3>
-          <p class="small-note">Upload cancer genomics papers, tumor evolution, variants, cohorts, and methods.</p>
-          <button onclick="selectSpecialistGpt('cancer_genomics')">Select</button>
+          <span class="tag coming-tag">Coming Soon</span>
+          <h3>Coming Soon</h3>
+          <p class="small-note">Separate knowledge upload slot reserved.</p>
+          <button onclick="selectSpecialistGpt('cancer_genomics')">Select Slot</button>
         </article>
 
       </div>
@@ -198,20 +200,11 @@
 
       <form onsubmit="importSpecialistFullTextFile(event)">
         <div class="full-row">
-          <label>Optional Paper Title or Article URL to Match</label>
-          <input id="specialistFullTextMatch" placeholder="Optional. Leave blank to use each PDF file name.">
-        </div>
-
-        <div class="full-row">
-          <label>Optional PDF Link</label>
-          <input id="specialistFullTextPdfLink" placeholder="Optional PDF/file link">
-        </div>
-
-        <div class="full-row">
-          <label>Specialist GPT PDF / TXT File(s)</label>
+          <label id="specialistUploadFileLabel">Upload PDF / TXT File(s)</label>
           <input type="file" id="specialistFullTextFiles" accept=".pdf,.txt,text/plain,application/pdf" multiple required>
           <p class="small-note">
-            Text-based PDFs work best. If a scanned PDF has no readable text, OCR it first.
+            Select a Specialist GPT above, then upload only PDF/TXT files for that GPT.
+            The file name will be used as the paper title automatically.
           </p>
         </div>
 
@@ -245,10 +238,10 @@ let selectedGptKey = "neuroscience";
 
 const GPT_LABELS = {
   neuroscience: "Neuroscience GPT",
-  mitochondria: "Mitochondria GPT",
-  single_cell: "Single-cell GPT",
-  spatial_biology: "Spatial Biology GPT",
-  cancer_genomics: "Cancer Genomics GPT"
+  mitochondria: "Coming Soon",
+  single_cell: "Coming Soon",
+  spatial_biology: "Coming Soon",
+  cancer_genomics: "Coming Soon"
 };
 
 function escapeHtml(value) {
@@ -379,8 +372,8 @@ function selectSpecialistGpt(gptKey) {
   });
 
   const label = GPT_LABELS[gptKey] || gptKey;
-  document.getElementById("uploadTitle").textContent = `Upload Knowledge to ${label}`;
-  document.getElementById("selectedGptText").textContent = `Selected GPT key: ${gptKey}`;
+  document.getElementById("uploadTitle").textContent = `Upload PDF/TXT to ${label}`;
+  document.getElementById("selectedGptText").textContent = `Selected GPT: ${label} (${gptKey})`;
 
   document.getElementById("storedSpecialistFullTextStatus").textContent = "";
   document.getElementById("storedSpecialistFullTextList").innerHTML = "";
@@ -515,14 +508,10 @@ async function importSpecialistFullTextFile(e) {
   const key = requireSpecialistAdminKey();
   if (!key) return;
 
-  const matchInput = document.getElementById("specialistFullTextMatch");
-  const pdfLinkInput = document.getElementById("specialistFullTextPdfLink");
   const fileInput = document.getElementById("specialistFullTextFiles");
   const status = document.getElementById("specialistFullTextStatus");
   const resultList = document.getElementById("specialistFullTextResultList");
 
-  const globalMatchValue = (matchInput.value || "").trim();
-  const pdfLink = (pdfLinkInput.value || "").trim();
   const files = Array.from(fileInput.files || []);
 
   if (!files.length) {
@@ -573,8 +562,7 @@ async function importSpecialistFullTextFile(e) {
 
       seenHashes.set(textHash, fileName);
 
-      const matchValue = globalMatchValue || titleFromFullTextFileName(fileName);
-      const isUrl = /^https?:\/\//i.test(matchValue);
+      const title = titleFromFullTextFileName(fileName);
 
       if (status) status.textContent = `Uploading ${index + 1}/${files.length}: ${fileName}`;
 
@@ -582,9 +570,9 @@ async function importSpecialistFullTextFile(e) {
         key,
         payload: {
           gptKey: selectedGptKey,
-          title: isUrl ? "" : matchValue,
-          sourceUrl: isUrl ? matchValue : "",
-          pdfLink,
+          title,
+          sourceUrl: "",
+          pdfLink: "",
           fileName,
           sourceType: isPdf ? "pdf" : "text",
           text: uploadText
