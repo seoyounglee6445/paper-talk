@@ -280,7 +280,7 @@ function openPrivateNeuroGpt() {
   const saved = sessionStorage.getItem("neuro_gpt_private_access");
 
   if (saved === "ok") {
-    location.href = "/visium-gpt.html?gpt=neuro_sungmo";
+    location.href = "/visium-gpt.html?gpt=neuroscience";
     return;
   }
 
@@ -290,7 +290,7 @@ function openPrivateNeuroGpt() {
 
   if (password === NEURO_PRIVATE_PASSWORD) {
     sessionStorage.setItem("neuro_gpt_private_access", "ok");
-    location.href = "/visium-gpt.html?gpt=neuro_sungmo";
+    location.href = "/visium-gpt.html?gpt=neuroscience";
   } else {
     alert("Incorrect password.");
   }
