@@ -1,7 +1,7 @@
 /*
-Paper_Talk Worker v79 GPT-4o unified + quota 50 + practical tools routing patch
+Paper_Talk Worker v80 GPT-4o unified + quota 50 + automatic method/package extraction routing patch
 - Long version history comments removed to reduce file size.
-- LLM-based intent/domain planning for literature trend vs research idea routing.
+- LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
 - User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, pipelines, methods, workflows, or analysis options, answer with a practical tool list first before literature trends. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
 - Practical tool questions: if the user asks for tools/software/packages/pipelines/methods/workflows/analysis options, answer with a practical tool list first. For scRNA-seq + scATAC-seq integration, include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
 - Multilingual behavior: detect and preserve the user's language across the entire answer.
@@ -5568,10 +5568,41 @@ Plain text only.`
 
 function normalizePaperTalkIntentLabel(value) {
   const v = String(value || "").trim().toUpperCase().replace(/[^A-Z_]/g, "");
-  if (["LITERATURE_REVIEW", "RESEARCH_IDEA", "CONCEPT", "VALIDATION", "COMPARISON", "PAPER_SUMMARY", "SOURCE_TRACE", "GENERAL"].includes(v)) return v;
+
+  if ([
+    "LITERATURE_REVIEW",
+    "RESEARCH_IDEA",
+    "METHOD_EXTRACTION",
+    "CONCEPT",
+    "VALIDATION",
+    "COMPARISON",
+    "PAPER_SUMMARY",
+    "SOURCE_TRACE",
+    "GENERAL"
+  ].includes(v)) return v;
+
   if (v === "LITERATURE" || v === "REVIEW" || v === "TREND" || v === "TRENDS") return "LITERATURE_REVIEW";
   if (v === "RESEARCH" || v === "RESEARCH_DIRECTION" || v === "RESEARCH_INSIGHT" || v === "IDEA" || v === "PROJECT_IDEA") return "RESEARCH_IDEA";
-  if (v === "METHOD" || v === "EXPLANATION") return "CONCEPT";
+
+  // v80: practical analysis-method / package / pipeline requests are not concept explanations.
+  // They should be routed to a paper-grounded method extraction answer.
+  if ([
+    "METHOD",
+    "METHODS",
+    "METHODOLOGY",
+    "ANALYSIS_METHOD",
+    "ANALYSIS_METHODS",
+    "PRACTICAL_METHOD",
+    "PRACTICAL_METHODS",
+    "METHOD_EXTRACTION",
+    "TOOL_EXTRACTION",
+    "PACKAGE_EXTRACTION",
+    "PIPELINE_EXTRACTION",
+    "SOFTWARE_EXTRACTION",
+    "WORKFLOW_EXTRACTION"
+  ].includes(v)) return "METHOD_EXTRACTION";
+
+  if (v === "EXPLANATION") return "CONCEPT";
   return "GENERAL";
 }
 
@@ -5592,6 +5623,7 @@ function heuristicPaperTalkPlanner(message) {
 
   let literatureScore = 0;
   let ideaScore = 0;
+  let methodScore = 0;
   let validationScore = 0;
   let comparisonScore = 0;
   let conceptScore = 0;
@@ -5599,14 +5631,22 @@ function heuristicPaperTalkPlanner(message) {
   const add = (regex, score, bucket) => { if (regex.test(text)) bucket(score); };
   add(/(trend|trendy|hot|latest|recent|emerging|state of the art|sota|요즘|최근|최신|트렌드|트렌디|핫한|뜨는|유행|동향|읽어볼|볼 만한|중요한 연구|대표 논문|논문 추천|literature|papers? to read|recommend.*papers?)/i, 3, s => literatureScore += s);
   add(/(what research|project idea|research idea|future direction|promising|hypothesis|뭘 연구|어떤 연구|연구.*아이디어|연구.*주제|연구.*방향|앞으로|향후|유망|가설|할 수 있을까|하면 좋을까|접목)/i, 3, s => ideaScore += s);
+
+  // Fallback only. Primary routing is done by the LLM planner below.
+  // This catches obvious package/tool/method/workflow questions when OpenAI intent inference is unavailable.
+  add(/(package|packages|software|tool|tools|library|libraries|method|methods|methodology|pipeline|workflow|algorithm|implementation|code|model|models|패키지|툴|도구|소프트웨어|방법론|분석법|분석 방법|파이프라인|워크플로우|알고리즘|구현|모델)/i, 4, s => methodScore += s);
+  add(/(논문|paper|papers|study|studies).{0,60}(썼|사용|used|applied|implemented|분석|방법|패키지|도구|툴|software|method|package|tool|pipeline|workflow)/i, 5, s => methodScore += s);
+
   add(/(validate|validation|experiment|검증|실험 설계|확인하려면|어떻게 증명)/i, 3, s => validationScore += s);
   add(/(compare|comparison|versus| vs |차이|비교|다른 점)/i, 3, s => comparisonScore += s);
   add(/(what is|explain|definition|개념|설명|무엇|뭐야|정의)/i, 2, s => conceptScore += s);
 
   let paperTalkIntent = "GENERAL";
-  const best = Math.max(literatureScore, ideaScore, validationScore, comparisonScore, conceptScore);
+  const best = Math.max(literatureScore, ideaScore, methodScore, validationScore, comparisonScore, conceptScore);
   if (best > 0) {
-    if (literatureScore === best) paperTalkIntent = "LITERATURE_REVIEW";
+    // Tie-breaker: if the user is asking what was actually used, method extraction wins over literature/trend.
+    if (methodScore === best) paperTalkIntent = "METHOD_EXTRACTION";
+    else if (literatureScore === best) paperTalkIntent = "LITERATURE_REVIEW";
     else if (ideaScore === best) paperTalkIntent = "RESEARCH_IDEA";
     else if (validationScore === best) paperTalkIntent = "VALIDATION";
     else if (comparisonScore === best) paperTalkIntent = "COMPARISON";
@@ -5648,6 +5688,14 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
     queries.push("recent review trend state of the art important papers");
   }
 
+  if (paperTalkIntent === "METHOD_EXTRACTION") {
+    queries.push(
+      "analysis method package software tool workflow pipeline algorithm implementation benchmark",
+      "single cell spatial transcriptomics scRNA scATAC integration package method tool pipeline",
+      "used methods software packages tools models algorithms in papers"
+    );
+  }
+
   if (paperTalkIntent === "RESEARCH_IDEA") {
     queries.push("research gap future direction hypothesis validation project idea");
   }
@@ -5664,6 +5712,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     question_type:
       heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
       heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" :
+      heuristic.paperTalkIntent === "METHOD_EXTRACTION" ? "METHOD" :
       heuristic.paperTalkIntent === "VALIDATION" ? "VALIDATION" :
       heuristic.paperTalkIntent === "COMPARISON" ? "COMPARISON" :
       heuristic.paperTalkIntent === "CONCEPT" ? "CONCEPT" :
@@ -5673,8 +5722,9 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     answer_style:
       heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "paper_recommendation_by_theme" :
       heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "actionable_project_ideas" :
+      heuristic.paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" :
       "calm_research_mentor",
-    should_generate_hypotheses: heuristic.paperTalkIntent === "RESEARCH_IDEA" || /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text),
+    should_generate_hypotheses: heuristic.paperTalkIntent === "RESEARCH_IDEA" || (heuristic.paperTalkIntent !== "METHOD_EXTRACTION" && /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text)),
     should_use_db_evidence: !isLikelyGeneralQuestionFast(text) || heuristic.paperTalkIntent !== "GENERAL",
     interpreted_intent: text.slice(0, 500),
     key_entities: [],
@@ -5705,14 +5755,18 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
             role: "system",
             content: [
               "You are the semantic intent, domain, and retrieval planner for Paper_Talk, a DB-grounded biomedical research GPT.",
-              "Do not rely on fixed keywords. Interpret the user's actual intent from the full sentence.",
+              "Do not rely on fixed keywords. Infer the user's real task from the whole sentence and conversation context.",
               "Return strict JSON only.",
-              "paper_talk_intent must be one of: LITERATURE_REVIEW, RESEARCH_IDEA, CONCEPT, VALIDATION, COMPARISON, PAPER_SUMMARY, SOURCE_TRACE, GENERAL.",
-              "Use LITERATURE_REVIEW when the user asks about trends, hot topics, latest studies, important papers, state-of-the-art, what to read, representative papers, or paper recommendations, even if the word paper is not explicit.",
+              "paper_talk_intent must be one of: LITERATURE_REVIEW, RESEARCH_IDEA, METHOD_EXTRACTION, CONCEPT, VALIDATION, COMPARISON, PAPER_SUMMARY, SOURCE_TRACE, GENERAL.",
+              "Use LITERATURE_REVIEW only when the user wants papers to read, recent trends, hot topics, representative studies, paper recommendations, or field overview.",
+              "Use METHOD_EXTRACTION when the user wants practical analysis methods, packages, software, tools, algorithms, models, workflows, pipelines, or wants to know what methods were actually used in papers.",
+              "Important: if the user asks what papers used, what researchers used, what analysis was done, which package/method/tool/pipeline is used, or what can be used for actual data analysis, choose METHOD_EXTRACTION, not LITERATURE_REVIEW.",
+              "Important: a question can mention papers, 논문, literature, or studies and still be METHOD_EXTRACTION if the goal is extracting methods/tools rather than recommending papers.",
               "Use RESEARCH_IDEA when the user asks what research can be done, project ideas, future directions, hypotheses, grant ideas, or actionable research topics.",
               "primary_domain must be one of: SPATIAL_BIOLOGY, CANCER_GENOMICS, SINGLE_CELL, IMMUNOLOGY, AGING, MULTIOMICS, AI_METHOD, GENERAL.",
               "If spatial/deep learning/cancer genomics appears, infer adjacent concepts such as spatial transcriptomics, histology, tumor microenvironment, multimodal AI, GNN, transformer, foundation model, immune niche, tumor evolution, and drug response.",
               "Create 3-4 concise English biomedical retrieval_queries for Paper_Talk DB.",
+              "For METHOD_EXTRACTION, retrieval_queries should include method-oriented terms such as analysis method, package, software, workflow, pipeline, algorithm, model, implementation, benchmark, and the relevant assay/domain.",
               "Return keys: is_research_related, question_type, paper_talk_intent, primary_domain, answer_style, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
             ].join(" ")
           },
@@ -5741,15 +5795,16 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
       primary_domain: primaryDomain,
       is_research_related: Boolean(parsed.is_research_related) || paperTalkIntent !== "GENERAL",
       should_use_db_evidence: Boolean(parsed.should_use_db_evidence || parsed.is_research_related || paperTalkIntent !== "GENERAL"),
-      should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses || paperTalkIntent === "RESEARCH_IDEA"),
+      should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses || paperTalkIntent === "RESEARCH_IDEA") && paperTalkIntent !== "METHOD_EXTRACTION",
       question_type:
         paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
         paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" :
+        paperTalkIntent === "METHOD_EXTRACTION" ? "METHOD" :
         paperTalkIntent === "VALIDATION" ? "VALIDATION" :
         paperTalkIntent === "COMPARISON" ? "COMPARISON" :
         paperTalkIntent === "CONCEPT" ? "CONCEPT" :
         (parsed.question_type || fallback.question_type),
-      answer_style: parsed.answer_style || fallback.answer_style,
+      answer_style: paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" : (parsed.answer_style || fallback.answer_style),
       key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v || "").trim()).filter(Boolean).slice(0, 12) : [],
       retrieval_queries: queries.length ? queries.slice(0, 4) : buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent),
       gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v || "").trim()).filter(Boolean).slice(0, 8) : [],
@@ -6379,7 +6434,7 @@ async function gptChat(request, env) {
 
     const finalOutputStyle = forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: autoIntent, hasContext: context.length > 0 });
 
-    if (!isSupportingPaperFollowUp(message) && !["LITERATURE_REVIEW", "RESEARCH_INSIGHT", "RESEARCH_SYNTHESIS"].includes(finalOutputStyle)) {
+    if (!isSupportingPaperFollowUp(message) && !["LITERATURE_REVIEW", "METHOD_EXTRACTION", "RESEARCH_INSIGHT", "RESEARCH_SYNTHESIS"].includes(finalOutputStyle)) {
       assistantText = hideAccidentalPaperListFromNormalAnswer(assistantText);
       assistantText = hideInternalEvidenceLeaksFromNormalAnswer(assistantText);
     }
@@ -9148,13 +9203,14 @@ ${String(userMessage || "").slice(0, 1200)}
 
 function normalizeQuestionType(value) {
   const label = String(value || "").trim().toUpperCase();
-  if (["CONCEPT", "RESEARCH", "VALIDATION", "LITERATURE", "GENERAL"].includes(label)) return label;
+  if (["CONCEPT", "RESEARCH", "METHOD", "VALIDATION", "LITERATURE", "GENERAL"].includes(label)) return label;
+  if (["METHODS", "METHODOLOGY", "ANALYSIS_METHOD", "ANALYSIS_METHODS", "PRACTICAL_METHOD"].includes(label)) return "METHOD";
   return "GENERAL";
 }
 
 function normalizeAnswerStyle(value) {
   const label = String(value || "").trim().toLowerCase();
-  if (["educational_overview", "hypothesis_generation", "validation_plan", "literature_review", "concise_answer"].includes(label)) return label;
+  if (["educational_overview", "hypothesis_generation", "validation_plan", "literature_review", "practical_method_table", "method_extraction", "concise_answer"].includes(label)) return label;
   return "concise_answer";
 }
 
@@ -9164,10 +9220,12 @@ function inferQuestionTypeHeuristically(userMessage) {
   const conceptPattern = /(what is|what are|define|definition|meaning|overview|explain|introduction to|개념|정의|뜻|무슨 뜻|뭐야|뭐지|무엇|설명|개요)/i;
   const researchPattern = /(research idea|hypothesis|hypotheses|knowledge gap|gap|future direction|what should i study|study idea|project idea|연구 주제|연구 아이디어|가설|연구 방향|뭘 연구|무슨 연구|future work)/i;
   const validationPattern = /(validate|validation|experiment|experimental design|protocol|control|statistic|analysis plan|test this|검증|실험|프로토콜|대조군|분석 방법|어떻게 확인)/i;
+  const methodPattern = /(package|packages|software|tool|tools|method|methods|pipeline|workflow|algorithm|implementation|model|패키지|툴|도구|방법론|분석법|파이프라인|워크플로우|알고리즘|구현|모델)/i;
   const literaturePattern = /(paper|papers|literature|review|summarize|related studies|논문|문헌|리뷰|요약|관련 연구)/i;
 
   if (researchPattern.test(message)) return "RESEARCH";
   if (validationPattern.test(message)) return "VALIDATION";
+  if (methodPattern.test(message)) return "METHOD";
   if (literaturePattern.test(message)) return "LITERATURE";
   if (conceptPattern.test(message)) return "CONCEPT";
   return "GENERAL";
@@ -9206,6 +9264,7 @@ function makeFallbackResearchIntent(userMessage) {
   const answerStyle =
     questionType === "CONCEPT" ? "educational_overview" :
     questionType === "RESEARCH" ? "hypothesis_generation" :
+    questionType === "METHOD" ? "practical_method_table" :
     questionType === "VALIDATION" ? "validation_plan" :
     questionType === "LITERATURE" ? "literature_review" :
     "concise_answer";
@@ -9653,6 +9712,16 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
     return "SOURCE_TRACE";
   }
 
+  const semanticIntent = normalizePaperTalkIntentLabel(intent?.paper_talk_intent || "");
+  if (semanticIntent === "METHOD_EXTRACTION" || questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") {
+    return "METHOD_EXTRACTION";
+  }
+
+  // Fallback only. The main route should come from the LLM intent planner above.
+  if (/(논문|paper|papers|study|studies).{0,60}(썼|사용|used|applied|implemented|분석|방법|패키지|도구|툴|software|method|package|tool|pipeline|workflow)|(?:package|packages|software|tool|tools|method|methods|pipeline|workflow|algorithm|model|패키지|툴|도구|방법론|분석법|파이프라인|워크플로우|알고리즘|모델)/i.test(raw)) {
+    return "METHOD_EXTRACTION";
+  }
+
   if (isPaperRecommendationRequest(raw)) {
     return "LITERATURE_REVIEW";
   }
@@ -9687,6 +9756,7 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
 
   if (questionType === "LITERATURE" || answerStyle === "literature_review") return "LITERATURE_REVIEW";
   if (questionType === "RESEARCH" || answerStyle === "hypothesis_generation") return "RESEARCH_DIRECTION";
+  if (questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") return "METHOD_EXTRACTION";
   if (questionType === "VALIDATION" || answerStyle === "validation_plan") return "VALIDATION_PLAN";
   if (questionType === "CONCEPT" || answerStyle === "educational_overview") return "CONCEPT_EXPLANATION";
 
@@ -9696,6 +9766,7 @@ function detectPaperTalkUserIntent(userMessage, intent = null) {
 function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
   const semanticIntent = normalizePaperTalkIntentLabel(intent?.paper_talk_intent || "");
 
+  if (semanticIntent === "METHOD_EXTRACTION") return "METHOD_EXTRACTION";
   if (semanticIntent === "LITERATURE_REVIEW") return "LITERATURE_REVIEW";
   if (semanticIntent === "RESEARCH_IDEA") return "RESEARCH_INSIGHT";
   if (semanticIntent === "VALIDATION") return "VALIDATION_PLAN";
@@ -9711,6 +9782,8 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
       return "SOURCE_TRACE";
     case "LITERATURE_REVIEW":
       return "LITERATURE_REVIEW";
+    case "METHOD_EXTRACTION":
+      return "METHOD_EXTRACTION";
     case "FOLLOW_UP_MORE":
       return "FOLLOW_UP_MORE";
     case "RESEARCH_DIRECTION":
@@ -9722,7 +9795,7 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
     case "COMPARISON":
       return "COMPARISON";
     case "METHOD_EXPLANATION":
-      return "METHOD_EXPLANATION";
+      return "METHOD_EXTRACTION";
     case "PAPER_SUMMARY":
       return "PAPER_SUMMARY";
     case "GENERAL_RESEARCH":
@@ -9785,6 +9858,48 @@ GENERAL READABILITY RULES
 - Do not invent papers, authors, years, datasets, biomarkers, or conclusions.
 - If DB evidence is used internally but the user did not ask for sources, do not expose paper labels or source tracing.
   `.trim();
+
+  if (outputStyle === "METHOD_EXTRACTION") {
+    return `
+${common}
+
+AUTOMATIC STYLE: PAPER-GROUNDED PRACTICAL METHOD EXTRACTION
+
+The user is not asking for trends.
+The user wants practical analysis methods, packages, software, tools, models, algorithms, workflows, or pipelines that are actually usable for research.
+
+Core rule:
+Do not answer as literature trends.
+Do not recommend papers as reading material unless the user explicitly asks for papers to read.
+Extract methods/packages/tools from the retrieved Paper_Talk DB context and convert them into a practical analysis guide.
+
+Preferred answer structure:
+1. Start with a direct sentence in the user's language: "이 질문은 트렌드보다 실제 분석에 쓸 수 있는 method/package 관점으로 보는 게 맞습니다."
+2. Provide a compact table grouped by analysis task:
+   - 분석 목적
+   - package / method / tool
+   - 논문에서 쓰인 맥락 or DB-supported evidence
+   - 어떤 데이터에 적합한지
+   - 지금 바로 쓴다면 추천도
+3. Group by practical analysis task, for example:
+   - preprocessing / QC
+   - clustering / annotation
+   - scRNA-seq + scATAC-seq integration
+   - spatial domain / niche detection
+   - cell-cell interaction
+   - trajectory / RNA velocity
+   - multi-omics integration
+   - deep learning / foundation model
+   - visualization / validation
+4. If the retrieved DB context explicitly mentions a package or method, mark it as DB-supported.
+5. If a useful method is general knowledge but not explicit in the retrieved DB context, label it clearly as "general practical recommendation, not directly confirmed in retrieved DB excerpt."
+6. You may show retrieved paper titles because the user asked what papers used.
+7. Never invent package names, paper titles, datasets, sample sizes, or implementation details.
+8. End with a short "실제로 시작한다면" recommendation: 3-5 packages/methods to try first.
+
+Return the answer in the user's language.
+    `.trim();
+  }
 
   if (outputStyle === "LITERATURE_REVIEW") {
     return `
@@ -9884,7 +9999,8 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
     "VALIDATION_PLAN",
     "CONCEPT_EXPLANATION",
     "COMPARISON",
-    "METHOD_EXPLANATION"
+    "METHOD_EXPLANATION",
+    "METHOD_EXTRACTION"
   ]);
 
   if (sectionStyles.has(outputStyle)) {
@@ -9911,16 +10027,17 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
 }
 
 function buildStrictInternalEvidenceInstruction({ outputStyle, hasContext }) {
-  const sourceRequested = outputStyle === "SOURCE_TRACE" || outputStyle === "LITERATURE_REVIEW";
+  const sourceRequested = ["SOURCE_TRACE", "LITERATURE_REVIEW", "METHOD_EXTRACTION"].includes(outputStyle);
 
   if (sourceRequested) {
     return `
 SOURCE DISCLOSURE MODE
 
-The user explicitly asked for papers, literature, references, or sources.
+The user explicitly asked for papers, literature, references, sources, or paper-grounded methods.
 You may show only retrieved Paper_Talk DB titles and source metadata.
 For literature recommendation questions, organize titles under trend/theme sections rather than paper labels.
-Never invent papers from outside the DB.
+For METHOD_EXTRACTION, organize by package/tool/method and analysis purpose, not by trend.
+Never invent papers, packages, datasets, methods, or implementation details outside the retrieved DB context.
     `.trim();
   }
 
@@ -10066,7 +10183,7 @@ async function normalizeFinalAnswerToUserIntentStyle({ answer, userMessage, outp
   // Only explicit paper/literature/source modes may expose paper titles or paper labels.
   // Research idea / research insight answers should use DB evidence internally and show
   // project-level synthesis only. If the user later asks for sources, SOURCE_TRACE will show them.
-  if (["SOURCE_TRACE", "LITERATURE_REVIEW"].includes(outputStyle)) {
+  if (["SOURCE_TRACE", "LITERATURE_REVIEW", "METHOD_EXTRACTION"].includes(outputStyle)) {
     return formatAnswerForReadability(original, outputStyle);
   }
 
@@ -10109,11 +10226,11 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const shouldGenerateHypotheses = Boolean(intent.should_generate_hypotheses);
   const shouldUseDbEvidence =
     Boolean(intent.should_use_db_evidence) ||
-    ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType);
+    ["RESEARCH", "METHOD", "VALIDATION", "LITERATURE"].includes(questionType);
 
   const isResearchRelated =
     shouldUseDbEvidence ||
-    ["RESEARCH", "VALIDATION", "LITERATURE"].includes(questionType) ||
+    ["RESEARCH", "METHOD", "VALIDATION", "LITERATURE"].includes(questionType) ||
     /paper_talk|db|논문|연구|literature|paper|papers|rna velocity|spatial|single-cell|single cell|genomics|cancer/i.test(String(userMessage || ""));
 
   const dbTitles = hasContext
@@ -10300,7 +10417,8 @@ Forbidden section labels unless the user explicitly asks for them:
 - Suggested next study or validation
 
 Paper/source visibility rule:
-- In LITERATURE_REVIEW and SOURCE_TRACE modes, you may show retrieved DB paper titles.
+- In LITERATURE_REVIEW, SOURCE_TRACE, and METHOD_EXTRACTION modes, you may show retrieved DB paper titles.
+- In METHOD_EXTRACTION mode, show paper titles only to support a listed package/tool/method and organize by analysis purpose, not by trend.
 - In normal RESEARCH_INSIGHT, RESEARCH_SYNTHESIS, VALIDATION, CONCEPT, COMPARISON, or GENERAL answers, do NOT show 논문 A/B/C labels, paper titles, URLs, journals, authors, DOI/PMID, or source lists.
 - For broad research-direction questions, synthesize across retrieved DB papers silently and give project-level research ideas.
 - If the user later asks for sources/evidence/references in any language, SOURCE_TRACE will show the stored sources separately.
@@ -10310,14 +10428,14 @@ Adaptive format rules:
 - For research idea / direction answers, generate project-level suggestions rather than paper-level summaries.
 - Each strong project idea should include, when useful: Project, Input, Model/Method, Research Question, Expected Output, Novelty, and Validation/Publication Potential.
 - Do not create paper labels for normal research idea answers.
-- If the user asks for paper comparison or paper recommendation, compare/show retrieved DB titles clearly. A compact table is allowed only if the user asks for comparison or if it truly improves clarity.
+- If the user asks for paper comparison, paper recommendation, or paper-grounded method/package extraction, compare/show retrieved DB titles clearly. A compact table is allowed when it improves clarity.
 - If the user asks for a concept, explain simply first, then connect it to cancer genomics, single-cell, spatial, or bioinformatics.
 - If the user asks for validation, give a practical plan, but keep the tone explanatory rather than checklist-like.
 - If the user asks a broad question, answer with a natural explanation rather than a database report.
 
 Paper_Talk DB rules:
 - Publisher URL reading is server-side from the Cloudflare Worker, not through the user's browser/IP/cookies. Do not imply that the user's institutional access lets the Worker read paywalled full text. For full-text-level answers, the full text must be stored in Paper_Talk DB, uploaded as PDF/TXT, or openly accessible to the Worker.
-- For research-related questions, literature questions, validation questions, paper comparison questions, and any question mentioning Paper_Talk DB, DB, 논문, or 연구, use the retrieved Paper_Talk DB context as the evidence source.
+- For research-related questions, method/package extraction questions, literature questions, validation questions, paper comparison questions, and any question mentioning Paper_Talk DB, DB, 논문, or 연구, use the retrieved Paper_Talk DB context as the evidence source.
 - Do not mix outside papers into the evidence.
 - Do not invent paper titles, authors, years, journals, sample sizes, datasets, mechanisms, biomarkers, or conclusions.
 - If DB evidence is thin, still answer the user's scientific question first in a helpful way.
@@ -10378,6 +10496,15 @@ Detected output style: ${outputStyle}
 Detected semantic intent: ${intent.paper_talk_intent || ""}
 Detected domain: ${intent.primary_domain || ""}
 
+If outputStyle is METHOD_EXTRACTION:
+- The user wants practical packages/methods/tools actually used in papers.
+- Do NOT answer with trends.
+- Extract method/package/tool names from retrieved DB excerpts.
+- Use a compact table grouped by analysis task.
+- Include exact retrieved DB paper titles only when they support a listed method.
+- If a method/package is not explicitly present in DB context, mark it as general practical recommendation, not DB-supported.
+- End with 3-5 practical methods/packages to try first.
+
 If outputStyle is LITERATURE_REVIEW:
 - Use a TREND-FIRST format, not a paper-by-paper summary.
 - Start by saying that the topic can be read through 3-5 current trends.
@@ -10418,8 +10545,8 @@ Never answer a paper recommendation request with only a field summary.
     {
       role: "system",
       content: hasContext
-        ? (["LITERATURE_REVIEW", "SOURCE_TRACE"].includes(outputStyle)
-          ? "A DB context is present. The user explicitly asked for papers/literature/sources, so you may show retrieved EXACT_DB_TITLE values. For LITERATURE_REVIEW, organize papers by trend/theme using the user's language for all section titles. Do not use paper labels. Do not use external papers."
+        ? (["LITERATURE_REVIEW", "SOURCE_TRACE", "METHOD_EXTRACTION"].includes(outputStyle)
+          ? "A DB context is present. The user explicitly asked for papers/literature/sources or paper-grounded methods, so you may show retrieved EXACT_DB_TITLE values. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method, not by trend. Do not use paper labels. Do not use external papers as DB evidence."
           : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources. Answer the user's question first in a friendly explanatory way.")
         : "No DB context is present. Do not start with a Paper_Talk DB retrieval-failure sentence unless the user explicitly asked for sources/evidence. For ordinary concept, algorithm, method, or research-idea questions, answer the scientific question directly from general knowledge. Do not invent paper titles, authors, years, journals, sample sizes, or datasets."
     },
@@ -10492,6 +10619,25 @@ Selected mode: CONCEPT EXPLANATION.
 Explain clearly in the user's language, like a senior research mentor.
 Use examples when useful.
 Do not force paper lists or research gaps unless asked.
+    `.trim();
+  }
+
+  if (questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") {
+    return `
+Selected mode: PAPER-GROUNDED METHOD / PACKAGE EXTRACTION.
+
+The user wants practical analysis methods, software, packages, algorithms, workflows, or pipelines, especially what papers actually used.
+Use retrieved Paper_Talk DB evidence to extract methods and packages.
+Do not answer as trend recommendation.
+Do not recommend papers as reading material unless the user asks.
+Show exact DB paper titles only when they support a listed method/package.
+If DB context is thin, clearly separate DB-supported methods from general practical recommendations.
+
+Recommended structure:
+- Direct answer in the user's language.
+- Compact table grouped by analysis task.
+- For each method/package: what it is used for, what data it fits, and whether the retrieved DB explicitly supports it.
+- End with 3-5 practical methods/packages to try first.
     `.trim();
   }
 
