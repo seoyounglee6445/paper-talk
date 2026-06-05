@@ -8,16 +8,12 @@ OPENAI_MODEL = "gpt-4o"
 [assets]
 directory = "./public"
 
-# 기본 Paper_Talk 사이트 DB
-# 현재 worker.js가 env.DB를 사용하므로 이 binding은 유지해야 합니다.
 [[d1_databases]]
 binding = "DB"
 database_name = "paper-talk-db"
 database_id = "5b33c4d2-9d1d-47f0-993f-a694c2b05d8a"
 
-# Neuro-GPT 전용 DB
-# 단, worker.js에서 실제로 DB_NEUROSCIENCE를 사용하도록 수정해야 완전 분리됩니다.
 [[d1_databases]]
 binding = "DB_NEUROSCIENCE"
 database_name = "neuro-gpt-db"
-database_id = "여기에_neuro-gpt-db의_실제_database_id"
+database_id = "실제_neuro_gpt_db_id"
