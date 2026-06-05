@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v85 GPT-4o unified + quota 50 + cancelable chat + keyword paper-grounded pipeline routing patch
+Paper_Talk Worker v86 GPT-4o unified + quota users-table + related-paper follow-up + one-line highlight format patch
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
 - User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, first search/retrieve papers matching the user's keyword/domain and extract the workflows used in those papers; only then synthesize a practical paper-grounded workflow. Never answer pipeline/workflow questions with a generic protocol before showing the relevant paper workflow evidence. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
@@ -8,6 +8,8 @@ Paper_Talk Worker v85 GPT-4o unified + quota 50 + cancelable chat + keyword pape
 - Do not start with DB retrieval failure messages unless user explicitly asks for sources/evidence.
 - Literature/trend questions still show DB paper titles when requested.
 - Chat cancellation: /api/gpt/chat accepts cancelId; /api/gpt/cancel marks the request canceled; OpenAI calls are linked to the browser request signal and cancelId polling so Cancel can stop generation and avoid quota charging.
+- Related-paper follow-up patch: short requests such as "이거랑 비슷한 논문은" inherit the active paper, retrieve other DB papers, and return exact titles instead of a generic trend answer.
+- One-line highlight patch: "한줄만/one line" requests return one clean sentence without forcing bullet formatting.
 */
 
 export default {
@@ -6262,6 +6264,118 @@ function buildRelatedPaperDiscoveryQuery(activePaperContext, message, autoIntent
   ].filter(Boolean).join("\n\n");
 }
 
+function getRelatedPaperUserFacingTopic(activePaperContext, userMessage) {
+  const active = Array.isArray(activePaperContext) && activePaperContext.length
+    ? activePaperContext[0]
+    : null;
+
+  const title = cleanBibtexText(active?.title || "").trim();
+  if (title) return title;
+
+  const extracted = extractLikelyPaperTitleForSafeLookup(String(userMessage || ""));
+  return cleanBibtexText(extracted || "").trim();
+}
+
+function buildRelatedPaperWhyLine(item, activePaperContext, userMessage, isKo) {
+  const hay = cleanBibtexText([
+    item?.matched_chunk || "",
+    item?.content || ""
+  ].filter(Boolean).join(" ")).replace(/\s+/g, " ").trim();
+
+  const activeHay = cleanBibtexText((activePaperContext || [])
+    .map(p => `${p?.title || ""} ${p?.matched_chunk || ""} ${p?.content || ""}`)
+    .join(" ")).toLowerCase();
+
+  const queryHay = String(userMessage || "").toLowerCase();
+  const combined = `${activeHay} ${queryHay} ${hay.toLowerCase()}`;
+
+  const tags = [];
+  if (/multiplex|mibi|codex|imaging|image|phenotyp|phenotyping|cell phenotyp|histolog|imc|cycif|spatial proteomic/i.test(combined)) {
+    tags.push(isKo ? "multiplexed imaging / cell phenotyping" : "multiplexed imaging and cell phenotyping");
+  }
+  if (/spatial|neighborhood|neighbourhood|niche|architecture|organization|microenvironment|tme|cell[-\s]?cell|cellular interaction/i.test(combined)) {
+    tags.push(isKo ? "spatial organization / tumor microenvironment" : "spatial organization and tumor microenvironment structure");
+  }
+  if (/tumou?r|cancer|carcinoma|adenocarcinoma|tracerx|lung|breast|colon|melanoma|immune|immuno/i.test(combined)) {
+    tags.push(isKo ? "tumor heterogeneity / immune microenvironment" : "tumor heterogeneity and immune microenvironment biology");
+  }
+  if (/single[-\s]?cell|cell state|cellular state|atlas|deep learning|machine learning|segmentation|classification|clustering/i.test(combined)) {
+    tags.push(isKo ? "single-cell level state classification" : "single-cell-level state classification");
+  }
+
+  const uniqueTags = [...new Set(tags)].slice(0, 3);
+  if (uniqueTags.length) {
+    return isKo
+      ? `활성 논문과 ${uniqueTags.join(", ")} 축이 겹칩니다.`
+      : `It overlaps with the active paper through ${uniqueTags.join(", ")}.`;
+  }
+
+  const excerpt = hay
+    .replace(/^(title|abstract|summary|content)\s*[:：]\s*/i, "")
+    .slice(0, 220)
+    .trim();
+
+  if (excerpt) {
+    return isKo
+      ? `검색된 excerpt에서 유사한 연구 맥락이 보입니다: ${excerpt}`
+      : `The retrieved excerpt suggests a related research context: ${excerpt}`;
+  }
+
+  return isKo
+    ? "활성 논문과 주제 또는 방법론이 가까운 Paper_Talk DB 논문입니다."
+    : "This is a Paper_Talk DB paper with a related topic or methodological angle.";
+}
+
+function buildRelatedPaperAnswerFromContext({ context, activePaperContext = [], userMessage = "" }) {
+  const language = detectUserLanguage(userMessage);
+  const isKo = language === "Korean";
+  const activeTitle = getRelatedPaperUserFacingTopic(activePaperContext, userMessage);
+
+  const activeItems = Array.isArray(activePaperContext) ? activePaperContext : [];
+  const candidates = selectTopSupportingPapersForAnswer(
+    (Array.isArray(context) ? context : [])
+      .filter(item => !activeItems.some(active => isSameKnowledgePaper(item, active))),
+    6,
+    "LITERATURE_REVIEW"
+  );
+
+  if (!candidates.length) {
+    return isKo
+      ? [
+          activeTitle
+            ? `현재 Paper_Talk DB에서 "${activeTitle}"와 직접 비교할 만한 다른 유사 논문을 충분히 찾지 못했습니다.`
+            : "현재 Paper_Talk DB에서 이 논문과 직접 비교할 만한 다른 유사 논문을 충분히 찾지 못했습니다.",
+          "검색어를 multiplexed imaging, spatial tumor microenvironment, cell phenotyping, immune neighborhood처럼 조금 더 넓혀서 다시 찾으면 더 잘 잡힐 수 있습니다."
+        ].join("\n")
+      : [
+          activeTitle
+            ? `I could not find enough other directly comparable papers in the current Paper_Talk DB for "${activeTitle}."`
+            : "I could not find enough other directly comparable papers in the current Paper_Talk DB for this active paper.",
+          "Try broadening the query with terms such as multiplexed imaging, spatial tumor microenvironment, cell phenotyping, or immune neighborhood."
+        ].join("\n");
+  }
+
+  const intro = isKo
+    ? (activeTitle
+      ? `"${activeTitle}"와 비슷한 논문은 아래처럼 보면 좋습니다.`
+      : "이 논문과 비슷한 논문은 아래처럼 보면 좋습니다.")
+    : (activeTitle
+      ? `Papers similar to "${activeTitle}" can be read as follows.`
+      : "Similar papers can be read as follows.");
+
+  const lines = candidates.map((item, index) => {
+    const title = cleanBibtexText(item?.title || "Untitled Paper").trim() || "Untitled Paper";
+    const why = buildRelatedPaperWhyLine(item, activePaperContext, userMessage, isKo);
+    return `${index + 1}. ${title}\n   ${isKo ? "왜 비슷한가" : "Why similar"}: ${why}`;
+  });
+
+  const closing = isKo
+    ? "정리하면, 이 주제는 단순한 image analysis라기보다 multiplexed single-cell phenotyping과 spatial neighborhood/TME 해석을 함께 보는 논문들로 묶어 읽는 것이 좋습니다."
+    : "In short, this topic is best read through papers that combine multiplexed single-cell phenotyping with spatial neighborhood or tumor-microenvironment interpretation.";
+
+  return [intro, "", ...lines, "", closing].join("\n");
+}
+
 function isSameKnowledgePaper(a, b) {
   const ap = String(a?.post_id || "").trim();
   const bp = String(b?.post_id || "").trim();
@@ -7111,7 +7225,7 @@ function isContinuationMoreRequest(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
 
   return (
-    /(더\s*주세요|더\s*줘|더\s*알려|추가로|추가\s*추천|다른\s*것도|다른\s*논문|더\s*많이|몇\s*개\s*더|[0-9]+\s*개\s*더|끝인가요|끝이야|더\s*있|more|more papers|give me more|another|additional)/i.test(text)
+    /(더\s*주세요|더\s*줘|더\s*알려|추가로|추가\s*추천|다른\s*것도|다른\s*논문|비슷한\s*논문|유사한\s*논문|관련\s*논문|같은\s*주제|후속\s*연구|비슷한\s*연구|관련\s*연구|더\s*많이|몇\s*개\s*더|[0-9]+\s*개\s*더|끝인가요|끝이야|더\s*있|more|more papers|similar papers?|related papers?|other papers?|give me more|another|additional)/i.test(text)
   );
 }
 
@@ -7658,7 +7772,41 @@ async function gptChat(request, env) {
     }
 
     await cancelRuntime.throwIfCanceled();
-    const generalOrBroad = forcedOutputStyle ? false : (isLikelyGeneralQuestionFast(effectiveMessage) && !inferredIntent.is_research_related);
+
+    let strictActivePaperState = makeEmptyStrictActivePaperContext();
+    if (!isGuest) {
+      const activePaperRecentMessages = recentMessagesForContinuation.length
+        ? recentMessagesForContinuation
+        : await getRecentThreadMessagesForContinuation({
+            threadId,
+            userId: user.id,
+            env,
+            limit: 8
+          }).catch(() => []);
+
+      strictActivePaperState = await getStrictActivePaperContext({
+        message: effectiveMessage,
+        recentMessages: activePaperRecentMessages,
+        env
+      }).catch(() => makeEmptyStrictActivePaperContext());
+    }
+
+    const relatedPaperMode = isRelatedPaperDiscoveryRequest(message, inferredIntent);
+
+    if (relatedPaperMode) {
+      inferredIntent.is_research_related = true;
+      inferredIntent.should_use_db_evidence = true;
+      inferredIntent.paper_talk_intent = "LITERATURE_REVIEW";
+      inferredIntent.question_type = "LITERATURE";
+      inferredIntent.answer_style = "paper_recommendation_by_active_paper";
+      inferredIntent.interpreted_intent = "The user is asking for papers similar or related to the active paper in the current thread.";
+    }
+
+    const retrievalMessageForDb = relatedPaperMode && strictActivePaperState.activePaperLocked
+      ? buildRelatedPaperDiscoveryQuery(strictActivePaperState.activePaperContext, message, inferredIntent)
+      : effectiveMessage;
+
+    const generalOrBroad = relatedPaperMode ? false : (forcedOutputStyle ? false : (isLikelyGeneralQuestionFast(effectiveMessage) && !inferredIntent.is_research_related));
     let context = [];
 
     // v56 research-purpose GPT policy:
@@ -7669,7 +7817,7 @@ async function gptChat(request, env) {
     // was retrieved instead of answering from outside literature.
     if (!generalOrBroad || inferredIntent.should_use_db_evidence) {
       try {
-        context = await retrievePaperTalkDbForResearchIntent(effectiveMessage, inferredIntent, env, gptKey, cancelRuntime);
+        context = await retrievePaperTalkDbForResearchIntent(retrievalMessageForDb, inferredIntent, env, gptKey, cancelRuntime);
         await cancelRuntime.throwIfCanceled();
       } catch (error) {
         if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
@@ -7695,23 +7843,41 @@ async function gptChat(request, env) {
       }
     }
 
-    const outputStyleForSelection = forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: inferredIntent, hasContext: context.length > 0 });
+    if (!relatedPaperMode && strictActivePaperState.activePaperLocked && forcedOutputStyle === "PAPER_SUMMARY") {
+      context = strictActivePaperState.activePaperContext;
+    }
+
+    if (relatedPaperMode && strictActivePaperState.activePaperLocked) {
+      context = (context || []).filter(item =>
+        !strictActivePaperState.activePaperContext.some(active => isSameKnowledgePaper(item, active))
+      );
+    }
+
+    const outputStyleForSelection = relatedPaperMode
+      ? "LITERATURE_REVIEW"
+      : (forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: inferredIntent, hasContext: context.length > 0 }));
     context = selectTopSupportingPapersForAnswer(context, null, outputStyleForSelection);
 
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
 
-    let assistantText = (generalOrBroad && !context.length)
-      ? await callOpenAIGeneralNoRetrieval(message, env, cancelRuntime)
-      : await callOpenAIForPaperTalk({
-          userMessage: `${gptProfile.title} context. User question: ${effectiveMessage}`,
+    let assistantText = relatedPaperMode
+      ? buildRelatedPaperAnswerFromContext({
           context,
-          thinkingLogicFrameworks: [],
-          pastFrameworks: [],
-          generatedFramework: "",
-          recentMessages: recentMessagesForContinuation,
-          autoIntent,
-          strictActivePaperLocked: false
-        }, env, cancelRuntime);
+          activePaperContext: strictActivePaperState.activePaperContext,
+          userMessage: message
+        })
+      : (generalOrBroad && !context.length)
+        ? await callOpenAIGeneralNoRetrieval(message, env, cancelRuntime)
+        : await callOpenAIForPaperTalk({
+            userMessage: `${gptProfile.title} context. User question: ${effectiveMessage}`,
+            context,
+            thinkingLogicFrameworks: [],
+            pastFrameworks: [],
+            generatedFramework: "",
+            recentMessages: recentMessagesForContinuation,
+            autoIntent,
+            strictActivePaperLocked: strictActivePaperState.activePaperLocked && !relatedPaperMode
+          }, env, cancelRuntime);
 
     if (isUserCanceledText(assistantText)) {
       await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
@@ -7751,7 +7917,9 @@ async function gptChat(request, env) {
       .replace(/#/g, "")
       .replace(/\*/g, "");
 
-    const finalOutputStyle = forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: autoIntent, hasContext: context.length > 0 });
+    const finalOutputStyle = relatedPaperMode
+      ? "LITERATURE_REVIEW"
+      : (forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: autoIntent, hasContext: context.length > 0 }));
 
     if (!isSupportingPaperFollowUp(message) && !["LITERATURE_REVIEW", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW", "RESEARCH_INSIGHT", "RESEARCH_SYNTHESIS"].includes(finalOutputStyle)) {
       assistantText = hideAccidentalPaperListFromNormalAnswer(assistantText);
@@ -11114,8 +11282,15 @@ function enforceStrictUserOutputFormat(answer, userMessage) {
   const count = format.count || Math.min(items.length, 4);
   const picked = items.slice(0, count);
 
-  return picked
+  const normalized = picked
     .map(item => item.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  if (!format.bullet) {
+    return normalized.join("\n");
+  }
+
+  return normalized
     .map(item => `- ${item}`)
     .join("\n");
 }
