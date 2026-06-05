@@ -144,7 +144,14 @@ export default {
       }
 
       if (pathname === "/admin-specialist-gpts" || pathname === "/specialist-admin") {
-        return redirect(new URL("/admin-specialist-gpts.html", request.url).toString());
+        return redirect(new URL("/admin-specialist-gpts.html?admin=1", request.url).toString());
+      }
+
+      // Safety fix: if a public navbar accidentally links to the admin HTML file,
+      // send normal visitors to the public Specialist GPT landing page instead.
+      // Admin access should use /specialist-admin or /admin-specialist-gpts.
+      if (pathname === "/admin-specialist-gpts.html" && url.searchParams.get("admin") !== "1") {
+        return redirect(new URL("/specialist-gpts.html", request.url).toString());
       }
 
       if (pathname === "/research") {
