@@ -55,7 +55,43 @@ body {
 .container {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 40px 32px 70px;
+  padding: 36px 32px 70px;
+}
+
+.auth-box {
+  text-align: right;
+  margin-bottom: 24px;
+}
+
+.auth-box #userText,
+.auth-box #guestInfo {
+  margin-right: 8px;
+}
+
+.signin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid #b9c7ff;
+  color: #1428a0;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 14px 32px rgba(20,40,160,0.12);
+}
+
+.google-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #1428a0;
+  color: #ffffff;
+  font-weight: 900;
 }
 
 .research-gpts-hero {
@@ -109,15 +145,10 @@ body {
   margin-bottom: 14px;
   padding: 6px 12px;
   border-radius: 999px;
-  background: #e8f0ff;
-  color: #1428a0;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.private-tag {
   background: #fef3c7;
   color: #92400e;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .clickable-card {
@@ -156,6 +187,10 @@ body {
     padding: 28px 18px 50px;
   }
 
+  .auth-box {
+    text-align: left;
+  }
+
   .research-gpts-hero h1 {
     font-size: 34px;
   }
@@ -183,10 +218,23 @@ body {
 
 <main class="container">
 
+  <div id="topLoginArea" class="auth-box" style="display:none;">
+    <span id="guestInfo">Sign in for free to use Specialist GPTs. </span>
+    <a id="loginBtn" class="signin-btn" href="/auth/google">
+      <span class="google-dot">G</span>
+      Sign in with Google
+    </a>
+  </div>
+
+  <div id="topLogoutArea" class="auth-box" style="display:none;">
+    <span id="userText"></span>
+    <a id="logoutBtn" class="signin-btn" href="/auth/logout">Logout</a>
+  </div>
+
   <section class="research-gpts-hero">
     <h1>Specialist GPTs</h1>
     <p>
-      Specialized GPT workspaces built on curated scientific knowledge.
+      Private specialist GPT workspaces built on curated scientific knowledge.
       Each GPT is designed around a specific research theme so researchers can ask focused scientific questions,
       explore literature-based directions, and generate testable ideas.
     </p>
@@ -197,20 +245,15 @@ body {
 
       <article
         class="gpt-card clickable-card"
-        onclick="location.href='/visium-gpt.html?gpt=neuroscience'"
-      >
-        <span class="tag">Available</span>
-        <h2>&#129504; Neuroscience GPT</h2>
-        <p>Built on curated neuroscience literature.</p>
-      </article>
-
-      <article
-        class="gpt-card clickable-card"
         onclick="location.href='/visium-gpt.html?gpt=neuro_sungmo'"
       >
-        <span class="tag private-tag">Private</span>
+        <span class="tag">Private</span>
         <h2>&#129504; Neuro-GPT</h2>
         <p>from Sungmo Park</p>
+      </article>
+
+      <article class="gpt-card coming-card">
+        <h2>&#128640; Coming Soon</h2>
       </article>
 
       <article class="gpt-card coming-card">
@@ -229,5 +272,33 @@ body {
   </section>
 
 </main>
+
+<script>
+async function initAuthBox() {
+  const topLoginArea = document.getElementById("topLoginArea");
+  const topLogoutArea = document.getElementById("topLogoutArea");
+  const userText = document.getElementById("userText");
+
+  try {
+    const res = await fetch("/api/me", { cache: "no-store" });
+    const data = await res.json();
+
+    if (data && data.ok && data.user) {
+      topLoginArea.style.display = "none";
+      topLogoutArea.style.display = "block";
+      userText.textContent = "Signed in as " + (data.user.name || data.user.email || "Paper_Talk user");
+    } else {
+      topLoginArea.style.display = "block";
+      topLogoutArea.style.display = "none";
+    }
+  } catch {
+    topLoginArea.style.display = "block";
+    topLogoutArea.style.display = "none";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", initAuthBox);
+</script>
+
 </body>
 </html>
