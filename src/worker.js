@@ -4749,7 +4749,6 @@ async function listGptThreads(request, env) {
 
   await ensureSpecialistGptTables(env);
 
-  const url = new URL(request.url);
   const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || url.searchParams.get("domain"));
 
   const threads = await env.DB.prepare(`
@@ -4822,7 +4821,6 @@ async function listGptMessages(request, env) {
 
   await ensureSpecialistGptTables(env);
 
-  const url = new URL(request.url);
   const threadId = url.searchParams.get("threadId");
   const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || url.searchParams.get("domain"));
 
