@@ -3,11 +3,14 @@
 
   <div class="gpt-grid">
 
-    <article class="gpt-card">
-      <span class="tag coming-tag">Coming Soon</span>
-      <h2>🚀 Coming Soon</h2>
-      <p>New specialist GPTs are currently under development.</p>
-      <span class="disabled-btn">Coming Soon</span>
+    <article
+      class="gpt-card clickable-card"
+      onclick="openProtectedGpt('neuro-sungmo', '/visium-gpt.html?gpt=neuro_sungmo')"
+    >
+      <span class="tag">Private</span>
+      <h2>🧠 Neuro-GPT</h2>
+      <p>from Sungmo Park</p>
+      <p class="post-meta">Password protected specialist GPT.</p>
     </article>
 
     <article class="gpt-card">
@@ -33,3 +36,14 @@
 
   </div>
 </section>
+
+<script>
+function openProtectedGpt(gptKey, targetUrl) {
+  const password = prompt("Enter password for Neuro-GPT");
+
+  if (!password) return;
+
+  sessionStorage.setItem("specialist_gpt_key_" + gptKey, password);
+  location.href = targetUrl;
+}
+</script>
