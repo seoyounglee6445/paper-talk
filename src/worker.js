@@ -7866,6 +7866,22 @@ async function ensureGptMonthlyUsageTable(env) {
   `).run();
 }
 
+async function ensureUserGptQuotaColumns(env) {
+  const statements = [
+    "ALTER TABLE users ADD COLUMN monthly_gpt_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN monthly_gpt_limit INTEGER NOT NULL DEFAULT 50",
+    "ALTER TABLE users ADD COLUMN monthly_reset_at TEXT"
+  ];
+
+  for (const sql of statements) {
+    try {
+      await env.DB.prepare(sql).run();
+    } catch {
+      // Column already exists or the current DB already has these quota fields.
+    }
+  }
+}
+
 async function getLegacyMonthlyMessageCount(userId, monthKey, env) {
   const result = await env.DB.prepare(`
     SELECT COUNT(*) AS used
@@ -7878,63 +7894,138 @@ async function getLegacyMonthlyMessageCount(userId, monthKey, env) {
   return result ? Number(result.used || 0) : 0;
 }
 
+async function getUserGptQuotaRow(userId, env) {
+  await ensureUserGptQuotaColumns(env);
+
+  return env.DB.prepare(`
+    SELECT
+      id,
+      email,
+      monthly_gpt_count,
+      monthly_gpt_limit,
+      monthly_reset_at
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+  `).bind(userId).first();
+}
+
+async function syncMonthlyUsageMirror(userId, monthKey, used, env) {
+  await ensureGptMonthlyUsageTable(env);
+
+  await env.DB.prepare(`
+    INSERT INTO gpt_monthly_usage (
+      user_id,
+      month_key,
+      used,
+      updated_at
+    )
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, month_key) DO UPDATE SET
+      used = excluded.used,
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(userId, monthKey, used).run();
+}
+
 async function getMonthlyGptQuota(userId, env, user = null) {
-  const monthlyLimit = SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT;
   const now = new Date();
   const monthKey = getCurrentMonthKey(now);
 
   await ensureGptMonthlyUsageTable(env);
+  await ensureUserGptQuotaColumns(env);
 
-  const row = await env.DB.prepare(`
-    SELECT used
-    FROM gpt_monthly_usage
-    WHERE user_id = ?
-      AND month_key = ?
-  `).bind(userId, monthKey).first();
+  const userRow = await getUserGptQuotaRow(userId, env);
 
-  // Backward-compatible migration:
-  // If this table is newly created, preserve this month's already-used count
-  // from existing gpt_messages so users do not get an accidental extra 20.
-  if (!row) {
+  // Fallback for unexpected missing user rows.
+  if (!userRow) {
     const legacyUsed = await getLegacyMonthlyMessageCount(userId, monthKey, env);
+    const fallbackLimit = SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT;
 
-    await env.DB.prepare(`
-      INSERT INTO gpt_monthly_usage (user_id, month_key, used, updated_at)
-      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    `).bind(userId, monthKey, legacyUsed).run();
+    await syncMonthlyUsageMirror(userId, monthKey, legacyUsed, env);
 
     return {
       used: legacyUsed,
-      limit: monthlyLimit,
-      remaining: Math.max(monthlyLimit - legacyUsed, 0),
+      limit: fallbackLimit,
+      remaining: Math.max(fallbackLimit - legacyUsed, 0),
       monthKey,
       resetsAt: getNextMonthResetIso(now)
     };
   }
 
-  const used = Number(row.used || 0);
+  let limit = Number(userRow.monthly_gpt_limit);
+
+  if (!Number.isFinite(limit) || limit <= 0) {
+    limit = SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT;
+  }
+
+  limit = Math.floor(limit);
+
+  let used = Number(userRow.monthly_gpt_count || 0);
+
+  if (!Number.isFinite(used) || used < 0) {
+    used = 0;
+  }
+
+  used = Math.floor(used);
+
+  const resetAt = String(userRow.monthly_reset_at || "");
+  const resetMonth = resetAt.slice(0, 7);
+
+  // New month: reset this user's GPT usage counter in users.
+  if (resetMonth && resetMonth !== monthKey) {
+    used = 0;
+
+    await env.DB.prepare(`
+      UPDATE users
+      SET
+        monthly_gpt_count = 0,
+        monthly_reset_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(userId).run();
+  }
+
+  // First quota read: initialize reset timestamp without changing usage.
+  if (!resetAt) {
+    await env.DB.prepare(`
+      UPDATE users
+      SET monthly_reset_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND (monthly_reset_at IS NULL OR monthly_reset_at = '')
+    `).bind(userId).run();
+  }
+
+  await syncMonthlyUsageMirror(userId, monthKey, used, env);
 
   return {
     used,
-    limit: monthlyLimit,
-    remaining: Math.max(monthlyLimit - used, 0),
+    limit,
+    remaining: Math.max(limit - used, 0),
     monthKey,
     resetsAt: getNextMonthResetIso(now)
   };
 }
 
 async function incrementMonthlyGptUsage(userId, env) {
-  const monthKey = getCurrentMonthKey();
+  const now = new Date();
+  const monthKey = getCurrentMonthKey(now);
 
   await ensureGptMonthlyUsageTable(env);
+  await ensureUserGptQuotaColumns(env);
+
+  // This call also resets monthly_gpt_count to 0 when the saved reset month is old.
+  const quotaBefore = await getMonthlyGptQuota(userId, env);
+  const usedBefore = Number(quotaBefore.used || 0);
+  const usedAfter = usedBefore + 1;
 
   await env.DB.prepare(`
-    INSERT INTO gpt_monthly_usage (user_id, month_key, used, updated_at)
-    VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-    ON CONFLICT(user_id, month_key) DO UPDATE SET
-      used = used + 1,
-      updated_at = CURRENT_TIMESTAMP
-  `).bind(userId, monthKey).run();
+    UPDATE users
+    SET
+      monthly_gpt_count = ?,
+      monthly_reset_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(usedAfter, userId).run();
+
+  await syncMonthlyUsageMirror(userId, monthKey, usedAfter, env);
 
   return getMonthlyGptQuota(userId, env);
 }
