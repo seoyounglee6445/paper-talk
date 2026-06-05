@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v86 GPT-4o unified + quota 50 + robust cancelable chat + keyword paper-grounded pipeline routing patch
+Paper_Talk Worker v85 GPT-4o unified + quota 50 + cancelable chat + keyword paper-grounded pipeline routing patch
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
 - User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, first search/retrieve papers matching the user's keyword/domain and extract the workflows used in those papers; only then synthesize a practical paper-grounded workflow. Never answer pipeline/workflow questions with a generic protocol before showing the relevant paper workflow evidence. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
@@ -7,7 +7,7 @@ Paper_Talk Worker v86 GPT-4o unified + quota 50 + robust cancelable chat + keywo
 - Multilingual behavior: detect and preserve the user's language across the entire answer.
 - Do not start with DB retrieval failure messages unless user explicitly asks for sources/evidence.
 - Literature/trend questions still show DB paper titles when requested.
-- Chat cancellation: /api/gpt/chat accepts cancelId; /api/gpt/cancel marks the request canceled; OpenAI calls are linked to browser abort, D1 cancel polling, same-isolate active AbortController lookup, and late-response cancel checks so Cancel can stop or suppress generation even after the OpenAI answer call has started.
+- Chat cancellation: /api/gpt/chat accepts cancelId; /api/gpt/cancel marks the request canceled; OpenAI calls are linked to the browser request signal and cancelId polling so Cancel can stop generation and avoid quota charging.
 */
 
 export default {
@@ -388,47 +388,10 @@ async function isGptRuntimeCanceledNoThrow(cancelRuntime) {
   }
 }
 
-const ACTIVE_GPT_ABORT_CONTROLLERS = globalThis.__PAPER_TALK_ACTIVE_GPT_ABORT_CONTROLLERS ||
-  (globalThis.__PAPER_TALK_ACTIVE_GPT_ABORT_CONTROLLERS = new Map());
-
-function getGptActiveAbortKey(cancelId, ownerKey) {
-  const id = normalizeGptCancelId(cancelId);
-  return id && ownerKey ? `${ownerKey}:${id}` : "";
-}
-
-function registerActiveGptAbortController(cancelRuntime, controller) {
-  const key = getGptActiveAbortKey(cancelRuntime?.cancelId, cancelRuntime?.ownerKey);
-  if (!key || !controller) return () => {};
-
-  ACTIVE_GPT_ABORT_CONTROLLERS.set(key, controller);
-  return () => {
-    if (ACTIVE_GPT_ABORT_CONTROLLERS.get(key) === controller) {
-      ACTIVE_GPT_ABORT_CONTROLLERS.delete(key);
-    }
-  };
-}
-
-function abortActiveGptRequest({ cancelId, ownerKey }) {
-  const key = getGptActiveAbortKey(cancelId, ownerKey);
-  if (!key) return false;
-
-  const controller = ACTIVE_GPT_ABORT_CONTROLLERS.get(key);
-  if (!controller || controller.signal?.aborted) return false;
-
-  try {
-    controller.abort(new UserCanceledError());
-  } catch {
-    try { controller.abort(); } catch {}
-  }
-  return true;
-}
-
 function createLinkedAbortController(cancelRuntime, timeoutMs = 70000) {
   const controller = new AbortController();
   let stopped = false;
   let pollTimer = null;
-
-  const unregisterActiveAbort = registerActiveGptAbortController(cancelRuntime, controller);
 
   const abortAsCanceled = () => {
     if (!controller.signal.aborted) {
@@ -464,25 +427,20 @@ function createLinkedAbortController(cancelRuntime, timeoutMs = 70000) {
     }
 
     if (!stopped && !controller.signal.aborted) {
-      pollTimer = setTimeout(poll, 500);
+      pollTimer = setTimeout(poll, 800);
     }
   };
 
   if (cancelRuntime?.isCanceled) {
-    pollTimer = setTimeout(poll, 250);
+    pollTimer = setTimeout(poll, 800);
   }
 
   return {
     signal: controller.signal,
-    async throwIfCanceled() {
-      if (controller.signal.aborted) throw new UserCanceledError();
-      await cancelRuntime?.throwIfCanceled?.();
-    },
     cleanup() {
       stopped = true;
       clearTimeout(timeout);
       if (pollTimer) clearTimeout(pollTimer);
-      unregisterActiveAbort();
       if (clientSignal) clientSignal.removeEventListener("abort", abortAsCanceled);
     }
   };
@@ -519,10 +477,7 @@ async function cancelGptRequest(request, env) {
       canceled_at = CURRENT_TIMESTAMP
   `).bind(cancelId, ownerKey, normalizeGptKey(gptKey)).run();
 
-  // Immediate same-isolate abort. D1 status remains the cross-isolate fallback.
-  const abortedActiveFetch = abortActiveGptRequest({ cancelId, ownerKey });
-
-  return json({ ok: true, canceled: true, cancelId, abortedActiveFetch });
+  return json({ ok: true, canceled: true, cancelId });
 }
 
 function canceledChatJson() {
@@ -5850,9 +5805,7 @@ Plain text only.`
       })
     });
 
-    await abortable.throwIfCanceled();
     const raw = await res.text();
-    await abortable.throwIfCanceled();
     let data = {};
     try {
       data = JSON.parse(raw);
@@ -5864,7 +5817,6 @@ Plain text only.`
       return `OpenAI general request failed. HTTP ${res.status}. ${data?.error?.message || JSON.stringify(data).slice(0, 300)}`;
     }
 
-    await abortable.throwIfCanceled();
     return extractOpenAIText(data) || "No answer returned.";
   } catch (error) {
     if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
@@ -6194,9 +6146,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
       })
     });
 
-    await abortable.throwIfCanceled();
     const data = await readJsonResponseSafely(res, "OpenAI research intent inference request");
-    await abortable.throwIfCanceled();
     let raw = extractOpenAIText(data);
     raw = raw.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
 
@@ -11286,9 +11236,7 @@ Never answer a paper recommendation request with only a field summary.
       })
     });
 
-    await abortable.throwIfCanceled();
     const raw = await res.text();
-    await abortable.throwIfCanceled();
     let data = {};
 
     try {
@@ -11301,7 +11249,6 @@ Never answer a paper recommendation request with only a field summary.
       return `OpenAI API error: ${data?.error?.message || `HTTP ${res.status}`}`;
     }
 
-    await abortable.throwIfCanceled();
     return extractOpenAIText(data) || getOpenAIErrorMessage(data, "No answer was generated. Please try again with a shorter question.");
   } catch (error) {
     if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
