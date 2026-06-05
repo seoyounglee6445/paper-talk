@@ -25,7 +25,7 @@ export default {
         return json({
           hasKey: !!env.OPENAI_API_KEY,
           hasModel: !!env.OPENAI_MODEL,
-          model: env.OPENAI_MODEL || "gpt-5"
+          model: env.OPENAI_MODEL || "gpt-5-mini"
         });
       }
 
@@ -440,7 +440,7 @@ function extractOpenAIText(data) {
 function getOpenAIErrorMessage(data, fallback = "OpenAI API returned no answer.") {
   return (
     data?.error?.message ||
-    data?.choices?.[0]?.finish_reason && `OpenAI finish_reason: ${data.choices[0].finish_reason}` ||
+    (data?.choices?.[0]?.finish_reason ? `OpenAI finish_reason: ${data.choices[0].finish_reason}` : "") ||
     fallback
   );
 }
@@ -458,7 +458,7 @@ async function testOpenAI(env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5",
+        model: env.OPENAI_MODEL || "gpt-5-mini",
         messages: [
           { role: "user", content: "Say hello in one short sentence." }
         ],
@@ -469,13 +469,13 @@ async function testOpenAI(env) {
     const data = await readJsonResponseSafely(response, "OpenAI test request");
     return json({
       ok: true,
-      model: env.OPENAI_MODEL || "gpt-5",
+      model: env.OPENAI_MODEL || "gpt-5-mini",
       answer: extractOpenAIText(data) || "No answer returned."
     });
   } catch (error) {
     return json({
       ok: false,
-      model: env.OPENAI_MODEL || "gpt-5",
+      model: env.OPENAI_MODEL || "gpt-5-mini",
       error: error?.message || "Unknown OpenAI test error"
     }, 500);
   }
@@ -2431,7 +2431,7 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5",
+        model: env.OPENAI_MODEL || "gpt-5-mini",
         messages: [
           {
             role: "system",
@@ -5494,7 +5494,7 @@ async function callOpenAIGeneralNoRetrieval(userMessage, env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5",
+        model: env.OPENAI_MODEL || "gpt-5-mini",
         messages: [
           {
             role: "system",
@@ -5680,7 +5680,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5",
+        model: env.OPENAI_MODEL || "gpt-5-mini",
         messages: [
           {
             role: "system",
@@ -7968,7 +7968,7 @@ async function expandQuestionForResearchRetrieval(userQuery, env) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5",
+        model: env.OPENAI_MODEL || "gpt-5-mini",
         messages: [
           {
             role: "system",
@@ -9021,7 +9021,7 @@ async function inferUserResearchIntent({ userMessage, recentMessages = [] }, env
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5",
+        model: env.OPENAI_MODEL || "gpt-5-mini",
         messages: [
           {
             role: "system",
@@ -9386,7 +9386,7 @@ async function rewriteReportStyleAnswerIfNeeded({ originalAnswer, userMessage, c
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5",
+        model: env.OPENAI_MODEL || "gpt-5-mini",
         messages: [
           {
             role: "system",
@@ -10429,9 +10429,9 @@ Never answer a paper recommendation request with only a field summary.
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5",
+        model: env.OPENAI_MODEL || "gpt-5-mini",
         messages,
-        max_completion_tokens: hasContext ? 6000 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 4000 : 5000)
+        max_completion_tokens: hasContext ? 2000 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 1200 : 1600)
       })
     });
 
