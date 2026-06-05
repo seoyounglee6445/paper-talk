@@ -24,7 +24,7 @@
 
 <main class="container">
   <h1>Site Admin</h1>
-  <p>Manage research papers, study posts, methodology posts, blog posts, users, approvals, and deletion.</p>
+  <p>Manage research papers, specialist GPT posts, study posts, methodology posts, blog posts, users, approvals, and deletion.</p>
 
   <section class="card">
     <h2>Admin Access</h2>
@@ -315,6 +315,7 @@
     <select id="typeFilter">
       <option value="">All Categories</option>
       <option value="paper">Research Paper</option>
+      <option value="specialist_gpt">Specialist GPT</option>
       <option value="study_post">Study</option>
       <option value="methodology_page">Methodology</option>
       <option value="blog">Blog</option>
@@ -358,6 +359,7 @@
         <label>Category / Type</label>
         <select id="editType" required>
           <option value="paper">Research Paper</option>
+          <option value="specialist_gpt">Specialist GPT</option>
           <option value="study_post">Study</option>
           <option value="methodology_page">Methodology</option>
           <option value="blog">Blog</option>
@@ -1657,7 +1659,7 @@ function syncEditTypeOptions() {
   const type = document.getElementById("editType");
 
   const allowed = {
-    research: ["paper"],
+    research: ["paper", "specialist_gpt"],
     study: ["study_post", "methodology_page", "blog"],
     community: ["question", "collaboration"],
     career: ["linkedin", "job", "jobsite", "conference_notice"]
