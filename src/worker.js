@@ -230,7 +230,7 @@ const DEFAULT_GPT_KEY = "paper_talk";
 
 // Monthly GPT quota is shared across all GPT modes for each signed-in user.
 // Paper_Talk Vision GPT + Neuroscience GPT + any future Specialist GPTs = 20 total / month.
-const SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT = 20;
+const SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT = 50;
 const GUEST_GPT_DAILY_LIMIT = 3;
 
 const ALLOWED_GPT_KEYS = new Set([
