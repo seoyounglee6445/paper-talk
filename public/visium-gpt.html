@@ -273,8 +273,104 @@ let isSending = false;
 let isGuestMode = true;
 
 const urlParams = new URLSearchParams(window.location.search);
-const GPT_KEY = (urlParams.get("gpt") || urlParams.get("gptKey") || "paper_talk").toLowerCase();
-const GPT_TITLE = GPT_KEY === "neuroscience" ? "Neuroscience GPT" : "Paper_Talk Vision GPT";
+
+function normalizeGptKey(value) {
+  const raw = String(value || "paper_talk")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
+
+  const aliases = {
+    paper: "paper_talk",
+    paper_talk: "paper_talk",
+    vision: "paper_talk",
+    vision_gpt: "paper_talk",
+
+    neuro: "neuroscience",
+    neuroscience: "neuroscience",
+    neuro_gpt: "neuroscience",
+    neuro_sungmo: "neuroscience",
+
+    mitochondria: "mitochondria",
+    mitochondrial: "mitochondria",
+
+    singlecell: "single_cell",
+    single_cell: "single_cell",
+    single_cell_gpt: "single_cell",
+
+    spatial: "spatial_biology",
+    spatial_biology: "spatial_biology",
+
+    cancer: "cancer_genomics",
+    cancer_genomics: "cancer_genomics"
+  };
+
+  return aliases[raw] || "paper_talk";
+}
+
+const GPT_KEY = normalizeGptKey(urlParams.get("gpt") || urlParams.get("gptKey"));
+
+const GPT_PROFILES = {
+  paper_talk: {
+    title: "Paper_Talk Vision GPT",
+    intro: `
+      Private GPT workspace for Paper_Talk users.<br><br>
+      It answers using Research Paper knowledge added by Paper_Talk.<br>
+      The research database is updated daily with newly indexed publications.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `
+  },
+  neuroscience: {
+    title: "Neuroscience GPT",
+    intro: `
+      Specialized GPT workspace built on curated neuroscience literature.<br><br>
+      Ask about neurodegeneration, Alzheimer's disease, Parkinson's disease, brain aging, synaptic biology, neural circuits, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `
+  },
+  mitochondria: {
+    title: "Mitochondria GPT",
+    intro: `
+      Specialized GPT workspace built on curated mitochondria literature.<br><br>
+      Ask about mitochondrial biology, metabolism, disease mechanisms, methods, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `
+  },
+  single_cell: {
+    title: "Single-cell GPT",
+    intro: `
+      Specialized GPT workspace built on curated single-cell literature.<br><br>
+      Ask about single-cell RNA-seq, perturb-seq, cell states, benchmarking, protocols, analysis strategies, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `
+  },
+  spatial_biology: {
+    title: "Spatial Biology GPT",
+    intro: `
+      Specialized GPT workspace built on curated spatial biology literature.<br><br>
+      Ask about Visium, spatial transcriptomics, tissue imaging, spatial niches, analysis strategies, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `
+  },
+  cancer_genomics: {
+    title: "Cancer Genomics GPT",
+    intro: `
+      Specialized GPT workspace built on curated cancer genomics literature.<br><br>
+      Ask about tumor evolution, variants, cohorts, multi-omics, biomarkers, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `
+  }
+};
+
+const GPT_PROFILE = GPT_PROFILES[GPT_KEY] || GPT_PROFILES.paper_talk;
+const GPT_TITLE = GPT_PROFILE.title;
 
 const GUEST_LIMIT = 3;
 
@@ -286,13 +382,8 @@ function applySpecialistGptBranding() {
   if (h1) h1.textContent = GPT_TITLE;
 
   const intro = document.querySelector("main > p");
-  if (intro && GPT_KEY === "neuroscience") {
-    intro.innerHTML = `
-      Specialized GPT workspace built on curated neuroscience literature.<br><br>
-      Ask about neurodegeneration, Alzheimer's disease, Parkinson's disease, brain aging, synaptic biology, neural circuits, validation, gaps, or research ideas.<br><br>
-      Guest usage: Try 3 questions. <br>
-      Signed-in usage: 50 questions per user per month.
-    `;
+  if (intro) {
+    intro.innerHTML = GPT_PROFILE.intro;
   }
 }
 
@@ -552,7 +643,7 @@ async function sendMessage() {
   stopBtn.style.display = "inline-block";
 
   addMessage("user", text);
-  addMessage("assistant", "Analyzing your question...\nSearching the Paper_Talk research database...\nPreparing a grounded answer...");
+  addMessage("assistant", `Analyzing your question...\nSearching the ${GPT_TITLE} knowledge base...\nPreparing a grounded answer...`);
   scrollChatToBottom();
 
   chatController = new AbortController();
@@ -656,6 +747,7 @@ function removeLastProgress() {
     (
       last.textContent.includes("Analyzing your question...") ||
       last.textContent.includes("Searching the Paper_Talk research database...") ||
+      last.textContent.includes(`Searching the ${GPT_TITLE} knowledge base...`) ||
       last.textContent.includes("Preparing a grounded answer...")
     )
   ) {
