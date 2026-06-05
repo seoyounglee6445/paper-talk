@@ -140,34 +140,33 @@
       <div id="selectedGptBox" class="selected-gpt-box"></div>
 
       <div class="warning-note">
-        Current active upload target is Neuro-GPT. Future GPT cards are shown for design and expansion.
-        Enable each future GPT only after its isolated DB/backend route is ready, so databases never mix.
+        Future GPT cards are shown for design and expansion. Enable each future GPT only after its isolated DB/backend route is ready, so databases never mix.
       </div>
     </section>
 
     <section class="card write-form">
-      <h2 id="uploadTitle">Upload Neuro-GPT PDF / TXT Knowledge</h2>
+      <h2 id="uploadTitle">Upload PDF / TXT Knowledge</h2>
       <p id="uploadDescription">
         Select one or more PDF/TXT files. No title or URL fields are shown here; the file name will be used internally as the document title.
       </p>
 
       <form onsubmit="importSpecialistFullTextFile(event)">
         <div class="full-row">
-          <label id="fileInputLabel">Neuro-GPT PDF / TXT File(s)</label>
+          <label id="fileInputLabel">PDF / TXT File(s)</label>
           <input type="file" id="researchFullTextFile" accept=".pdf,.txt,text/plain,application/pdf" multiple required>
         </div>
 
-        <button id="uploadButton" type="submit">Upload to Neuro-GPT</button>
+        <button id="uploadButton" type="submit">Upload PDF / TXT</button>
         <p id="researchFullTextStatus"></p>
         <div id="researchFullTextResultList"></div>
       </form>
     </section>
 
     <section class="card">
-      <h2 id="storedTitle">Stored Neuro-GPT PDF / TXT Files</h2>
+      <h2 id="storedTitle">Stored PDF / TXT Files</h2>
       <p id="storedDescription">View or delete uploaded files for the selected Specialist GPT.</p>
 
-      <button id="loadStoredButton" onclick="loadStoredFullTextFiles()">Load Stored Neuro-GPT Files</button>
+      <button id="loadStoredButton" onclick="loadStoredFullTextFiles()">Load Stored PDF / TXT Files</button>
       <p id="storedFullTextStatus"></p>
       <div id="storedFullTextList"></div>
     </section>
@@ -284,11 +283,11 @@ function updateSelectedGptUi() {
   const loadStoredButton = document.getElementById("loadStoredButton");
 
   if (selectedBox) selectedBox.textContent = `Selected target DB: ${gpt.label}`;
-  if (uploadTitle) uploadTitle.textContent = `Upload ${gpt.label} PDF / TXT Knowledge`;
-  if (uploadButton) uploadButton.textContent = `Upload to ${gpt.label}`;
-  if (fileInputLabel) fileInputLabel.textContent = `${gpt.label} PDF / TXT File(s)`;
-  if (storedTitle) storedTitle.textContent = `Stored ${gpt.label} PDF / TXT Files`;
-  if (loadStoredButton) loadStoredButton.textContent = `Load Stored ${gpt.label} Files`;
+  if (uploadTitle) uploadTitle.textContent = "Upload PDF / TXT Knowledge";
+  if (uploadButton) uploadButton.textContent = "Upload PDF / TXT";
+  if (fileInputLabel) fileInputLabel.textContent = "PDF / TXT File(s)";
+  if (storedTitle) storedTitle.textContent = "Stored PDF / TXT Files";
+  if (loadStoredButton) loadStoredButton.textContent = "Load Stored PDF / TXT Files";
 }
 
 function clearUploadAndStoredStatus() {
@@ -506,7 +505,7 @@ async function uploadResearchFullTextPayloadWithRetries({ key, payload }) {
   const title = String(payload.title || payload.fileName || "Uploaded document").trim();
   const selectedGpt = getSelectedGpt();
   const fallbackText = [
-    `${selectedGpt.label} PDF metadata-only fallback`,
+    "Specialist GPT PDF metadata-only fallback",
     `Title: ${title}`,
     payload.fileName ? `File name: ${payload.fileName}` : "",
     baseText ? `Extracted preview: ${baseText.slice(0, 1200)}` : ""
@@ -569,11 +568,11 @@ async function importSpecialistFullTextFile(e) {
   const files = Array.from(fileInput.files || []);
 
   if (!files.length) {
-    alert(`Please select one or more ${selectedGpt.label} PDF or TXT files.`);
+    alert("Please select one or more PDF or TXT files.");
     return;
   }
 
-  if (status) status.textContent = `Starting ${selectedGpt.label} full-text import for ${files.length} file(s)...`;
+  if (status) status.textContent = `Starting PDF / TXT import for ${files.length} file(s)...`;
   if (resultList) resultList.innerHTML = "";
 
   const seenHashes = new Map();
@@ -612,7 +611,7 @@ async function importSpecialistFullTextFile(e) {
 
       seenHashes.set(textHash, fileName);
 
-      if (status) status.textContent = `Uploading ${index + 1}/${files.length} to ${selectedGpt.label}: ${fileName}`;
+      if (status) status.textContent = `Uploading ${index + 1}/${files.length}: ${fileName}`;
 
       const result = await uploadResearchFullTextPayloadWithRetries({
         key,
@@ -631,7 +630,7 @@ async function importSpecialistFullTextFile(e) {
         results.push({
           fileName,
           status: "failed",
-          message: result.error || result.message || `${selectedGpt.label} full text import failed.`
+          message: result.error || result.message || "PDF / TXT import failed."
         });
         continue;
       }
@@ -667,12 +666,12 @@ async function importSpecialistFullTextFile(e) {
   const failed = results.filter(r => r.status === "failed").length;
 
   if (status) {
-    status.textContent = `${selectedGpt.label} import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
+    status.textContent = `Import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
   }
 
   if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
 
-  alert(`${selectedGpt.label} import complete.\nImported: ${imported}\nSkipped duplicates: ${skipped}\nFailed: ${failed}`);
+  alert(`Import complete.\nImported: ${imported}\nSkipped duplicates: ${skipped}\nFailed: ${failed}`);
 
   if (imported > 0) {
     e.target.reset();
@@ -712,7 +711,7 @@ async function loadStoredFullTextFiles() {
     return;
   }
 
-  if (status) status.textContent = `Loading stored ${selectedGpt.label} files...`;
+  if (status) status.textContent = "Loading stored PDF / TXT files...";
   if (list) list.innerHTML = "";
 
   const params = new URLSearchParams({ gptKey: selectedGpt.key });
@@ -724,15 +723,15 @@ async function loadStoredFullTextFiles() {
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok || !data.ok) {
-    if (status) status.textContent = data.error || data.message || `Failed to load stored ${selectedGpt.label} files.`;
+    if (status) status.textContent = data.error || data.message || "Failed to load stored PDF / TXT files.";
     return;
   }
 
   const files = data.files || [];
-  if (status) status.textContent = `Stored ${selectedGpt.label} files: ${files.length}`;
+  if (status) status.textContent = `Stored PDF / TXT files: ${files.length}`;
 
   if (!files.length) {
-    if (list) list.innerHTML = `<p>No stored ${escapeHtml(selectedGpt.label)} files found.</p>`;
+    if (list) list.innerHTML = "<p>No stored PDF / TXT files found.</p>";
     return;
   }
 
@@ -744,13 +743,13 @@ async function loadStoredFullTextFiles() {
 
     return `
       <article class="post-card">
-        <h3>${escapeHtml(file.title || `Untitled ${selectedGpt.label} document`)}</h3>
+        <h3>${escapeHtml(file.title || "Untitled document")}</h3>
         <p><strong>File:</strong> ${escapeHtml(file.file_name || "")}</p>
         <p><strong>GPT DB:</strong> ${escapeHtml(file.gpt_key || selectedGpt.key)}</p>
         <p><strong>Chunks:</strong> ${escapeHtml(file.chunks || 0)} · <strong>Characters:</strong> ${escapeHtml(file.characters || 0)}</p>
         <p class="post-meta">Uploaded: ${escapeHtml(file.created_at || "")}</p>
         <button class="danger-btn" onclick="deleteStoredFullTextFile('${postId}', '${fileName}', '${contentHash}', '${fileGptKey}')">
-          Delete Stored ${escapeHtml(selectedGpt.label)} File
+          Delete Stored PDF / TXT File
         </button>
       </article>
     `;
@@ -765,11 +764,11 @@ async function deleteStoredFullTextFile(encodedPostId, encodedFileName, encodedC
   const gptKey = decodeFromInline(encodedGptKey) || selectedGpt.key;
 
   if (gptKey !== selectedGpt.key) {
-    alert(`This page can only delete files for the selected GPT: ${selectedGpt.label}.`);
+    alert("This page can only delete files for the selected GPT.");
     return;
   }
 
-  if (!confirm(`Delete stored ${selectedGpt.label} file?\n\n${fileName}`)) return;
+  if (!confirm(`Delete stored PDF / TXT file?\n\n${fileName}`)) return;
 
   const key = requireAdminKey();
   if (!key) return;
@@ -795,7 +794,7 @@ async function deleteStoredFullTextFile(encodedPostId, encodedFileName, encodedC
     return;
   }
 
-  alert(data.message || `Stored ${selectedGpt.label} file deleted.`);
+  alert(data.message || "Stored PDF / TXT file deleted.");
   loadStoredFullTextFiles();
 }
 
