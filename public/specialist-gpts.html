@@ -361,9 +361,6 @@ body {
 </div>
 
 <script>
-const NEURO_PRIVATE_PASSWORD = "engram";
-const NEURO_ACCESS_SESSION_KEY = "neuro_gpt_private_access";
-
 function openPrivateNeuroGpt() {
   const overlay = document.getElementById("neuroPasswordOverlay");
   const input = document.getElementById("neuroPasswordInput");
@@ -380,20 +377,41 @@ function closeNeuroPassword() {
   document.getElementById("neuroPasswordOverlay").style.display = "none";
 }
 
-function submitNeuroPassword() {
+async function submitNeuroPassword() {
   const input = document.getElementById("neuroPasswordInput");
   const error = document.getElementById("neuroPasswordError");
   const password = input.value.trim();
 
-  if (password === NEURO_PRIVATE_PASSWORD) {
-    sessionStorage.setItem(NEURO_ACCESS_SESSION_KEY, "ok");
-    location.href = "/visium-gpt.html?gpt=neuroscience";
+  error.textContent = "";
+
+  if (!password) {
+    error.textContent = "Please enter the password.";
+    input.focus();
     return;
   }
 
-  error.textContent = "Incorrect password.";
-  input.value = "";
-  input.focus();
+  try {
+    const res = await fetch("/api/neuro-gpt/access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ password })
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && data && data.ok && data.authenticated) {
+      location.href = "/visium-gpt.html?gpt=neuroscience";
+      return;
+    }
+
+    error.textContent = data.error || "Incorrect password.";
+    input.value = "";
+    input.focus();
+  } catch {
+    error.textContent = "Password check failed. Please try again.";
+    input.focus();
+  }
 }
 
 document.addEventListener("keydown", (event) => {
@@ -417,7 +435,10 @@ async function initAuthBox() {
   const userText = document.getElementById("userText");
 
   try {
-    const res = await fetch("/api/me", { cache: "no-store" });
+    const res = await fetch("/api/me", {
+      cache: "no-store",
+      credentials: "include"
+    });
     const data = await res.json();
 
     if (data && data.ok && data.user) {
