@@ -458,5 +458,12 @@ async function initAuthBox() {
 document.addEventListener("DOMContentLoaded", initAuthBox);
 </script>
 
+<script>
+fetch("/api/public/visits/today", {
+  method: "GET",
+  cache: "no-store"
+}).catch(() => {});
+</script>
+
 </body>
 </html>
