@@ -381,7 +381,10 @@ async function init() {
   setupEventListeners();
   applySpecialistGptBranding();
 
-  const meRes = await fetch("/api/me");
+  const meRes = await fetch("/api/me", {
+    cache: "no-store",
+    credentials: "include"
+  });
   const me = await readJsonSafely(meRes, "/api/me");
 
   if (!me.ok || !me.user) {
@@ -428,7 +431,10 @@ async function init() {
 async function loadThreads() {
   if (isGuestMode) return;
 
-  const res = await fetch(`/api/gpt/threads?gptKey=${encodeURIComponent(GPT_KEY)}`);
+  const res = await fetch(`/api/gpt/threads?gptKey=${encodeURIComponent(GPT_KEY)}`, {
+    cache: "no-store",
+    credentials: "include"
+  });
   const data = await readJsonSafely(res, "API request");
 
   const list = document.getElementById("threadList");
@@ -473,6 +479,8 @@ async function createThread() {
 
   const res = await fetch("/api/gpt/threads", {
     method: "POST",
+    cache: "no-store",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title: "New chat", gptKey: GPT_KEY })
   });
@@ -503,7 +511,9 @@ async function deleteThread(threadId) {
   if (!confirm("Delete this chat?")) return;
 
   const res = await fetch(`/api/gpt/threads/${encodeURIComponent(threadId)}?gptKey=${encodeURIComponent(GPT_KEY)}`, {
-    method: "DELETE"
+    method: "DELETE",
+    cache: "no-store",
+    credentials: "include"
   });
 
   const data = await readJsonSafely(res, "API request");
@@ -528,7 +538,10 @@ async function loadMessages() {
 
   if (!currentThreadId) return;
 
-  const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}&gptKey=${encodeURIComponent(GPT_KEY)}`);
+  const res = await fetch(`/api/gpt/messages?threadId=${encodeURIComponent(currentThreadId)}&gptKey=${encodeURIComponent(GPT_KEY)}`, {
+    cache: "no-store",
+    credentials: "include"
+  });
   const data = await readJsonSafely(res, "API request");
 
   if (!data.ok) {
@@ -588,6 +601,7 @@ async function sendMessage() {
     const res = await fetch("/api/gpt/chat", {
       method: "POST",
       cache: "no-store",
+      credentials: "include",
       signal: chatController.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
