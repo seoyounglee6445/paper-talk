@@ -6293,6 +6293,12 @@ function heuristicPaperTalkPlanner(message) {
   add(/(compare|comparison|versus| vs |차이|비교|다른 점)/i, 3, s => comparisonScore += s);
   add(/(what is|explain|definition|개념|설명|무엇|뭐야|정의)/i, 2, s => conceptScore += s);
 
+  // Restore older Paper_Talk behavior for broad biological association/crosstalk questions:
+  // these should be answered as evidence-grounded field insight, not as a generic concept answer.
+  if (isEvidenceStyleAssociationQuestion(text)) {
+    literatureScore += 5;
+  }
+
   let paperTalkIntent = "GENERAL";
   const best = Math.max(literatureScore, ideaScore, methodScore, pipelineScore, validationScore, comparisonScore, conceptScore);
   if (best > 0) {
@@ -6361,6 +6367,14 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
 
   if (paperTalkIntent === "LITERATURE_REVIEW") {
     queries.push("recent review trend state of the art important papers");
+  }
+
+  if (isEvidenceStyleAssociationQuestion(q)) {
+    queries.unshift(
+      "CAF macrophage immunosuppression immune exclusion tumor microenvironment",
+      "cancer associated fibroblast macrophage crosstalk CSF1 CSF1R cancer",
+      "fibroblast macrophage reciprocal interaction cancer fibrosis immune suppression"
+    );
   }
 
   if (paperTalkIntent === "PIPELINE_WORKFLOW") {
@@ -6519,7 +6533,10 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
     raw = raw.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
 
     const parsed = JSON.parse(raw);
-    const paperTalkIntent = normalizePaperTalkIntentLabel(parsed.paper_talk_intent || parsed.question_type || fallback.paper_talk_intent);
+    const associationEvidenceStyle = isEvidenceStyleAssociationQuestion(text);
+    const paperTalkIntent = associationEvidenceStyle
+      ? "LITERATURE_REVIEW"
+      : normalizePaperTalkIntentLabel(parsed.paper_talk_intent || parsed.question_type || fallback.paper_talk_intent);
     const primaryDomain = normalizePaperTalkDomainLabel(parsed.primary_domain || fallback.primary_domain);
     const queries = Array.isArray(parsed.retrieval_queries)
       ? parsed.retrieval_queries.map(v => String(v || "").trim()).filter(Boolean)
@@ -10708,6 +10725,46 @@ GENERAL READABILITY RULES
 - If DB evidence is used internally but the user did not ask for sources, do not expose paper labels or source tracing.
   `.trim();
 
+  const associationEvidenceStyle = isEvidenceStyleAssociationQuestion(userMessage);
+
+  if (outputStyle === "LITERATURE_REVIEW" && associationEvidenceStyle) {
+    return `
+${common}
+
+AUTOMATIC STYLE: OLD PAPER_TALK BIOLOGICAL ASSOCIATION ANSWER
+
+The user is asking whether biological entities, cell types, or tumor microenvironment components are associated with a phenomenon such as immunosuppression, immune exclusion, therapy response, or cancer progression.
+Restore the older Paper_Talk answer style the user preferred.
+
+Critical style rule:
+Do NOT write a recommendation-card format.
+Do NOT use these labels: "Recommended Paper", "How to Read", "Next Research Idea", "Recommended reading", or "Reading order".
+Do NOT sound like a paper recommendation list.
+
+Preferred answer shape:
+1. Start with a direct explanatory opening paragraph: answer yes/no or cautiously yes, then explain why the association matters biologically.
+2. Then write 3 to 5 numbered insight sections. Use natural scientific headings such as:
+   1. CAF-Macrophage Crosstalk in the Tumor Microenvironment
+   2. Role in Immune Suppression
+   3. Contribution to Immune Exclusion
+   4. Spatial Organization and Immune Contexture
+   5. Why this matters for therapy or future research
+3. In each section, explain the biology first.
+4. Mention retrieved Paper_Talk DB titles only when they naturally support that section. Weave the title into the prose, for example:
+   The retrieved Paper_Talk source "Fibroblast-macrophage reciprocal interactions in health, fibrosis, and cancer" is useful here because it frames fibroblast-macrophage communication as a reciprocal niche-forming process.
+5. Do not create one block per paper. Do not use paper labels such as Paper A/B/C.
+6. If a retrieved title is only indirectly related, say it is indirect and use it cautiously.
+7. End with a short "In summary" paragraph that sounds like the earlier Paper_Talk answer: synthesis first, then future direction.
+
+For the CAF-macrophage / immunosuppression / immune exclusion type of question, the answer should feel close to:
+- "The association between CAFs and macrophages is important in tumor immunology..."
+- "CAFs can shape macrophage recruitment or polarization, while macrophages reinforce matrix remodeling, suppressive cytokine signaling, and T cell exclusion..."
+- "Spatial profiling papers are relevant because they can test whether CAF-rich regions and macrophage-rich regions co-localize with T-cell-poor tumor zones..."
+
+Return the answer in the user's language.
+    `.trim();
+  }
+
   if (outputStyle === "PIPELINE_WORKFLOW") {
     return `
 ${common}
@@ -10836,27 +10893,25 @@ Return the answer in the user's language.
     return `
 ${common}
 
-AUTOMATIC STYLE: USER-FRIENDLY TREND-BASED PAPER RECOMMENDATION
+AUTOMATIC STYLE: USER-FRIENDLY TREND-BASED LITERATURE SYNTHESIS
 
-The user is asking for papers, recent trends, hot topics, representative studies, what to read, or a biological association question that benefits from named Paper_Talk DB evidence.
+The user is asking for papers, recent trends, hot topics, representative studies, what to read, or literature context.
 Do not answer as a mechanical paper-by-paper summary.
-Help the user understand the field first, then place papers inside that story.
+Do not force a "Recommended Paper / How to Read / Next Research Idea" card format unless the user explicitly asks for recommendations.
+Help the user understand the field first, then weave retrieved papers into that story.
 
 Preferred flow:
-1. Start with a short orientation in the user's language explaining that the topic can be understood through a few current trends.
-2. Group retrieved papers by trend/theme.
-3. For each trend, explain in the user's language:
-   - why this trend is currently important,
-   - which retrieved paper is a good entry point,
-   - how the user should read that paper,
-   - what research idea or next question follows.
-4. End with a short reading-order or summary paragraph in the user's language.
+1. Start with a short orientation in the user's language explaining the main scientific pattern.
+2. Group retrieved papers by trend/theme only when grouping helps.
+3. For each trend, explain why it matters biologically and mention the most relevant retrieved DB title naturally inside the prose.
+4. Add next-step research implications only after the biological explanation, not as a repetitive label.
+5. End with a short summary paragraph in the user's language.
 
 Formatting rules:
 - Do not use paper labels such as 논문 A/B/C or Paper A/B/C.
 - Do not start with only a raw list of papers.
 - Do not write long isolated paper summaries unless the user explicitly asks for a summary.
-- Actual retrieved DB paper titles may appear only as recommended reading under a trend/theme.
+- Actual retrieved DB paper titles may appear naturally inside the explanation.
 - If retrieved papers are weakly matched, say that gently and recommend better search terms.
     `.trim();
   }
