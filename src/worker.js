@@ -2954,12 +2954,17 @@ async function adminImportResearchFullText(request, env) {
   const cleanedFullText = cleanUploadedFullText(rawText);
   const fullTextHash = await sha256Hex(cleanedFullText.replace(/\s+/g, " "));
 
+  // Important DB isolation fix:
+  // Duplicate checks must be scoped to the selected GPT DB. Otherwise a PDF
+  // already uploaded to Paper_Talk Vision GPT can incorrectly block a Neuro-GPT
+  // upload because both currently live in the same D1 database with gpt_key labels.
   const duplicateRow = await env.DB.prepare(`
-    SELECT post_id, title, file_name, content_hash
+    SELECT post_id, title, file_name, content_hash, COALESCE(gpt_key, 'paper_talk') AS gpt_key
     FROM paper_fulltext_chunks
     WHERE content_hash = ?
+      AND COALESCE(gpt_key, 'paper_talk') = ?
     LIMIT 1
-  `).bind(fullTextHash).first();
+  `).bind(fullTextHash, gptKey).first();
 
   if (duplicateRow) {
     return json({
@@ -3080,9 +3085,11 @@ async function adminListResearchFullText(request, env) {
   }
 
   await ensurePaperFullTextTables(env);
+  await ensureSpecialistGptTables(env);
 
   const url = new URL(request.url);
   const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
+  const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || DEFAULT_GPT_KEY);
 
   let rows;
 
@@ -3094,18 +3101,22 @@ async function adminListResearchFullText(request, env) {
         file_name,
         source_url,
         pdf_link,
+        COALESCE(gpt_key, 'paper_talk') AS gpt_key,
         content_hash,
         COUNT(*) AS chunks,
         SUM(text_length) AS characters,
         MAX(created_at) AS created_at
       FROM paper_fulltext_chunks
-      WHERE LOWER(title) LIKE ?
-         OR LOWER(file_name) LIKE ?
-         OR LOWER(text) LIKE ?
-      GROUP BY post_id, file_name, content_hash
+      WHERE COALESCE(gpt_key, 'paper_talk') = ?
+        AND (
+          LOWER(title) LIKE ?
+          OR LOWER(file_name) LIKE ?
+          OR LOWER(text) LIKE ?
+        )
+      GROUP BY post_id, file_name, content_hash, COALESCE(gpt_key, 'paper_talk')
       ORDER BY datetime(created_at) DESC
       LIMIT 300
-    `).bind(`%${q}%`, `%${q}%`, `%${q}%`).all();
+    `).bind(gptKey, `%${q}%`, `%${q}%`, `%${q}%`).all();
   } else {
     rows = await env.DB.prepare(`
       SELECT
@@ -3114,34 +3125,38 @@ async function adminListResearchFullText(request, env) {
         file_name,
         source_url,
         pdf_link,
+        COALESCE(gpt_key, 'paper_talk') AS gpt_key,
         content_hash,
         COUNT(*) AS chunks,
         SUM(text_length) AS characters,
         MAX(created_at) AS created_at
       FROM paper_fulltext_chunks
-      GROUP BY post_id, file_name, content_hash
+      WHERE COALESCE(gpt_key, 'paper_talk') = ?
+      GROUP BY post_id, file_name, content_hash, COALESCE(gpt_key, 'paper_talk')
       ORDER BY datetime(created_at) DESC
       LIMIT 300
-    `).all();
+    `).bind(gptKey).all();
   }
 
   return json({
     ok: true,
+    gptKey,
     files: rows.results || []
   });
 }
-
 async function adminDeleteResearchFullText(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
   await ensurePaperFullTextTables(env);
+  await ensureSpecialistGptTables(env);
 
   const data = await request.json().catch(() => ({}));
   const postId = String(data.postId || "").trim();
   const contentHash = String(data.contentHash || "").trim();
   const fileName = String(data.fileName || "").trim();
+  const gptKey = getGptKeyFromRequestData(data);
 
   if (!postId || !contentHash) {
     return json({
@@ -3155,13 +3170,15 @@ async function adminDeleteResearchFullText(request, env) {
     FROM paper_fulltext_chunks
     WHERE post_id = ?
       AND content_hash = ?
-  `).bind(postId, contentHash).all();
+      AND COALESCE(gpt_key, 'paper_talk') = ?
+  `).bind(postId, contentHash, gptKey).all();
 
   await env.DB.prepare(`
     DELETE FROM paper_fulltext_chunks
     WHERE post_id = ?
       AND content_hash = ?
-  `).bind(postId, contentHash).run();
+      AND COALESCE(gpt_key, 'paper_talk') = ?
+  `).bind(postId, contentHash, gptKey).run();
 
   if (env.VECTORIZE) {
     try {
@@ -3183,6 +3200,7 @@ async function adminDeleteResearchFullText(request, env) {
     postId,
     fileName,
     contentHash,
+    gptKey,
     deletedChunks: chunkRows.results?.length || 0,
     message: "Stored full text PDF/TXT chunks were deleted."
   });
@@ -8659,13 +8677,14 @@ async function searchPaperFullTextChunks(query, env, limit = 6, gptKey = DEFAULT
 }
 
 
-async function getBestFullTextChunksForPaper({ postId, title, query, env, limit = 3 }) {
+async function getBestFullTextChunksForPaper({ postId, title, query, env, limit = 3, gptKey = DEFAULT_GPT_KEY }) {
   try {
     await ensurePaperFullTextTables(env);
   } catch {
     return [];
   }
 
+  gptKey = normalizeGptKey(gptKey);
   const safePostId = String(postId || "").trim();
   const safeTitle = cleanBibtexText(title || "").trim();
   const userQuery = String(query || "").trim();
@@ -8687,6 +8706,7 @@ async function getBestFullTextChunksForPaper({ postId, title, query, env, limit 
         SELECT post_id, title, source_url, pdf_link, file_name, chunk_index, text, text_length, created_at
         FROM paper_fulltext_chunks
         WHERE post_id = ?
+          AND COALESCE(gpt_key, 'paper_talk') = ?
         ORDER BY
           CASE
             WHEN chunk_index <= 3 THEN 0
@@ -8694,7 +8714,7 @@ async function getBestFullTextChunksForPaper({ postId, title, query, env, limit 
           END,
           chunk_index ASC
         LIMIT ?
-      `).bind(safePostId, Math.max(limit * 2, 6)).all();
+      `).bind(safePostId, gptKey, Math.max(limit * 2, 6)).all();
 
       rows = result.results || [];
     }
@@ -8712,10 +8732,11 @@ async function getBestFullTextChunksForPaper({ postId, title, query, env, limit 
         const result = await env.DB.prepare(`
           SELECT post_id, title, source_url, pdf_link, file_name, chunk_index, text, text_length, created_at
           FROM paper_fulltext_chunks
-          WHERE ${clauses}
+          WHERE COALESCE(gpt_key, 'paper_talk') = ?
+            AND ${clauses}
           ORDER BY chunk_index ASC
           LIMIT ?
-        `).bind(...params, Math.max(limit * 2, 6)).all();
+        `).bind(gptKey, ...params, Math.max(limit * 2, 6)).all();
 
         rows = result.results || [];
       }
@@ -8756,7 +8777,7 @@ async function getBestFullTextChunksForPaper({ postId, title, query, env, limit 
   }));
 }
 
-async function enrichKnowledgeItemsWithFullTextChunks(items, query, env) {
+async function enrichKnowledgeItemsWithFullTextChunks(items, query, env, gptKey = DEFAULT_GPT_KEY) {
   const output = [];
 
   for (const item of (items || [])) {
@@ -8772,7 +8793,8 @@ async function enrichKnowledgeItemsWithFullTextChunks(items, query, env) {
       title: item.title || "",
       query,
       env,
-      limit: 2
+      limit: 2,
+      gptKey
     });
 
     if (chunks.length) {
