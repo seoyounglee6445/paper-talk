@@ -273,8 +273,13 @@ let isSending = false;
 let isGuestMode = true;
 
 const urlParams = new URLSearchParams(window.location.search);
+
+// This file is the Spatial Biology GPT page by default.
+// It can still be reused with ?gpt=paper_talk, ?gpt=neuroscience, etc.
+const DEFAULT_GPT_KEY = "spatial_biology";
+
 function normalizeGptKey(value) {
-  const raw = String(value || "paper_talk")
+  const raw = String(value || DEFAULT_GPT_KEY)
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "_")
@@ -285,20 +290,108 @@ function normalizeGptKey(value) {
     paper_talk: "paper_talk",
     vision: "paper_talk",
     vision_gpt: "paper_talk",
+
     neuro: "neuroscience",
     neuroscience: "neuroscience",
     neuro_gpt: "neuroscience",
-    neuro_sungmo: "neuroscience"
+    neuroscience_gpt: "neuroscience",
+    neuro_sungmo: "neuroscience",
+
+    mitochondria: "mitochondria",
+    mitochondrial: "mitochondria",
+    mitochondria_gpt: "mitochondria",
+    mitochondrial_gpt: "mitochondria",
+
+    singlecell: "single_cell",
+    single_cell: "single_cell",
+    single_cell_gpt: "single_cell",
+    singlecell_gpt: "single_cell",
+
+    spatial: "spatial_biology",
+    spacial: "spatial_biology",
+    spatial_gpt: "spatial_biology",
+    spacial_gpt: "spatial_biology",
+    spatial_biology: "spatial_biology",
+    spatial_biology_gpt: "spatial_biology",
+
+    cancer: "cancer_genomics",
+    cancer_gpt: "cancer_genomics",
+    cancer_genomics: "cancer_genomics",
+    cancer_genomics_gpt: "cancer_genomics"
   };
 
-  return aliases[raw] || "paper_talk";
+  return aliases[raw] || DEFAULT_GPT_KEY;
 }
 
-const GPT_KEY = normalizeGptKey(urlParams.get("gpt") || urlParams.get("gptKey"));
-const GPT_TITLE = GPT_KEY === "neuroscience" ? "Neuroscience GPT" : "Paper_Talk Vision GPT";
+const GPT_KEY = normalizeGptKey(urlParams.get("gpt") || urlParams.get("gptKey") || DEFAULT_GPT_KEY);
 
+const GPT_PROFILES = {
+  paper_talk: {
+    title: "Paper_Talk Vision GPT",
+    introHtml: `
+      Private GPT workspace for Paper_Talk users.<br><br>
+      It answers using Research Paper knowledge added by Paper_Talk.<br>
+      The research database is updated daily with newly indexed publications.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `,
+    placeholder: "Thinking may take 10–30 sec.\nAsk about papers, validation, gaps, or research ideas..."
+  },
+  neuroscience: {
+    title: "Neuroscience GPT",
+    introHtml: `
+      Specialized GPT workspace built on curated neuroscience literature.<br><br>
+      Ask about neurodegeneration, Alzheimer's disease, Parkinson's disease, brain aging, synaptic biology, neural circuits, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `,
+    placeholder: "Thinking may take 10–30 sec.\nAsk about neuroscience papers, mechanisms, validation, gaps, or research ideas..."
+  },
+  mitochondria: {
+    title: "Mitochondria GPT",
+    introHtml: `
+      Specialized GPT workspace built on curated mitochondria literature.<br><br>
+      Ask about mitochondrial metabolism, stress response, mtDNA, organelle crosstalk, disease mechanisms, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `,
+    placeholder: "Thinking may take 10–30 sec.\nAsk about mitochondria papers, validation, gaps, or research ideas..."
+  },
+  single_cell: {
+    title: "Single-cell GPT",
+    introHtml: `
+      Specialized GPT workspace built on curated single-cell and multi-omics literature.<br><br>
+      Ask about scRNA-seq, scATAC-seq, multiome integration, cell states, trajectories, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `,
+    placeholder: "Thinking may take 10–30 sec.\nAsk about single-cell papers, pipelines, validation, gaps, or research ideas..."
+  },
+  spatial_biology: {
+    title: "Spatial Biology GPT",
+    introHtml: `
+      Specialized GPT workspace built on curated spatial biology and spatial omics literature.<br><br>
+      Ask about spatial transcriptomics, Visium, Xenium, CosMx, MERFISH, tissue niches, spatial cell-cell interaction, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `,
+    placeholder: "Thinking may take 10–30 sec.\nAsk about spatial biology papers, spatial omics, validation, gaps, or research ideas..."
+  },
+  cancer_genomics: {
+    title: "Cancer Genomics GPT",
+    introHtml: `
+      Specialized GPT workspace built on curated cancer genomics literature.<br><br>
+      Ask about tumor evolution, immune microenvironment, biomarkers, multi-omics, validation, gaps, or research ideas.<br><br>
+      Guest usage: Try 3 questions. <br>
+      Signed-in usage: 50 questions per user per month.
+    `,
+    placeholder: "Thinking may take 10–30 sec.\nAsk about cancer genomics papers, validation, gaps, or research ideas..."
+  }
+};
+
+const GPT_PROFILE = GPT_PROFILES[GPT_KEY] || GPT_PROFILES.spatial_biology;
+const GPT_TITLE = GPT_PROFILE.title;
 const GUEST_LIMIT = 3;
-
 
 function applySpecialistGptBranding() {
   document.title = `${GPT_TITLE} - Paper_Talk`;
@@ -307,14 +400,10 @@ function applySpecialistGptBranding() {
   if (h1) h1.textContent = GPT_TITLE;
 
   const intro = document.querySelector("main > p");
-  if (intro && GPT_KEY === "neuroscience") {
-    intro.innerHTML = `
-      Specialized GPT workspace built on curated neuroscience literature.<br><br>
-      Ask about neurodegeneration, Alzheimer's disease, Parkinson's disease, brain aging, synaptic biology, neural circuits, validation, gaps, or research ideas.<br><br>
-      Guest usage: Try 3 questions. <br>
-      Signed-in usage: 50 questions per user per month.
-    `;
-  }
+  if (intro) intro.innerHTML = GPT_PROFILE.introHtml;
+
+  const input = document.getElementById("messageInput");
+  if (input) input.placeholder = GPT_PROFILE.placeholder;
 }
 
 async function readJsonSafely(response, label = "API request") {
@@ -336,12 +425,11 @@ async function readJsonSafely(response, label = "API request") {
   }
 }
 
-
 // Local fallback only for display before the server returns real guest quota.
 // The actual guest limit must be enforced in the Worker by IP hash.
 function getLocalGuestUsedToday() {
   const today = new Date().toISOString().slice(0, 10);
-  const raw = localStorage.getItem("pt_guest_gpt_usage") || "{}";
+  const raw = localStorage.getItem(`pt_guest_gpt_usage_${GPT_KEY}`) || "{}";
   let data = {};
 
   try {
@@ -356,7 +444,7 @@ function getLocalGuestUsedToday() {
 
 function setLocalGuestUsedToday(used) {
   const today = new Date().toISOString().slice(0, 10);
-  localStorage.setItem("pt_guest_gpt_usage", JSON.stringify({
+  localStorage.setItem(`pt_guest_gpt_usage_${GPT_KEY}`, JSON.stringify({
     date: today,
     used: Number(used || 0)
   }));
@@ -381,11 +469,20 @@ async function init() {
   setupEventListeners();
   applySpecialistGptBranding();
 
-  const meRes = await fetch("/api/me", {
-    cache: "no-store",
-    credentials: "include"
-  });
-  const me = await readJsonSafely(meRes, "/api/me");
+  let me = null;
+
+  try {
+    const meRes = await fetch("/api/me", {
+      cache: "no-store",
+      credentials: "include"
+    });
+    me = await readJsonSafely(meRes, "/api/me");
+  } catch (error) {
+    const box = document.getElementById("chatBox");
+    box.innerHTML = `<p class="empty-posts">${escapeHtml(error.message || "Failed to initialize GPT.")}</p>`;
+    document.getElementById("gptApp").style.display = "grid";
+    return;
+  }
 
   if (!me.ok || !me.user) {
     isGuestMode = true;
@@ -398,16 +495,24 @@ async function init() {
     document.getElementById("loginBox").style.display = "none";
     document.getElementById("gptApp").style.display = "grid";
 
-    const localUsed = getLocalGuestUsedToday();
-    updateQuotaText(Math.max(GUEST_LIMIT - localUsed, 0), GUEST_LIMIT, true);
+    const serverRemaining = me.quota ? Number(me.quota.remaining || 0) : null;
+    const serverLimit = me.quota ? Number(me.quota.limit || GUEST_LIMIT) : GUEST_LIMIT;
+
+    if (me.quota) {
+      updateQuotaText(serverRemaining, serverLimit, true);
+      setLocalGuestUsedToday(Number(me.quota.used || (serverLimit - serverRemaining) || 0));
+    } else {
+      const localUsed = getLocalGuestUsedToday();
+      updateQuotaText(Math.max(GUEST_LIMIT - localUsed, 0), GUEST_LIMIT, true);
+    }
 
     const box = document.getElementById("chatBox");
     box.innerHTML = `
-  <p class="empty-posts">
-    Start a free preview conversation with ${GPT_TITLE}.<br><br>
-    You can ask 3 questions without signing in.
-  </p>
-`;
+      <p class="empty-posts">
+        Start a free preview conversation with ${escapeHtml(GPT_TITLE)}.<br><br>
+        You can ask 3 questions without signing in.
+      </p>
+    `;
     return;
   }
 
@@ -446,7 +551,7 @@ async function loadThreads() {
   }
 
   if (!data.threads || data.threads.length === 0) {
-    await createThread();
+    if (!isSending) await createThread();
     return;
   }
 
@@ -469,7 +574,7 @@ async function loadThreads() {
     list.appendChild(row);
   });
 
-  if (!currentThreadId) {
+  if (!currentThreadId && !isSending) {
     await selectThread(data.threads[0].id);
   }
 }
@@ -533,6 +638,12 @@ async function deleteThread(threadId) {
 async function loadMessages() {
   if (isGuestMode) return;
 
+  // Important:
+  // Do not clear the chat box while a message is being sent.
+  // On the first message, an async loadMessages/loadThreads call can return late
+  // and erase the just-added user bubble + progress bubble.
+  if (isSending) return;
+
   const box = document.getElementById("chatBox");
   box.innerHTML = "";
 
@@ -550,7 +661,7 @@ async function loadMessages() {
   }
 
   if (!data.messages || data.messages.length === 0) {
-    box.innerHTML = `<p class="empty-posts">Start a new conversation with ${GPT_TITLE}.</p>`;
+    box.innerHTML = `<p class="empty-posts">Start a new conversation with ${escapeHtml(GPT_TITLE)}.</p>`;
     return;
   }
 
@@ -574,7 +685,7 @@ async function sendMessage() {
   if (isGuestMode) {
     const localUsed = getLocalGuestUsedToday();
     if (localUsed >= GUEST_LIMIT) {
-      addSignupMessage("You have used all 3 free guest questions for today. Please sign in with Google for free to continue using ${GPT_TITLE}.", "/auth/google");
+      addSignupMessage(`You have used all 3 free guest questions for today. Please sign in with Google for free to continue using ${GPT_TITLE}.`, "/auth/google");
       updateQuotaText(0, GUEST_LIMIT, true);
       return;
     }
@@ -585,12 +696,19 @@ async function sendMessage() {
   sendBtn.style.display = "none";
   stopBtn.style.display = "inline-block";
 
+  clearEmptyState();
+
   addMessage("user", text);
-  addMessage("assistant", `Analyzing your question...\nSearching the ${GPT_TITLE} knowledge base...\nPreparing a grounded answer...`);
+  const progressDiv = addMessage(
+    "assistant",
+    `Analyzing your question...\nSearching the ${GPT_TITLE} knowledge base...\nPreparing a grounded answer...`,
+    { progress: true }
+  );
   scrollChatToBottom();
 
   chatController = new AbortController();
   let timedOut = false;
+  let refreshThreadsAfterSend = false;
 
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -613,16 +731,20 @@ async function sendMessage() {
 
     const data = await readJsonSafely(res, "API request");
 
-    removeLastProgress();
-
     if (!data.ok) {
       if (data.signupUrl) {
-        addSignupMessage(
-          data.error || "You have used all free guest questions. Please sign in with Google for free to continue.",
-          data.signupUrl
+        setMessageText(
+          progressDiv,
+          data.error || "You have used all free guest questions. Please sign in with Google for free to continue."
         );
+
+        const link = document.createElement("a");
+        link.href = data.signupUrl;
+        link.className = "signup-inline-btn";
+        link.textContent = "Sign in with Google for free";
+        progressDiv.appendChild(link);
       } else {
-        addMessage("assistant", data.error || "Something went wrong.");
+        setMessageText(progressDiv, data.error || "Something went wrong.");
       }
 
       if (data.quota) {
@@ -639,7 +761,7 @@ async function sendMessage() {
       currentThreadId = data.threadId;
     }
 
-    await typeWriterMessage(data.answer || "No answer was generated.");
+    await typeWriterInto(progressDiv, data.answer || "No answer was generated.");
 
     if (data.quota) {
       updateQuotaText(data.quota.remaining, data.quota.limit, Boolean(data.guest || isGuestMode));
@@ -648,24 +770,19 @@ async function sendMessage() {
       }
     }
 
-    if (!isGuestMode) {
-      await loadThreads();
-    }
-
+    refreshThreadsAfterSend = !isGuestMode;
     scrollChatToBottom();
 
   } catch (error) {
-    removeLastProgress();
-
     if (error.name === "AbortError") {
-      addMessage(
-        "assistant",
+      setMessageText(
+        progressDiv,
         timedOut
           ? "Request timed out after 120 seconds. Please try a narrower question."
           : "Request cancelled."
       );
     } else {
-      addMessage("assistant", error.message || "Request failed.");
+      setMessageText(progressDiv, error.message || "Request failed.");
     }
   } finally {
     clearTimeout(timeout);
@@ -673,6 +790,12 @@ async function sendMessage() {
     isSending = false;
     sendBtn.style.display = "inline-block";
     stopBtn.style.display = "none";
+
+    if (refreshThreadsAfterSend) {
+      setTimeout(() => {
+        loadThreads().catch(() => {});
+      }, 0);
+    }
   }
 }
 
@@ -682,35 +805,41 @@ function stopMessage() {
   }
 }
 
-function removeLastProgress() {
-  const messages = document.querySelectorAll(".message.assistant");
-  const last = messages[messages.length - 1];
-
-  if (
-    last &&
-    (
-      last.textContent.includes("Analyzing your question...") ||
-      last.textContent.includes("Searching the Paper_Talk research database...") ||
-      last.textContent.includes("Preparing a grounded answer...")
-    )
-  ) {
-    last.remove();
-  }
+function clearEmptyState() {
+  const box = document.getElementById("chatBox");
+  box.querySelectorAll(".empty-posts").forEach(node => node.remove());
 }
 
-function addMessage(role, content) {
+function addMessage(role, content, options = {}) {
   const box = document.getElementById("chatBox");
+  clearEmptyState();
+
   const div = document.createElement("div");
   div.className = `message ${role}`;
+
+  if (options.progress) {
+    div.dataset.progress = "true";
+  }
+
   div.textContent = content;
   box.appendChild(div);
+  scrollChatToBottom();
+
+  return div;
 }
 
-async function typeWriterMessage(text) {
-  const box = document.getElementById("chatBox");
-  const div = document.createElement("div");
-  div.className = "message assistant";
-  box.appendChild(div);
+function setMessageText(div, text) {
+  if (!div) return;
+  div.dataset.progress = "false";
+  div.textContent = text;
+  scrollChatToBottom();
+}
+
+async function typeWriterInto(div, text) {
+  if (!div) return;
+
+  div.dataset.progress = "false";
+  div.textContent = "";
 
   const value = String(text || "");
   let current = "";
@@ -718,7 +847,7 @@ async function typeWriterMessage(text) {
   for (let i = 0; i < value.length; i++) {
     current += value[i];
     div.textContent = current;
-    box.scrollTop = box.scrollHeight;
+    scrollChatToBottom();
 
     // Faster on spaces/new lines so long research answers do not feel too slow.
     const delay = value[i] === " " || value[i] === "\n" ? 2 : 8;
@@ -728,6 +857,8 @@ async function typeWriterMessage(text) {
 
 function addSignupMessage(message, signupUrl) {
   const box = document.getElementById("chatBox");
+  clearEmptyState();
+
   const div = document.createElement("div");
   div.className = "message assistant";
 
