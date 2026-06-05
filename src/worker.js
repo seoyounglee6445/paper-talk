@@ -25,7 +25,7 @@ export default {
         return json({
           hasKey: !!env.OPENAI_API_KEY,
           hasModel: !!env.OPENAI_MODEL,
-          model: env.OPENAI_MODEL || "gpt-4o"
+          model: env.OPENAI_MODEL || "gpt-5"
         });
       }
 
@@ -388,6 +388,63 @@ async function readJsonResponseSafely(response, label = "HTTP request") {
   return data;
 }
 
+
+function extractOpenAIText(data) {
+  if (!data) return "";
+
+  if (typeof data.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+
+  const choiceMessage = data?.choices?.[0]?.message;
+
+  if (typeof choiceMessage?.content === "string" && choiceMessage.content.trim()) {
+    return choiceMessage.content.trim();
+  }
+
+  if (Array.isArray(choiceMessage?.content)) {
+    const text = choiceMessage.content
+      .map(part => {
+        if (!part) return "";
+        if (typeof part === "string") return part;
+        if (typeof part.text === "string") return part.text;
+        if (typeof part?.text?.value === "string") return part.text.value;
+        if (typeof part.content === "string") return part.content;
+        return "";
+      })
+      .join("\n")
+      .trim();
+
+    if (text) return text;
+  }
+
+  if (Array.isArray(data.output)) {
+    const text = data.output
+      .flatMap(item => Array.isArray(item?.content) ? item.content : [])
+      .map(part => {
+        if (!part) return "";
+        if (typeof part.text === "string") return part.text;
+        if (typeof part?.text?.value === "string") return part.text.value;
+        if (typeof part.content === "string") return part.content;
+        return "";
+      })
+      .join("\n")
+      .trim();
+
+    if (text) return text;
+  }
+
+  return "";
+}
+
+function getOpenAIErrorMessage(data, fallback = "OpenAI API returned no answer.") {
+  return (
+    data?.error?.message ||
+    data?.choices?.[0]?.finish_reason && `OpenAI finish_reason: ${data.choices[0].finish_reason}` ||
+    fallback
+  );
+}
+
 async function testOpenAI(env) {
   if (!env.OPENAI_API_KEY) {
     return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
@@ -413,7 +470,7 @@ async function testOpenAI(env) {
     return json({
       ok: true,
       model: env.OPENAI_MODEL || "gpt-5",
-      answer: data?.choices?.[0]?.message?.content || "No answer returned."
+      answer: extractOpenAIText(data) || "No answer returned."
     });
   } catch (error) {
     return json({
@@ -2398,7 +2455,7 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
     }
 
     if (!res.ok) return "";
-    return String(data?.choices?.[0]?.message?.content || "").trim();
+    return extractOpenAIText(data);
   } catch {
     return "";
   } finally {
@@ -5477,7 +5534,7 @@ Plain text only.`
       return `OpenAI general request failed. HTTP ${res.status}. ${data?.error?.message || JSON.stringify(data).slice(0, 300)}`;
     }
 
-    return String(data?.choices?.[0]?.message?.content || "").trim() || "No answer returned.";
+    return extractOpenAIText(data) || "No answer returned.";
   } catch (error) {
     return `OpenAI general request failed safely: ${error?.message || error}`;
   } finally {
@@ -5647,7 +5704,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env) {
     });
 
     const data = await readJsonResponseSafely(res, "OpenAI research intent inference request");
-    let raw = String(data?.choices?.[0]?.message?.content || "").trim();
+    let raw = extractOpenAIText(data);
     raw = raw.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
 
     const parsed = JSON.parse(raw);
@@ -7932,7 +7989,7 @@ async function expandQuestionForResearchRetrieval(userQuery, env) {
     });
 
     const data = await readJsonResponseSafely(res, "OpenAI retrieval expansion request");
-    const value = data?.choices?.[0]?.message?.content || "";
+    const value = extractOpenAIText(data);
 
     return cleanFetchedArticleText(value)
       .replace(/^["']|["']$/g, "")
@@ -9031,7 +9088,7 @@ ${String(userMessage || "").slice(0, 1200)}
 
     const data = await readJsonResponseSafely(res, "OpenAI intent-classification request");
 
-    const content = data?.choices?.[0]?.message?.content || "";
+    const content = extractOpenAIText(data);
     const parsed = parseJsonObjectFromText(content);
 
     if (!parsed || typeof parsed !== "object") return fallback;
@@ -9396,7 +9453,7 @@ Strict rewriting rules:
       return convertReportStyleAnswerLocally(answer);
     }
 
-    const rewritten = String(data?.choices?.[0]?.message?.content || "").trim();
+    const rewritten = extractOpenAIText(data);
 
     if (!rewritten) return convertReportStyleAnswerLocally(answer);
 
@@ -10374,7 +10431,7 @@ Never answer a paper recommendation request with only a field summary.
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5",
         messages,
-        max_completion_tokens: hasContext ? 2600 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 1700 : 2100)
+        max_completion_tokens: hasContext ? 6000 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 4000 : 5000)
       })
     });
 
@@ -10391,7 +10448,7 @@ Never answer a paper recommendation request with only a field summary.
       return `OpenAI API error: ${data?.error?.message || `HTTP ${res.status}`}`;
     }
 
-    return data?.choices?.[0]?.message?.content || "No answer was generated.";
+    return extractOpenAIText(data) || getOpenAIErrorMessage(data, "No answer was generated. Please try again with a shorter question.");
   } catch (error) {
     if (error && error.name === "AbortError") {
       return "OpenAI API timeout after 70 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
