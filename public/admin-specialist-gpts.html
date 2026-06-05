@@ -5,6 +5,95 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Specialist GPT Admin | Paper_Talk</title>
   <link rel="stylesheet" href="/style.css">
+
+  <style>
+    .gpt-picker-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin: 18px 0 10px;
+    }
+
+    .gpt-picker-card {
+      border: 1px solid #b9c7ff;
+      border-radius: 18px;
+      background: #ffffff;
+      padding: 18px;
+      text-align: left;
+      cursor: pointer;
+      transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+    }
+
+    .gpt-picker-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 16px 34px rgba(20, 40, 160, 0.10);
+    }
+
+    .gpt-picker-card.active {
+      border-color: #1428a0;
+      box-shadow: 0 0 0 3px rgba(20, 40, 160, 0.12);
+      background: #f8faff;
+    }
+
+    .gpt-picker-card.disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      background: #f8fafc;
+    }
+
+    .gpt-picker-card.disabled:hover {
+      transform: none;
+      box-shadow: none;
+    }
+
+    .gpt-picker-card h3 {
+      margin: 8px 0 6px;
+      color: #1428a0;
+      font-size: 20px;
+    }
+
+    .gpt-picker-meta {
+      margin: 0;
+      color: #64748b;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .gpt-badge {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #1428a0;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .gpt-badge.future {
+      background: #f1f5f9;
+      color: #64748b;
+    }
+
+    .selected-gpt-box {
+      margin-top: 12px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid #b9c7ff;
+      background: #f8faff;
+      color: #1428a0;
+      font-weight: 800;
+    }
+
+    .warning-note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      color: #9a3412;
+      line-height: 1.55;
+    }
+  </style>
 </head>
 
 <body>
@@ -23,8 +112,8 @@
 </header>
 
 <main class="container">
-  <h1>Neuro-GPT Admin</h1>
-  <p>Upload PDF/TXT knowledge only to the Neuro-GPT specialist database. Paper_Talk Vision GPT upload is handled separately.</p>
+  <h1>Specialist GPT Admin</h1>
+  <p>Upload PDF/TXT knowledge to a selected Specialist GPT. Paper_Talk Vision GPT upload is handled separately.</p>
 
   <section class="card">
     <h2>Specialist Admin Access</h2>
@@ -41,32 +130,44 @@
 
   <div id="adminContent" style="display:none;">
 
+    <section class="card">
+      <h2>Choose Specialist GPT DB</h2>
+      <p>Select which Specialist GPT will receive the uploaded PDF/TXT knowledge.</p>
+
+      <div id="gptPickerGrid" class="gpt-picker-grid"></div>
+      <input type="hidden" id="selectedGptKey" value="neuroscience">
+
+      <div id="selectedGptBox" class="selected-gpt-box"></div>
+
+      <div class="warning-note">
+        Current active upload target is Neuro-GPT. Future GPT cards are shown for design and expansion.
+        Enable each future GPT only after its isolated DB/backend route is ready, so databases never mix.
+      </div>
+    </section>
+
     <section class="card write-form">
-      <h2>Upload Neuro-GPT PDF / TXT Knowledge</h2>
-      <p>
-        Select one or more PDF/TXT files. They will be uploaded only for Neuro-GPT.
-        No title or URL fields are shown here; the file name will be used internally as the document title.
+      <h2 id="uploadTitle">Upload Neuro-GPT PDF / TXT Knowledge</h2>
+      <p id="uploadDescription">
+        Select one or more PDF/TXT files. No title or URL fields are shown here; the file name will be used internally as the document title.
       </p>
 
-      <form onsubmit="importNeuroFullTextFile(event)">
-        <input type="hidden" id="fullTextGptKey" value="neuroscience">
-
+      <form onsubmit="importSpecialistFullTextFile(event)">
         <div class="full-row">
-          <label>Neuro-GPT PDF / TXT File(s)</label>
+          <label id="fileInputLabel">Neuro-GPT PDF / TXT File(s)</label>
           <input type="file" id="researchFullTextFile" accept=".pdf,.txt,text/plain,application/pdf" multiple required>
         </div>
 
-        <button type="submit">Upload to Neuro-GPT</button>
+        <button id="uploadButton" type="submit">Upload to Neuro-GPT</button>
         <p id="researchFullTextStatus"></p>
         <div id="researchFullTextResultList"></div>
       </form>
     </section>
 
     <section class="card">
-      <h2>Stored Neuro-GPT PDF / TXT Files</h2>
-      <p>View or delete uploaded Neuro-GPT full-text files.</p>
+      <h2 id="storedTitle">Stored Neuro-GPT PDF / TXT Files</h2>
+      <p id="storedDescription">View or delete uploaded files for the selected Specialist GPT.</p>
 
-      <button onclick="loadStoredFullTextFiles()">Load Stored Neuro-GPT Files</button>
+      <button id="loadStoredButton" onclick="loadStoredFullTextFiles()">Load Stored Neuro-GPT Files</button>
       <p id="storedFullTextStatus"></p>
       <div id="storedFullTextList"></div>
     </section>
@@ -79,8 +180,128 @@
 const ADMIN_KEY_STORAGE = "paperTalkSpecialistAdminKey";
 const ADMIN_KEY_EXPIRES = "paperTalkSpecialistAdminKeyExpires";
 const ONE_HOUR = 60 * 60 * 1000;
-const GPT_KEY = "neuroscience";
-const GPT_LABEL = "Neuro-GPT";
+
+/*
+  Add future GPTs here.
+  Keep enabled:false until that GPT has an isolated backend DB ready.
+  When ready, change enabled:false to enabled:true.
+*/
+const SPECIALIST_GPTS = [
+  {
+    key: "neuroscience",
+    label: "Neuro-GPT",
+    emoji: "🧠",
+    badge: "Active",
+    description: "Private neuroscience literature workspace.",
+    enabled: true
+  },
+  {
+    key: "single_cell",
+    label: "Single-cell GPT",
+    emoji: "🧬",
+    badge: "Coming Soon",
+    description: "Single-cell RNA-seq / multiome analysis knowledge.",
+    enabled: false
+  },
+  {
+    key: "spatial_biology",
+    label: "Spatial Biology GPT",
+    emoji: "🧫",
+    badge: "Coming Soon",
+    description: "Spatial transcriptomics and tissue mapping knowledge.",
+    enabled: false
+  },
+  {
+    key: "cancer_genomics",
+    label: "Cancer Genomics GPT",
+    emoji: "🧬",
+    badge: "Coming Soon",
+    description: "Cancer genomics, tumor evolution, and precision oncology knowledge.",
+    enabled: false
+  },
+  {
+    key: "mitochondria",
+    label: "Mitochondria GPT",
+    emoji: "⚡",
+    badge: "Coming Soon",
+    description: "Mitochondrial biology and metabolism knowledge.",
+    enabled: false
+  }
+];
+
+function getSelectedGpt() {
+  const selectedKey = document.getElementById("selectedGptKey")?.value || "neuroscience";
+  return SPECIALIST_GPTS.find(gpt => gpt.key === selectedKey) || SPECIALIST_GPTS[0];
+}
+
+function setSelectedGpt(gptKey) {
+  const nextGpt = SPECIALIST_GPTS.find(gpt => gpt.key === gptKey);
+
+  if (!nextGpt) return;
+
+  if (!nextGpt.enabled) {
+    alert(`${nextGpt.label} is not active yet. Enable its isolated DB/backend first, then set enabled:true in admin-specialist-gpts.html.`);
+    return;
+  }
+
+  document.getElementById("selectedGptKey").value = nextGpt.key;
+  renderGptPicker();
+  updateSelectedGptUi();
+  clearUploadAndStoredStatus();
+}
+
+function renderGptPicker() {
+  const grid = document.getElementById("gptPickerGrid");
+  const selected = getSelectedGpt();
+
+  if (!grid) return;
+
+  grid.innerHTML = SPECIALIST_GPTS.map(gpt => {
+    const classes = ["gpt-picker-card"];
+    if (gpt.key === selected.key) classes.push("active");
+    if (!gpt.enabled) classes.push("disabled");
+
+    const badgeClass = gpt.enabled ? "gpt-badge" : "gpt-badge future";
+
+    return `
+      <button type="button" class="${classes.join(" ")}" onclick="setSelectedGpt('${escapeHtml(gpt.key)}')">
+        <span class="${badgeClass}">${escapeHtml(gpt.badge)}</span>
+        <h3>${escapeHtml(gpt.emoji)} ${escapeHtml(gpt.label)}</h3>
+        <p class="gpt-picker-meta">${escapeHtml(gpt.description)}</p>
+      </button>
+    `;
+  }).join("");
+}
+
+function updateSelectedGptUi() {
+  const gpt = getSelectedGpt();
+
+  const selectedBox = document.getElementById("selectedGptBox");
+  const uploadTitle = document.getElementById("uploadTitle");
+  const uploadButton = document.getElementById("uploadButton");
+  const fileInputLabel = document.getElementById("fileInputLabel");
+  const storedTitle = document.getElementById("storedTitle");
+  const loadStoredButton = document.getElementById("loadStoredButton");
+
+  if (selectedBox) selectedBox.textContent = `Selected target DB: ${gpt.label}`;
+  if (uploadTitle) uploadTitle.textContent = `Upload ${gpt.label} PDF / TXT Knowledge`;
+  if (uploadButton) uploadButton.textContent = `Upload to ${gpt.label}`;
+  if (fileInputLabel) fileInputLabel.textContent = `${gpt.label} PDF / TXT File(s)`;
+  if (storedTitle) storedTitle.textContent = `Stored ${gpt.label} PDF / TXT Files`;
+  if (loadStoredButton) loadStoredButton.textContent = `Load Stored ${gpt.label} Files`;
+}
+
+function clearUploadAndStoredStatus() {
+  const status = document.getElementById("researchFullTextStatus");
+  const resultList = document.getElementById("researchFullTextResultList");
+  const storedStatus = document.getElementById("storedFullTextStatus");
+  const storedList = document.getElementById("storedFullTextList");
+
+  if (status) status.textContent = "";
+  if (resultList) resultList.innerHTML = "";
+  if (storedStatus) storedStatus.textContent = "";
+  if (storedList) storedList.innerHTML = "";
+}
 
 function updateAdminContentVisibility() {
   const content = document.getElementById("adminContent");
@@ -179,16 +400,7 @@ function clearAdminKey() {
   localStorage.removeItem(ADMIN_KEY_EXPIRES);
   document.getElementById("globalAdminKey").value = "";
 
-  const status = document.getElementById("researchFullTextStatus");
-  const resultList = document.getElementById("researchFullTextResultList");
-  const storedStatus = document.getElementById("storedFullTextStatus");
-  const storedList = document.getElementById("storedFullTextList");
-
-  if (status) status.textContent = "";
-  if (resultList) resultList.innerHTML = "";
-  if (storedStatus) storedStatus.textContent = "";
-  if (storedList) storedList.innerHTML = "";
-
+  clearUploadAndStoredStatus();
   updateAdminKeyStatus();
   updateAdminContentVisibility();
 }
@@ -277,7 +489,7 @@ function titleFromFullTextFileName(fileName) {
     .replace(/\.[^.]+$/, "")
     .replace(/[_\-]+/g, " ")
     .replace(/\s+/g, " ")
-    .trim() || "Neuro-GPT uploaded document";
+    .trim() || "Specialist GPT uploaded document";
 }
 
 function prepareFullTextForUpload(text) {
@@ -292,8 +504,9 @@ function prepareFullTextForUpload(text) {
 async function uploadResearchFullTextPayloadWithRetries({ key, payload }) {
   const baseText = String(payload.text || "");
   const title = String(payload.title || payload.fileName || "Uploaded document").trim();
+  const selectedGpt = getSelectedGpt();
   const fallbackText = [
-    "Neuro-GPT PDF metadata-only fallback",
+    `${selectedGpt.label} PDF metadata-only fallback`,
     `Title: ${title}`,
     payload.fileName ? `File name: ${payload.fileName}` : "",
     baseText ? `Extracted preview: ${baseText.slice(0, 1200)}` : ""
@@ -338,11 +551,17 @@ async function uploadResearchFullTextPayloadWithRetries({ key, payload }) {
   return lastResult;
 }
 
-async function importNeuroFullTextFile(e) {
+async function importSpecialistFullTextFile(e) {
   e.preventDefault();
 
   const key = requireAdminKey();
   if (!key) return;
+
+  const selectedGpt = getSelectedGpt();
+  if (!selectedGpt.enabled) {
+    alert(`${selectedGpt.label} is not active yet.`);
+    return;
+  }
 
   const fileInput = document.getElementById("researchFullTextFile");
   const status = document.getElementById("researchFullTextStatus");
@@ -350,11 +569,11 @@ async function importNeuroFullTextFile(e) {
   const files = Array.from(fileInput.files || []);
 
   if (!files.length) {
-    alert("Please select one or more Neuro-GPT PDF or TXT files.");
+    alert(`Please select one or more ${selectedGpt.label} PDF or TXT files.`);
     return;
   }
 
-  if (status) status.textContent = `Starting Neuro-GPT full-text import for ${files.length} file(s)...`;
+  if (status) status.textContent = `Starting ${selectedGpt.label} full-text import for ${files.length} file(s)...`;
   if (resultList) resultList.innerHTML = "";
 
   const seenHashes = new Map();
@@ -362,7 +581,7 @@ async function importNeuroFullTextFile(e) {
 
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index];
-    const fileName = file.name || `neuro-gpt-full-text-${index + 1}`;
+    const fileName = file.name || `${selectedGpt.key}-full-text-${index + 1}`;
     const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
 
     try {
@@ -393,12 +612,12 @@ async function importNeuroFullTextFile(e) {
 
       seenHashes.set(textHash, fileName);
 
-      if (status) status.textContent = `Uploading ${index + 1}/${files.length} to ${GPT_LABEL}: ${fileName}`;
+      if (status) status.textContent = `Uploading ${index + 1}/${files.length} to ${selectedGpt.label}: ${fileName}`;
 
       const result = await uploadResearchFullTextPayloadWithRetries({
         key,
         payload: {
-          gptKey: GPT_KEY,
+          gptKey: selectedGpt.key,
           title: titleFromFullTextFileName(fileName),
           sourceUrl: "",
           pdfLink: "",
@@ -412,7 +631,7 @@ async function importNeuroFullTextFile(e) {
         results.push({
           fileName,
           status: "failed",
-          message: result.error || result.message || "Neuro-GPT full text import failed."
+          message: result.error || result.message || `${selectedGpt.label} full text import failed.`
         });
         continue;
       }
@@ -448,12 +667,12 @@ async function importNeuroFullTextFile(e) {
   const failed = results.filter(r => r.status === "failed").length;
 
   if (status) {
-    status.textContent = `Neuro-GPT import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
+    status.textContent = `${selectedGpt.label} import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
   }
 
   if (resultList) resultList.innerHTML = renderResearchFullTextResults(results);
 
-  alert(`Neuro-GPT import complete.\nImported: ${imported}\nSkipped duplicates: ${skipped}\nFailed: ${failed}`);
+  alert(`${selectedGpt.label} import complete.\nImported: ${imported}\nSkipped duplicates: ${skipped}\nFailed: ${failed}`);
 
   if (imported > 0) {
     e.target.reset();
@@ -484,13 +703,19 @@ async function loadStoredFullTextFiles() {
   const key = requireAdminKey();
   if (!key) return;
 
+  const selectedGpt = getSelectedGpt();
   const status = document.getElementById("storedFullTextStatus");
   const list = document.getElementById("storedFullTextList");
 
-  if (status) status.textContent = "Loading stored Neuro-GPT files...";
+  if (!selectedGpt.enabled) {
+    alert(`${selectedGpt.label} is not active yet.`);
+    return;
+  }
+
+  if (status) status.textContent = `Loading stored ${selectedGpt.label} files...`;
   if (list) list.innerHTML = "";
 
-  const params = new URLSearchParams({ gptKey: GPT_KEY });
+  const params = new URLSearchParams({ gptKey: selectedGpt.key });
   const res = await fetch("/api/admin/specialist/fulltext/list?" + params.toString(), {
     method: "GET",
     headers: { "X-Specialist-Admin-Key": key }
@@ -499,15 +724,15 @@ async function loadStoredFullTextFiles() {
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok || !data.ok) {
-    if (status) status.textContent = data.error || data.message || "Failed to load stored Neuro-GPT files.";
+    if (status) status.textContent = data.error || data.message || `Failed to load stored ${selectedGpt.label} files.`;
     return;
   }
 
   const files = data.files || [];
-  if (status) status.textContent = `Stored Neuro-GPT files: ${files.length}`;
+  if (status) status.textContent = `Stored ${selectedGpt.label} files: ${files.length}`;
 
   if (!files.length) {
-    if (list) list.innerHTML = "<p>No stored Neuro-GPT files found.</p>";
+    if (list) list.innerHTML = `<p>No stored ${escapeHtml(selectedGpt.label)} files found.</p>`;
     return;
   }
 
@@ -515,17 +740,17 @@ async function loadStoredFullTextFiles() {
     const postId = encodeForInline(file.post_id || "");
     const fileName = encodeForInline(file.file_name || "");
     const contentHash = encodeForInline(file.content_hash || "");
-    const fileGptKey = encodeForInline(file.gpt_key || GPT_KEY);
+    const fileGptKey = encodeForInline(file.gpt_key || selectedGpt.key);
 
     return `
       <article class="post-card">
-        <h3>${escapeHtml(file.title || "Untitled Neuro-GPT document")}</h3>
+        <h3>${escapeHtml(file.title || `Untitled ${selectedGpt.label} document`)}</h3>
         <p><strong>File:</strong> ${escapeHtml(file.file_name || "")}</p>
-        <p><strong>GPT DB:</strong> ${escapeHtml(file.gpt_key || GPT_KEY)}</p>
+        <p><strong>GPT DB:</strong> ${escapeHtml(file.gpt_key || selectedGpt.key)}</p>
         <p><strong>Chunks:</strong> ${escapeHtml(file.chunks || 0)} · <strong>Characters:</strong> ${escapeHtml(file.characters || 0)}</p>
         <p class="post-meta">Uploaded: ${escapeHtml(file.created_at || "")}</p>
         <button class="danger-btn" onclick="deleteStoredFullTextFile('${postId}', '${fileName}', '${contentHash}', '${fileGptKey}')">
-          Delete Stored Neuro-GPT File
+          Delete Stored ${escapeHtml(selectedGpt.label)} File
         </button>
       </article>
     `;
@@ -533,17 +758,18 @@ async function loadStoredFullTextFiles() {
 }
 
 async function deleteStoredFullTextFile(encodedPostId, encodedFileName, encodedContentHash, encodedGptKey) {
+  const selectedGpt = getSelectedGpt();
   const postId = decodeFromInline(encodedPostId);
   const fileName = decodeFromInline(encodedFileName);
   const contentHash = decodeFromInline(encodedContentHash);
-  const gptKey = decodeFromInline(encodedGptKey) || GPT_KEY;
+  const gptKey = decodeFromInline(encodedGptKey) || selectedGpt.key;
 
-  if (gptKey !== GPT_KEY) {
-    alert("This page can only delete Neuro-GPT files.");
+  if (gptKey !== selectedGpt.key) {
+    alert(`This page can only delete files for the selected GPT: ${selectedGpt.label}.`);
     return;
   }
 
-  if (!confirm(`Delete stored Neuro-GPT file?\n\n${fileName}`)) return;
+  if (!confirm(`Delete stored ${selectedGpt.label} file?\n\n${fileName}`)) return;
 
   const key = requireAdminKey();
   if (!key) return;
@@ -558,7 +784,7 @@ async function deleteStoredFullTextFile(encodedPostId, encodedFileName, encodedC
       postId,
       fileName,
       contentHash,
-      gptKey: GPT_KEY
+      gptKey: selectedGpt.key
     })
   });
 
@@ -569,11 +795,13 @@ async function deleteStoredFullTextFile(encodedPostId, encodedFileName, encodedC
     return;
   }
 
-  alert(data.message || "Stored Neuro-GPT file deleted.");
+  alert(data.message || `Stored ${selectedGpt.label} file deleted.`);
   loadStoredFullTextFiles();
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  renderGptPicker();
+  updateSelectedGptUi();
   updateAdminKeyStatus();
 
   const key = getAdminKey();
