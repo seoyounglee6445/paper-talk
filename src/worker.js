@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v79 specialist admin access + assets-safe route patch
+Paper_Talk Worker v78 total GPT quota + safe research-gpts route patch
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea routing.
 - User-first answer behavior: answer the scientific question first.
@@ -56,10 +56,6 @@ export default {
       if (pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
       if (pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
 
-      if (pathname === "/api/admin/specialist/check" && (request.method === "GET" || request.method === "POST")) {
-        return specialistAdminCheck(request, env);
-      }
-
       if (pathname === "/api/admin/check" && (request.method === "GET" || request.method === "POST")) return adminCheck(request, env);
       if (pathname === "/api/admin/debug/visitor" && request.method === "GET") return adminDebugVisitor(request, env);
       if (pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
@@ -70,6 +66,24 @@ export default {
       if (pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
       if (pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
       if (pathname === "/api/admin/post/update" && request.method === "POST") return adminUpdatePost(request, env);
+
+      // Specialist GPT Admin API routes.
+      // These use X-Specialist-Admin-Key and keep each GPT knowledge base separated by gpt_key.
+      if (pathname === "/api/admin/specialist/check" && (request.method === "GET" || request.method === "POST")) {
+        return specialistAdminCheck(request, env);
+      }
+
+      if (pathname === "/api/admin/specialist/fulltext/import" && request.method === "POST") {
+        return specialistAdminImportFullText(request, env);
+      }
+
+      if (pathname === "/api/admin/specialist/fulltext/list" && request.method === "GET") {
+        return specialistAdminListFullText(request, env);
+      }
+
+      if (pathname === "/api/admin/specialist/fulltext/delete" && request.method === "POST") {
+        return specialistAdminDeleteFullText(request, env);
+      }
 
       if (pathname === "/api/admin/research/import-linkedin-csv" && request.method === "POST") {
         return adminImportLinkedInCsv(request, env);
@@ -115,51 +129,45 @@ export default {
         return adminCreateBlogPost(request, env);
       }
 
-      if (pathname === "/admin" || pathname === "/admin.html") {
-        return fetchAsset(env, request, "/admin.html");
+      if (pathname === "/admin") {
+        return redirect(new URL("/admin.html", request.url).toString());
       }
 
-      if (pathname === "/admin-gpt" || pathname === "/admin-gpt.html") {
-        return fetchAsset(env, request, "/admin-gpt.html");
+      if (pathname === "/admin-gpt") {
+        return redirect(new URL("/admin-gpt.html", request.url).toString());
       }
 
-      if (
-        pathname === "/admin-specialist-gpts" ||
-        pathname === "/admin-specialist-gpts.html" ||
-        pathname === "/specialist-admin" ||
-        pathname === "/specialist-admin.html"
-      ) {
-        return fetchAsset(env, request, "/admin-specialist-gpts.html");
+      if (pathname === "/admin-specialist-gpts" || pathname === "/specialist-admin") {
+        return redirect(new URL("/admin-specialist-gpts.html", request.url).toString());
       }
 
       if (pathname === "/research") {
-        return fetchAsset(env, request, "/research.html");
+        return redirect(new URL("/research.html", request.url).toString());
       }
 
       if (pathname === "/study") {
-        return fetchAsset(env, request, "/study.html");
+        return redirect(new URL("/study.html", request.url).toString());
       }
 
       if (pathname === "/visium-gpt") {
-        return fetchAsset(env, request, "/visium-gpt.html");
+        return redirect(new URL("/visium-gpt.html", request.url).toString());
       }
 
-      // Research GPTs page aliases.
-      // /research-gpts and /specialist-gpts both serve the same Specialist GPT admin page.
+      // Public Specialist GPT landing page aliases.
       if (pathname === "/research-gpts" || pathname === "/specialist-gpts") {
-        return fetchAsset(env, request, "/specialist-gpts.html");
+        return redirect(new URL("/specialist-gpts.html", request.url).toString());
       }
 
       if (pathname === "/neuroscience-gpt") {
-        return fetchAsset(env, request, "/visium-gpt.html?gpt=neuroscience");
+        return redirect(new URL("/visium-gpt.html?gpt=neuroscience", request.url).toString());
       }
 
       if (pathname === "/community") {
-        return fetchAsset(env, request, "/community.html");
+        return redirect(new URL("/community.html", request.url).toString());
       }
 
       if (pathname === "/career") {
-        return fetchAsset(env, request, "/career.html");
+        return redirect(new URL("/career.html", request.url).toString());
       }
 
       if (pathname.startsWith("/api/")) {
@@ -186,16 +194,11 @@ export default {
 };
 
 function fetchAsset(env, request, assetPath) {
-  const assetUrl = new URL(assetPath, request.url);
-
-  if (env.ASSETS) {
-    return env.ASSETS.fetch(new Request(assetUrl));
+  if (!env.ASSETS) {
+    return new Response("ASSETS binding is missing. Check wrangler.toml [assets] binding = \"ASSETS\".", { status: 500 });
   }
 
-  // Cloudflare Workers static assets may be served directly from /public
-  // without an env.ASSETS binding. In that setup, redirect aliases such as
-  // /research-gpts or /admin-specialist-gpts to the real .html asset path.
-  return Response.redirect(assetUrl, 302);
+  return env.ASSETS.fetch(new Request(new URL(assetPath, request.url)));
 }
 
 function corsHeaders() {
@@ -880,10 +883,12 @@ function isAdmin(request, env) {
   return Boolean(key && expectedKey && key === expectedKey);
 }
 
+
 function getSpecialistAdminKeyFromRequest(request) {
   const url = new URL(request.url);
   return String(
     request.headers.get("X-Specialist-Admin-Key") ||
+    request.headers.get("X-Admin-Key") ||
     url.searchParams.get("specialistKey") ||
     url.searchParams.get("key") ||
     ""
@@ -892,30 +897,22 @@ function getSpecialistAdminKeyFromRequest(request) {
 
 function isSpecialistAdmin(request, env) {
   const key = getSpecialistAdminKeyFromRequest(request);
-  const specialistKey = String(env.SPECIALIST_ADMIN_KEY || "").trim();
+  const expectedSpecialistKey = String(env.SPECIALIST_ADMIN_KEY || "").trim();
   const fallbackAdminKey = String(env.ADMIN_KEY || "").trim();
 
   return Boolean(
     key &&
     (
-      (specialistKey && key === specialistKey) ||
-      (fallbackAdminKey && key === fallbackAdminKey)
+      (expectedSpecialistKey && key === expectedSpecialistKey) ||
+      (!expectedSpecialistKey && fallbackAdminKey && key === fallbackAdminKey)
     )
   );
 }
 
-function isAdminOrSpecialistAdmin(request, env) {
-  return isAdmin(request, env) || isSpecialistAdmin(request, env);
-}
-
 async function specialistAdminCheck(request, env) {
-  const hasSpecialistKey = Boolean(String(env.SPECIALIST_ADMIN_KEY || "").trim());
-  const hasFallbackAdminKey = Boolean(String(env.ADMIN_KEY || "").trim());
-
-  if (!hasSpecialistKey && !hasFallbackAdminKey) {
+  if (!String(env.SPECIALIST_ADMIN_KEY || env.ADMIN_KEY || "").trim()) {
     return json({
       ok: false,
-      authenticated: false,
       error: "SPECIALIST_ADMIN_KEY or ADMIN_KEY is not configured in Worker secrets."
     }, 500);
   }
@@ -923,7 +920,6 @@ async function specialistAdminCheck(request, env) {
   if (!isSpecialistAdmin(request, env)) {
     return json({
       ok: false,
-      authenticated: false,
       error: "Unauthorized"
     }, 401);
   }
@@ -934,6 +930,48 @@ async function specialistAdminCheck(request, env) {
     message: "Specialist admin key is valid."
   });
 }
+
+function createSpecialistForwardRequest(request, env) {
+  const headers = new Headers(request.headers);
+  const specialistKey = getSpecialistAdminKeyFromRequest(request);
+
+  // Forward to existing admin full-text handlers, which already isolate data by gptKey.
+  // If SPECIALIST_ADMIN_KEY is configured, specialist routes accept that key.
+  // Existing handlers expect X-Admin-Key, so we pass through ADMIN_KEY internally when available.
+  headers.set("X-Admin-Key", String(env.ADMIN_KEY || specialistKey || "").trim());
+
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+    redirect: request.redirect
+  });
+}
+
+async function specialistAdminImportFullText(request, env) {
+  if (!isSpecialistAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  return adminImportResearchFullText(createSpecialistForwardRequest(request, env), env);
+}
+
+async function specialistAdminListFullText(request, env) {
+  if (!isSpecialistAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  return adminListResearchFullText(createSpecialistForwardRequest(request, env), env);
+}
+
+async function specialistAdminDeleteFullText(request, env) {
+  if (!isSpecialistAdmin(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  return adminDeleteResearchFullText(createSpecialistForwardRequest(request, env), env);
+}
+
 
 async function adminCheck(request, env) {
   if (!String(env.ADMIN_KEY || "").trim()) {
@@ -1693,7 +1731,7 @@ async function ensureMinimalResearchKnowledgeForFullText({ postId, title, source
 }
 
 async function adminImportResearchFullText(request, env) {
-  if (!isAdminOrSpecialistAdmin(request, env)) {
+  if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
@@ -1860,7 +1898,7 @@ async function adminImportResearchFullText(request, env) {
 
 
 async function adminListResearchFullText(request, env) {
-  if (!isAdminOrSpecialistAdmin(request, env)) {
+  if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
@@ -1917,7 +1955,7 @@ async function adminListResearchFullText(request, env) {
 }
 
 async function adminDeleteResearchFullText(request, env) {
-  if (!isAdminOrSpecialistAdmin(request, env)) {
+  if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
