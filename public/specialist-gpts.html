@@ -25,46 +25,79 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Header/category banner matched to Paper_Talk Vision GPT.
+   Keep the blue banner at the same height when moving between pages. */
 .header {
   background: #1428a0;
   color: #ffffff;
+  height: 67px;
+  min-height: 67px;
 }
 
+.header .nav,
 .nav {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 18px 24px;
+  width: 100%;
+  max-width: none;
+  height: 67px;
+  min-height: 67px;
+  margin: 0;
+  padding: 0 52px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 18px;
   flex-wrap: nowrap;
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
 }
 
+.header .nav a,
 .nav a {
   color: #ffffff;
   text-decoration: none;
-  font-weight: 700;
+  font-weight: 800;
+  font-size: 16px;
+  line-height: 1;
   white-space: nowrap;
   flex: 0 0 auto;
-  font-size: 15px;
-  line-height: 1;
 }
 
+.header .nav .logo,
 .nav .logo {
   margin-right: auto;
+  color: #ffffff;
+  text-decoration: none;
   font-size: 28px;
   font-weight: 900;
+  line-height: 1;
   white-space: nowrap;
   flex: 0 0 auto;
-  line-height: 1;
 }
 
-@media (max-width: 1100px) {
-  .nav { gap: 10px; padding: 16px 18px; }
-  .nav .logo { font-size: 24px; }
-  .nav a { font-size: 14px; }
+@media (max-width: 900px) {
+  .header,
+  .header .nav,
+  .nav {
+    height: 67px;
+    min-height: 67px;
+  }
+
+  .header .nav,
+  .nav {
+    padding: 0 24px;
+    gap: 14px;
+  }
+
+  .header .nav a,
+  .nav a {
+    font-size: 14px;
+  }
+
+  .header .nav .logo,
+  .nav .logo {
+    font-size: 26px;
+  }
 }
 
 .container {
@@ -262,15 +295,7 @@ body {
 }
 
 @media (max-width: 720px) {
-  .nav {
-    align-items: flex-start;
-  }
-
-  .nav .logo {
-    width: 100%;
-  }
-
-  .container {
+.container {
     padding: 28px 18px 50px;
   }
 
@@ -290,87 +315,6 @@ body {
     padding: 22px;
   }
 }
-
-
-/* =========================================================
-   Paper_Talk nav/font match patch
-   - Makes Specialist GPTs header/category font match Vision GPT.
-   - Keeps menu text on one line.
-   ========================================================= */
-body {
-  font-family: Arial, Helvetica, sans-serif;
-  letter-spacing: normal;
-}
-
-.header .nav {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 18px 28px;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  font-family: Arial, Helvetica, sans-serif;
-  letter-spacing: normal;
-}
-
-.header .nav a {
-  color: #ffffff;
-  text-decoration: none;
-  font-weight: 800;
-  font-size: 16px;
-  line-height: 1.2;
-  letter-spacing: normal;
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-
-.header .nav .logo {
-  margin-right: auto;
-  color: #ffffff;
-  font-size: 28px;
-  font-weight: 900;
-  line-height: 1.2;
-  letter-spacing: normal;
-  text-decoration: none;
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-
-.research-gpts-hero h1,
-.gpt-card h2,
-.coming-card h2 {
-  font-family: Arial, Helvetica, sans-serif;
-  letter-spacing: normal;
-}
-
-@media (max-width: 1100px) {
-  .header .nav {
-    gap: 14px;
-    padding: 16px 20px;
-  }
-
-  .header .nav a {
-    font-size: 15px;
-  }
-
-  .header .nav .logo {
-    font-size: 26px;
-  }
-}
-
-@media (max-width: 720px) {
-  .header .nav {
-    align-items: center;
-  }
-
-  .header .nav .logo {
-    width: auto;
-  }
-}
-
 </style>
 </head>
 
