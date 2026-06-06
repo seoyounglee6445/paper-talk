@@ -837,36 +837,11 @@ body {
   margin: 0;
   background: #eef2ff;
   color: #020617;
-  font-family: Arial, Helvetica, sans-serif;
 }
 
-.header {
-  background: #1428a0;
-  color: #ffffff;
-}
-
-.nav {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 18px 28px;
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  flex-wrap: wrap;
-}
-
-.nav a {
-  color: #ffffff;
-  text-decoration: none;
-  font-weight: 700;
-}
-
-.nav .logo {
-  margin-right: auto;
-  font-size: 28px;
-  font-weight: 900;
-}
-
+/* Header and category menu use the global /style.css styles.
+   This keeps Specialist GPTs visually identical to Paper_Talk Vision GPT
+   and prevents the page from looking zoomed or taller after clicking. */
 .container {
   max-width: 1200px;
   margin: 0 auto;
@@ -1062,14 +1037,6 @@ body {
 }
 
 @media (max-width: 720px) {
-  .nav {
-    align-items: flex-start;
-  }
-
-  .nav .logo {
-    width: 100%;
-  }
-
   .container {
     padding: 28px 18px 50px;
   }
