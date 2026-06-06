@@ -837,207 +837,86 @@ body {
   margin: 0;
   background: #eef2ff;
   color: #020617;
+  font-family: Arial, Helvetica, sans-serif;
 }
 
-/* Header and category menu use the global /style.css styles.
-   This keeps Specialist GPTs visually identical to Paper_Talk Vision GPT
-   and prevents the page from looking zoomed or taller after clicking. */
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 36px 32px 70px;
-}
-
-.auth-box {
-  text-align: right;
-  margin-bottom: 24px;
-}
-
-.auth-box #userText,
-.auth-box #guestInfo {
-  margin-right: 8px;
-}
-
-.signin-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 22px;
-  border-radius: 999px;
-  background: #ffffff;
-  border: 1px solid #b9c7ff;
-  color: #1428a0;
-  font-weight: 800;
-  text-decoration: none;
-  box-shadow: 0 14px 32px rgba(20,40,160,0.12);
-}
-
-.google-dot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
+/* Header/category banner matched to Paper_Talk Vision GPT.
+   Keep the blue banner at the same height when moving between pages. */
+.header {
   background: #1428a0;
   color: #ffffff;
-  font-weight: 900;
+  height: 67px;
+  min-height: 67px;
 }
 
-.research-gpts-hero {
-  margin-top: 10px;
-  margin-bottom: 30px;
-}
-
-.research-gpts-hero h1 {
-  margin: 0 0 12px;
-  color: #1428a0;
-  font-size: 44px;
-  line-height: 1.1;
-}
-
-.research-gpts-hero p {
-  max-width: 820px;
-  line-height: 1.7;
-  font-size: 16px;
-}
-
-.gpt-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(260px, 1fr));
-  gap: 22px;
-  margin-top: 24px;
-}
-
-.gpt-card {
-  min-height: 190px;
-  background: #ffffff;
-  border: 1px solid #b9c7ff;
-  border-radius: 24px;
-  padding: 28px;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
-}
-
-.gpt-card h2 {
-  margin-top: 0;
-  margin-bottom: 12px;
-  color: #1428a0;
-  font-size: 24px;
-}
-
-.gpt-card p {
-  line-height: 1.6;
-  margin-bottom: 0;
-}
-
-.tag {
-  display: inline-block;
-  margin-bottom: 14px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: #fef3c7;
-  color: #92400e;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.clickable-card {
-  cursor: pointer;
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
-}
-
-.clickable-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 22px 48px rgba(0,0,0,0.08);
-}
-
-.coming-card {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  background: #f8fafc;
-}
-
-.coming-card h2 {
-  margin: 0;
-  color: #64748b;
-}
-
-.password-overlay {
-  position: fixed;
-  inset: 0;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: rgba(15, 23, 42, 0.45);
-  z-index: 9999;
-  padding: 20px;
-}
-
-.password-modal {
-  width: min(460px, 100%);
-  background: #ffffff;
-  border-radius: 24px;
-  border: 1px solid #b9c7ff;
-  padding: 28px;
-  box-shadow: 0 24px 70px rgba(0,0,0,0.22);
-}
-
-.password-modal h2 {
-  margin: 0 0 10px;
-  color: #1428a0;
-}
-
-.password-modal input {
+.header .nav,
+.nav {
   width: 100%;
+  max-width: none;
+  height: 67px;
+  min-height: 67px;
+  margin: 0;
+  padding: 0 52px;
   box-sizing: border-box;
-  padding: 13px 14px;
-  border: 1px solid #b9c7ff;
-  border-radius: 14px;
-  font-size: 16px;
-  margin-bottom: 12px;
-}
-
-.password-actions {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
-.password-actions button {
-  border: none;
-  border-radius: 999px;
-  padding: 12px 18px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.password-submit {
-  background: #1428a0;
+.header .nav a,
+.nav a {
   color: #ffffff;
+  text-decoration: none;
+  font-weight: 800;
+  font-size: 16px;
+  line-height: 1;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
-.password-cancel {
-  background: #e2e8f0;
-  color: #0f172a;
+.header .nav .logo,
+.nav .logo {
+  margin-right: auto;
+  color: #ffffff;
+  text-decoration: none;
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
-.password-error {
-  margin-top: 12px;
-  color: #dc2626;
-  font-weight: 700;
-  min-height: 20px;
-}
+@media (max-width: 900px) {
+  .header,
+  .header .nav,
+  .nav {
+    height: 67px;
+    min-height: 67px;
+  }
 
-@media (max-width: 1100px) {
-  .gpt-grid {
-    grid-template-columns: repeat(2, minmax(260px, 1fr));
+  .header .nav,
+  .nav {
+    padding: 0 24px;
+    gap: 14px;
+  }
+
+  .header .nav a,
+  .nav a {
+    font-size: 14px;
+  }
+
+  .header .nav .logo,
+  .nav .logo {
+    font-size: 26px;
   }
 }
 
 @media (max-width: 720px) {
-  .container {
+.container {
     padding: 28px 18px 50px;
   }
 
@@ -1057,87 +936,6 @@ body {
     padding: 22px;
   }
 }
-
-
-/* =========================================================
-   Paper_Talk nav/font match patch
-   - Makes Specialist GPTs header/category font match Vision GPT.
-   - Keeps menu text on one line.
-   ========================================================= */
-body {
-  font-family: Arial, Helvetica, sans-serif;
-  letter-spacing: normal;
-}
-
-.header .nav {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 18px 28px;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  font-family: Arial, Helvetica, sans-serif;
-  letter-spacing: normal;
-}
-
-.header .nav a {
-  color: #ffffff;
-  text-decoration: none;
-  font-weight: 800;
-  font-size: 16px;
-  line-height: 1.2;
-  letter-spacing: normal;
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-
-.header .nav .logo {
-  margin-right: auto;
-  color: #ffffff;
-  font-size: 28px;
-  font-weight: 900;
-  line-height: 1.2;
-  letter-spacing: normal;
-  text-decoration: none;
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-
-.research-gpts-hero h1,
-.gpt-card h2,
-.coming-card h2 {
-  font-family: Arial, Helvetica, sans-serif;
-  letter-spacing: normal;
-}
-
-@media (max-width: 1100px) {
-  .header .nav {
-    gap: 14px;
-    padding: 16px 20px;
-  }
-
-  .header .nav a {
-    font-size: 15px;
-  }
-
-  .header .nav .logo {
-    font-size: 26px;
-  }
-}
-
-@media (max-width: 720px) {
-  .header .nav {
-    align-items: center;
-  }
-
-  .header .nav .logo {
-    width: auto;
-  }
-}
-
 </style>
 </head>
 
