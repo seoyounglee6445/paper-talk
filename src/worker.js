@@ -155,11 +155,10 @@ export default {
         return redirect(new URL("/study.html", request.url).toString());
       }
 
-      // Public Specialist GPT page routes.
-      // Always serve the built-in public Specialist GPT page from the Worker.
-      // This prevents a wrong static specialist-gpts.html asset from showing the admin page.
-      if (pathname === "/research-gpts" || pathname === "/specialist-gpts" || pathname === "/specialist-gpts.html") {
-        return specialistGptsLandingPage(request);
+      // Public Specialist GPT shortcuts should open the real static specialist-gpts.html asset.
+      // Do not intercept /specialist-gpts.html here, because that file exists separately in ASSETS.
+      if (pathname === "/research-gpts" || pathname === "/specialist-gpts") {
+        return redirect(new URL("/specialist-gpts.html", request.url).toString());
       }
 
       const specialistGptKeyFromRoute = getSpecialistGptKeyFromPathname(pathname);
@@ -834,67 +833,38 @@ gtag("config", "G-WWSD3F58L6");
 <link rel="stylesheet" href="/style.css">
 
 <style>
-html,
 body {
   margin: 0;
   background: #eef2ff;
   color: #020617;
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 16px;
-  letter-spacing: normal;
 }
 
 .header {
-  height: 68px;
   background: #1428a0;
   color: #ffffff;
-  display: flex;
-  align-items: center;
 }
 
 .nav {
-  width: 100%;
-  max-width: none;
-  margin: 0;
-  padding: 0 52px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 18px 28px;
   display: flex;
   align-items: center;
-  gap: 20px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  box-sizing: border-box;
+  gap: 22px;
+  flex-wrap: wrap;
 }
 
-.nav a,
-.nav a:link,
-.nav a:visited {
+.nav a {
   color: #ffffff;
   text-decoration: none;
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 16px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: normal;
-  white-space: nowrap;
-  flex: 0 0 auto;
+  font-weight: 700;
 }
 
-.nav a:hover,
-.nav a:active {
-  color: #ffffff;
-  text-decoration: none;
-}
-
-.nav .logo,
-.nav .logo:link,
-.nav .logo:visited {
+.nav .logo {
   margin-right: auto;
-  color: #ffffff;
-  font-family: Arial, Helvetica, sans-serif;
   font-size: 28px;
   font-weight: 900;
-  line-height: 1;
-  letter-spacing: normal;
 }
 
 .container {
@@ -947,20 +917,14 @@ body {
 .research-gpts-hero h1 {
   margin: 0 0 12px;
   color: #1428a0;
-  font-family: Arial, Helvetica, sans-serif;
   font-size: 44px;
-  font-weight: 800;
   line-height: 1.1;
-  letter-spacing: normal;
 }
 
 .research-gpts-hero p {
   max-width: 820px;
   line-height: 1.7;
-  font-family: Arial, Helvetica, sans-serif;
   font-size: 16px;
-  font-weight: 400;
-  letter-spacing: normal;
 }
 
 .gpt-grid {
@@ -983,20 +947,12 @@ body {
   margin-top: 0;
   margin-bottom: 12px;
   color: #1428a0;
-  font-family: Arial, Helvetica, sans-serif;
   font-size: 24px;
-  font-weight: 800;
-  line-height: 1.25;
-  letter-spacing: normal;
 }
 
 .gpt-card p {
   line-height: 1.6;
   margin-bottom: 0;
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 16px;
-  font-weight: 400;
-  letter-spacing: normal;
 }
 
 .tag {
@@ -1031,8 +987,6 @@ body {
 .coming-card h2 {
   margin: 0;
   color: #64748b;
-  letter-spacing: normal;
-  white-space: nowrap;
 }
 
 .password-overlay {
@@ -1108,18 +1062,12 @@ body {
 }
 
 @media (max-width: 720px) {
-  .header {
-    height: auto;
-  }
-
   .nav {
-    padding: 16px 18px;
-    align-items: center;
-    gap: 16px;
+    align-items: flex-start;
   }
 
   .nav .logo {
-    font-size: 26px;
+    width: 100%;
   }
 
   .container {
@@ -1142,6 +1090,87 @@ body {
     padding: 22px;
   }
 }
+
+
+/* =========================================================
+   Paper_Talk nav/font match patch
+   - Makes Specialist GPTs header/category font match Vision GPT.
+   - Keeps menu text on one line.
+   ========================================================= */
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  letter-spacing: normal;
+}
+
+.header .nav {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 18px 28px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  font-family: Arial, Helvetica, sans-serif;
+  letter-spacing: normal;
+}
+
+.header .nav a {
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 800;
+  font-size: 16px;
+  line-height: 1.2;
+  letter-spacing: normal;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.header .nav .logo {
+  margin-right: auto;
+  color: #ffffff;
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1.2;
+  letter-spacing: normal;
+  text-decoration: none;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.research-gpts-hero h1,
+.gpt-card h2,
+.coming-card h2 {
+  font-family: Arial, Helvetica, sans-serif;
+  letter-spacing: normal;
+}
+
+@media (max-width: 1100px) {
+  .header .nav {
+    gap: 14px;
+    padding: 16px 20px;
+  }
+
+  .header .nav a {
+    font-size: 15px;
+  }
+
+  .header .nav .logo {
+    font-size: 26px;
+  }
+}
+
+@media (max-width: 720px) {
+  .header .nav {
+    align-items: center;
+  }
+
+  .header .nav .logo {
+    width: auto;
+  }
+}
+
 </style>
 </head>
 
