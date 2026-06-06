@@ -5,6 +5,43 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin | Paper_Talk</title>
   <link rel="stylesheet" href="/style.css">
+
+  <style>
+    /* Match admin.html category order/style and keep menu items on one line. */
+    .header .nav {
+      display: flex !important;
+      align-items: center !important;
+      flex-wrap: nowrap !important;
+      gap: 18px !important;
+      overflow-x: auto !important;
+      overflow-y: hidden !important;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .header .nav .logo,
+    .header .nav a {
+      white-space: nowrap !important;
+      flex: 0 0 auto !important;
+      line-height: 1.1 !important;
+    }
+
+    .header .nav a {
+      font-size: 15px !important;
+    }
+
+    .header .nav .logo {
+      margin-right: auto !important;
+    }
+
+    @media (max-width: 900px) {
+      .header .nav {
+        gap: 14px !important;
+      }
+      .header .nav a {
+        font-size: 14px !important;
+      }
+    }
+  </style>
 </head>
 
 <body>
@@ -14,7 +51,8 @@
     <a href="/">Home</a>
     <a href="/admin.html">Admin</a>
     <a href="/admin-gpt.html">GPT Usage</a>
-    <a href="/admin-specialist-gpts.html">Research GPTs</a>
+    <a href="/specialist-admin">Research GPT Admin</a>
+    <a href="/specialist-gpts.html">Specialist GPTs</a>
     <a href="/research">Research Paper</a>
     <a href="/study">Study Materials</a>
     <a href="/community">Community</a>
