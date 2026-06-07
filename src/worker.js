@@ -2927,7 +2927,7 @@ async function adminImportResearchFullText(request, env) {
   const sourceUrlInput = String(data.sourceUrl || data.articleLink || "").trim();
   const pdfLinkInput = String(data.pdfLink || "").trim();
   const fileName = String(data.fileName || "full-text-file").trim();
-  const sourceType = String(data.sourceType || "full_text_pdf_or_txt").trim();
+  const sourceType = String(data.sourceType || "full_text_pdf_txt_or_code").trim();
   const rawText = String(data.text || data.extractedText || "").trim();
 
   if (!titleInput && !sourceUrlInput && !pdfLinkInput) {
@@ -2940,7 +2940,7 @@ async function adminImportResearchFullText(request, env) {
   if (!rawText || rawText.length < PAPER_TALK_MIN_FULLTEXT_CHARS) {
     return json({
       ok: false,
-      error: "Full text is too short. If this PDF is scanned images, use a text-based PDF or OCR it first. Extracted characters: " + rawText.length
+      error: "Full text/code is too short. If this PDF is scanned images, use a text-based PDF or OCR it first. Extracted characters: " + rawText.length
     }, 400);
   }
 
@@ -2980,7 +2980,7 @@ async function adminImportResearchFullText(request, env) {
       title: duplicateRow.title || finalTitle,
       fileName: duplicateRow.file_name || fileName,
       fullTextCharacters: cleanedFullText.length,
-      message: "This exact PDF/TXT full text was already imported, so it was skipped."
+      message: "This exact PDF/TXT/code file was already imported, so it was skipped."
     });
   }
 
@@ -2989,7 +2989,7 @@ async function adminImportResearchFullText(request, env) {
   if (!chunks.length) {
     const metadataChunk = [
       "Paper_Talk DB Research Paper",
-      "Knowledge source: PDF_METADATA_ONLY_OR_LOW_TEXT_UPLOAD",
+      "Knowledge source: PDF_TXT_CODE_METADATA_ONLY_OR_LOW_TEXT_UPLOAD",
       `Title: ${finalTitle}`,
       finalSourceUrl ? `Article link: ${finalSourceUrl}` : "",
       finalPdfLink ? `PDF link: ${finalPdfLink}` : "",
@@ -3078,8 +3078,8 @@ async function adminImportResearchFullText(request, env) {
     duplicate: false,
     vectorIndexed,
     message: vectorIndexed
-      ? "Full text PDF/TXT was stored as searchable chunks and indexed in Vectorize."
-      : "Full text PDF/TXT was stored as safe D1 chunks. Vectorize indexing is intentionally skipped during batch upload to prevent Worker 500/503 errors."
+      ? "Full text PDF/TXT/code file was stored as searchable chunks and indexed in Vectorize."
+      : "Full text PDF/TXT/code file was stored as safe D1 chunks. Vectorize indexing is intentionally skipped during batch upload to prevent Worker 500/503 errors."
   });
 }
 
