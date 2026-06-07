@@ -223,9 +223,9 @@
         <textarea name="abstract" placeholder="Paste abstract here"></textarea>
       </div>
       <div class="full-row">
-        <label>Optional Full Text PDF / TXT Upload</label>
-        <input type="file" id="newResearchFullTextFiles" name="newResearchFullTextFiles" accept=".pdf,.txt,text/plain,application/pdf" multiple>
-        <p class="post-meta">Optional. Select one or more text-based PDFs/TXT files. After the paper is saved, the full text will be attached to this paper and indexed automatically. Duplicate PDFs are skipped.</p>
+        <label>Optional Full Text PDF / TXT / Python / R Upload</label>
+        <input type="file" id="newResearchFullTextFiles" name="newResearchFullTextFiles" accept=".pdf,.txt,.py,.r,.R,text/plain,application/pdf,text/x-python,text/x-rsrc" multiple>
+        <p class="post-meta">Optional. Select one or more text-based PDFs/TXT files plus Python (.py) or R (.R/.r) scripts. After the paper is saved, the full text/code will be attached to this paper and indexed automatically. Duplicate files are skipped.</p>
       </div>
 
       <p id="newResearchFullTextStatus"></p>
@@ -237,8 +237,8 @@
 
 
   <section class="card write-form">
-    <h2>Import Research Paper Full Text PDF / TXT</h2>
-    <p>Upload one or many actual paper PDF/TXT full texts. This is paper evidence, not Thinking Logic. GPT will use this before abstract/metadata when answering about the matched paper. Duplicate PDFs in the same batch will be skipped automatically.</p>
+    <h2>Import Research Paper Full Text PDF / TXT / Python / R</h2>
+    <p>Upload one or many actual paper PDF/TXT full texts plus Python (.py) and R (.R/.r) scripts. These files are paper evidence and reproducible analysis workflow/code, not Thinking Logic. GPT will use them before abstract/metadata when answering about the matched paper. Duplicate files in the same batch will be skipped automatically.</p>
 
     <form onsubmit="importResearchFullTextFile(event)">
       <div class="full-row">
@@ -252,11 +252,11 @@
       </div>
 
       <div class="full-row">
-        <label>Research Paper Full Text PDF / TXT File(s)</label>
-        <input type="file" id="researchFullTextFile" accept=".pdf,.txt,text/plain,application/pdf" multiple required>
+        <label>Research Paper Full Text PDF / TXT / Python / R File(s)</label>
+        <input type="file" id="researchFullTextFile" accept=".pdf,.txt,.py,.r,.R,text/plain,application/pdf,text/x-python,text/x-rsrc" multiple required>
       </div>
 
-      <button type="submit">Import Research Paper Full Text File(s)</button>
+      <button type="submit">Import Research Paper Full Text / Code File(s)</button>
       <p id="researchFullTextStatus"></p>
       <div id="researchFullTextResultList"></div>
     </form>
@@ -870,15 +870,33 @@ async function createResearchPaper(e) {
   const failed = uploadResults.filter(r => r.status === "failed").length;
 
   if (status) {
-    status.textContent = `Research paper saved. Full-text import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
+    status.textContent = `Research paper saved. Full-text/code import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
   }
 
   alert(`Research paper saved.
-Full-text imported: ${imported}
+Full-text/code imported: ${imported}
 Skipped duplicates: ${skipped}
 Failed: ${failed}`);
   formEl.reset();
   loadAdminPosts();
+}
+
+function getResearchUploadSourceType(fileName, mimeType = "") {
+  const name = String(fileName || "").toLowerCase();
+  const type = String(mimeType || "").toLowerCase();
+
+  if (name.endsWith(".pdf") || type === "application/pdf") return "pdf";
+  if (name.endsWith(".py") || type.includes("python")) return "python_code";
+  if (name.endsWith(".r") || type.includes("x-rsrc") || type.includes("r-script")) return "r_code";
+  return "text";
+}
+
+function getResearchUploadKindLabel(fileName, mimeType = "") {
+  const sourceType = getResearchUploadSourceType(fileName, mimeType);
+  if (sourceType === "python_code") return "Python code";
+  if (sourceType === "r_code") return "R code";
+  if (sourceType === "pdf") return "PDF full text";
+  return "TXT/text full text";
 }
 
 async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfLink, files, status, resultList }) {
@@ -900,7 +918,7 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
       const cleanText = String(extractedText || "").trim();
 
       if (!cleanText || cleanText.length < 20) {
-        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version. Extracted text was under 20 characters." });
+        results.push({ fileName, status: "failed", message: "Not enough readable text/code. OCR scanned PDFs first, or try TXT/OCR/code version. Extracted text was under 20 characters." });
         continue;
       }
 
@@ -927,7 +945,7 @@ async function importNewResearchPaperFullTextFiles({ key, title, sourceUrl, pdfL
           sourceUrl,
           pdfLink,
           fileName,
-          sourceType: isPdf ? "pdf" : "text",
+          sourceType: getResearchUploadSourceType(fileName, file.type),
           text: uploadText
         }
       });
@@ -1193,11 +1211,11 @@ async function importResearchFullTextFile(e) {
   const files = Array.from(fileInput.files || []);
 
   if (!files.length) {
-    alert("Please select one or more research paper PDF or TXT files.");
+    alert("Please select one or more research paper PDF, TXT, Python, or R files.");
     return;
   }
 
-  if (files.length > 1 && globalMatchValue && !confirm("You selected multiple files with one shared title/URL match. This will attach every selected PDF to the same matched paper if the Worker finds the same record. Continue?\n\nTip: Leave the match box empty for batch upload so each PDF is matched by its file name.")) {
+  if (files.length > 1 && globalMatchValue && !confirm("You selected multiple files with one shared title/URL match. This will attach every selected PDF/TXT/code file to the same matched paper if the Worker finds the same record. Continue?\n\nTip: Leave the match box empty for batch upload so each file is matched by its file name.")) {
     return;
   }
 
@@ -1224,7 +1242,7 @@ async function importResearchFullTextFile(e) {
       const cleanText = String(extractedText || "").trim();
 
       if (!cleanText || cleanText.length < 20) {
-        results.push({ fileName, status: "failed", message: "Not enough readable text. OCR scanned PDFs first, or try TXT/OCR version. Extracted text was under 20 characters." });
+        results.push({ fileName, status: "failed", message: "Not enough readable text/code. OCR scanned PDFs first, or try TXT/OCR/code version. Extracted text was under 20 characters." });
         continue;
       }
 
@@ -1256,7 +1274,7 @@ async function importResearchFullTextFile(e) {
           sourceUrl: isUrl ? matchValue : "",
           pdfLink,
           fileName,
-          sourceType: isPdf ? "pdf" : "text",
+          sourceType: getResearchUploadSourceType(fileName, file.type),
           text: uploadText
         }
       });
@@ -1304,14 +1322,14 @@ async function importResearchFullTextFile(e) {
   const failed = results.filter(r => r.status === "failed").length;
 
   if (status) {
-    status.textContent = `Full-text import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
+    status.textContent = `Full-text/code import complete. Imported: ${imported}, Skipped duplicates: ${skipped}, Failed: ${failed}.`;
   }
 
   if (resultList) {
     resultList.innerHTML = renderResearchFullTextResults(results);
   }
 
-  alert(`Full-text import complete.\nImported: ${imported}\nSkipped duplicates: ${skipped}\nFailed: ${failed}`);
+  alert(`Full-text/code import complete.\nImported: ${imported}\nSkipped duplicates: ${skipped}\nFailed: ${failed}`);
 
   if (imported > 0) {
     e.target.reset();
@@ -1620,7 +1638,7 @@ async function importThinkingLogicFile(e) {
       body: JSON.stringify({
         title: titleInput.value.trim() || fileName.replace(/\.[^.]+$/, ""),
         fileName,
-        sourceType: isPdf ? "pdf" : "text",
+        sourceType: getResearchUploadSourceType(fileName, file.type),
         text: extractedText
       })
     });
