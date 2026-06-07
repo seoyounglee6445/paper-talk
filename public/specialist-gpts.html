@@ -17,6 +17,8 @@ gtag('config', 'G-WWSD3F58L6');
 <link rel="stylesheet" href="/style.css">
 
 <style>
+/* Important: header/nav/logo styles are intentionally NOT defined here.
+   This page uses the exact same /style.css header as Paper_Talk Vision GPT. */
 .auth-box {
   text-align: right;
   margin-bottom: 20px;
@@ -27,14 +29,29 @@ gtag('config', 'G-WWSD3F58L6');
   margin-right: 8px;
 }
 
-.specialist-intro {
+.auth-box .btn,
+.auth-box button.btn {
+  margin-left: 8px;
+}
+
+.auth-box button.btn {
+  border: none;
+  cursor: pointer;
+}
+
+.research-gpts-hero {
+  margin-top: 0;
+  margin-bottom: 30px;
+}
+
+.research-gpts-hero p {
   max-width: 820px;
   line-height: 1.7;
 }
 
 .gpt-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(260px, 1fr));
+  grid-template-columns: repeat(4, minmax(240px, 1fr));
   gap: 22px;
   margin-top: 24px;
 }
@@ -52,7 +69,6 @@ gtag('config', 'G-WWSD3F58L6');
   margin-top: 0;
   margin-bottom: 12px;
   color: #1428a0;
-  font-size: 24px;
 }
 
 .gpt-card p {
@@ -107,7 +123,7 @@ gtag('config', 'G-WWSD3F58L6');
 
 .password-modal {
   width: min(460px, 100%);
-  background: #ffffff;
+  background: white;
   border-radius: 24px;
   border: 1px solid #b9c7ff;
   padding: 28px;
@@ -145,7 +161,7 @@ gtag('config', 'G-WWSD3F58L6');
 
 .password-submit {
   background: #1428a0;
-  color: #ffffff;
+  color: white;
 }
 
 .password-cancel {
@@ -162,11 +178,15 @@ gtag('config', 'G-WWSD3F58L6');
 
 @media (max-width: 1100px) {
   .gpt-grid {
-    grid-template-columns: repeat(2, minmax(260px, 1fr));
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
   }
 }
 
 @media (max-width: 720px) {
+  .auth-box {
+    text-align: left;
+  }
+
   .gpt-grid {
     grid-template-columns: 1fr;
   }
@@ -180,16 +200,16 @@ gtag('config', 'G-WWSD3F58L6');
 
 <body>
 <header class="header">
- <nav class="nav">
-  <a href="/" class="logo">Paper_Talk</a>
-  <a href="/">Home</a>
-  <a href="/research.html">Research Paper</a>
-  <a href="/study.html">Study Materials</a>
-  <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
-  <a href="/specialist-gpts.html">Specialist GPTs</a>
-  <a href="/community.html">Community</a>
-  <a href="/career.html">Career</a>
-</nav>
+  <nav class="nav">
+    <a href="/" class="logo">Paper_Talk</a>
+    <a href="/">Home</a>
+    <a href="/research.html">Research Paper</a>
+    <a href="/study.html">Study Materials</a>
+    <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
+    <a href="/specialist-gpts.html">Specialist GPTs</a>
+    <a href="/community.html">Community</a>
+    <a href="/career.html">Career</a>
+  </nav>
 </header>
 
 <main class="container">
@@ -201,56 +221,35 @@ gtag('config', 'G-WWSD3F58L6');
 
   <div id="topLogoutArea" class="auth-box" style="display:none;">
     <span id="userText"></span>
+    <button id="deleteAccountBtn" class="btn danger-btn" type="button" onclick="deleteAccount()">Delete Account</button>
     <a id="logoutBtn" class="btn danger-btn" href="/auth/logout">Logout</a>
   </div>
 
-  <h1>Specialist GPTs</h1>
-
-  <p class="specialist-intro">
-    Private specialist GPT workspaces built on curated scientific knowledge.
-    Each GPT is designed around a specific research theme so researchers can ask focused scientific questions,
-    explore literature-based directions, and generate testable ideas.
-  </p>
+  <section class="research-gpts-hero">
+    <h1>Specialist GPTs</h1>
+    <p>
+      Private specialist GPT workspaces built on curated scientific knowledge. Each GPT is designed around a specific<br>
+      research theme so researchers can ask focused scientific questions, explore literature-based directions, and<br>
+      generate testable ideas.
+    </p>
+  </section>
 
   <section>
     <div class="gpt-grid">
 
-      <article
-        class="gpt-card clickable-card"
-        onclick="openPrivateNeuroGpt()"
-      >
+      <article class="gpt-card clickable-card" onclick="openPrivateNeuroGpt()">
         <span class="tag">Private</span>
         <h2>&#129504; Neuro-GPT</h2>
         <p>from Sungmo Park</p>
       </article>
 
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
+      <article class="gpt-card coming-card"><h2>&#128640; Coming Soon</h2></article>
+      <article class="gpt-card coming-card"><h2>&#128640; Coming Soon</h2></article>
+      <article class="gpt-card coming-card"><h2>&#128640; Coming Soon</h2></article>
+      <article class="gpt-card coming-card"><h2>&#128640; Coming Soon</h2></article>
+      <article class="gpt-card coming-card"><h2>&#128640; Coming Soon</h2></article>
+      <article class="gpt-card coming-card"><h2>&#128640; Coming Soon</h2></article>
+      <article class="gpt-card coming-card"><h2>&#128640; Coming Soon</h2></article>
 
     </div>
   </section>
@@ -346,6 +345,58 @@ document.addEventListener("keydown", function(event) {
     closeNeuroPassword();
   }
 });
+
+async function deleteAccount() {
+  const firstConfirm = confirm(
+    "Delete your Paper_Talk account?\n\nThis will remove your account from Paper_Talk and sign you out."
+  );
+
+  if (!firstConfirm) return;
+
+  const finalConfirm = confirm(
+    "This action cannot be undone. Continue with account deletion?"
+  );
+
+  if (!finalConfirm) return;
+
+  const button = document.getElementById("deleteAccountBtn");
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Deleting...";
+    }
+
+    const res = await fetch("/api/delete-account", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" }
+    });
+
+    const data = await res.json().catch(function() { return {}; });
+
+    if (!res.ok || !data.ok) {
+      alert(data.error || "Account deletion failed. Please try again.");
+      return;
+    }
+
+    localStorage.removeItem("pt_guest_gpt_usage");
+    localStorage.removeItem("paperTalkAdminKey");
+    localStorage.removeItem("paperTalkAdminKeyExpires");
+    localStorage.removeItem("paperTalkSpecialistAdminKey");
+    localStorage.removeItem("paperTalkSpecialistAdminKeyExpires");
+
+    alert("Your account has been deleted.");
+    window.location.href = "/";
+  } catch (error) {
+    alert(error?.message || "Account deletion failed. Please try again.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Delete Account";
+    }
+  }
+}
 
 async function initAuthBox() {
   const topLoginArea = document.getElementById("topLoginArea");
