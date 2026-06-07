@@ -7609,157 +7609,218 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
 
 
 // ======================================
-// Code-aware retrieval for GPT answers
+// Code-first pipeline request support
 // ======================================
-function detectCodeRequestAndDataType(userMessage = "") {
-  const raw = String(userMessage || "");
-  const lower = raw.toLowerCase();
-  const wantsCode = /코드|스크립트|script|code|python|파이썬|r code|rcode|pipeline|파이프라인|workflow|워크플로우|fastq|bam|count matrix|matrix|seurat|scanpy|visium|xenium|scrna|single[- ]?cell|bulk rna|bulk rnaseq|rna[- ]?seq/i.test(raw);
-  const wantsR = /r\s*코드|r code|rcode|R로|R 코드|R script|r script|DESeq2|edgeR|Seurat|spacexr|RCTD|Giotto|SpatialExperiment|SingleCellExperiment/i.test(raw);
-  const wantsPython = /python|파이썬|py code|python code|scanpy|squidpy|scvi|anndata|pandas|snakemake|nextflow/i.test(raw);
-  let requestedLanguage = "auto";
-  if (wantsR && !wantsPython) requestedLanguage = "r";
-  else if (wantsPython && !wantsR) requestedLanguage = "python";
-  else if (wantsR && wantsPython) requestedLanguage = lower.indexOf("r") <= lower.indexOf("python") ? "r" : "python";
-  const dataTypes = [];
-  const add = key => { if (!dataTypes.includes(key)) dataTypes.push(key); };
-  if (/bulk\s*rna|bulk\s*rnaseq|bulk\s*rna[- ]?seq|fastq|star|hisat2|salmon|kallisto|featurecounts|htseq|deseq2|edger/i.test(raw)) add("bulk_rna_seq");
-  if (/scrna|sc\s*rna|single[- ]?cell|single cell|seurat|scanpy|cellranger|cell ranger|10x/i.test(raw)) add("scRNA_seq");
-  if (/visium|spatial transcriptomics|spatial\s*rna|space ranger|spaceranger|spot/i.test(raw)) add("visium_spatial");
-  if (/xenium|in[- ]?situ|insitu|transcript assignment|cell segmentation|xenium ranger/i.test(raw)) add("xenium_in_situ");
-  if (!dataTypes.length && /rna[- ]?seq|rnaseq|transcriptome/i.test(raw)) add("bulk_rna_seq");
-  return { wantsCode, requestedLanguage, dataTypes, hasMixedDataTypes: dataTypes.length > 1 };
+function isPipelineCodeRequest(value = "") {
+  const text = String(value || "").toLowerCase();
+  if (!text.trim()) return false;
+
+  const asksCode = /코드|스크립트|script|code|pipeline code|workflow code|bash|shell|sh\b|snakemake|nextflow|r code|r코드|r script|python|파이썬|실행\s*가능|실행가능|구현|implementation/.test(text);
+  const pipelineData = /bulk\s*rna|bulk\s*rnaseq|bulk\s*rna-seq|rna\s*seq|rna-seq|fastq|fq\.gz|sc\s*rna|scrna|single[- ]cell|single cell|visium|xenium|spatial|spatial transcriptomics|10x|cellranger|cell ranger|seurat|scanpy|deseq2|featurecounts|star\b|hisat2|salmon|kallisto/.test(text);
+
+  return asksCode && pipelineData;
 }
 
-function buildCodeRetrievalTerms(codeState, userMessage = "") {
-  const terms = new Set();
-  const raw = String(userMessage || "").toLowerCase();
-  for (const token of raw.split(/[^a-zA-Z0-9_+.-]+/).filter(v => v.length >= 3).slice(0, 30)) terms.add(token);
-  const addMany = arr => arr.forEach(v => terms.add(v));
-  if (codeState.dataTypes.includes("bulk_rna_seq")) addMany(["fastq", "fastqc", "multiqc", "trim", "cutadapt", "trimmomatic", "star", "hisat2", "salmon", "kallisto", "featurecounts", "htseq", "deseq2", "edger", "tximport", "counts"]);
-  if (codeState.dataTypes.includes("scRNA_seq")) addMany(["seurat", "scanpy", "singlecell", "single-cell", "scrna", "cellranger", "h5", "normalize", "pca", "umap", "cluster", "marker"]);
-  if (codeState.dataTypes.includes("visium_spatial")) addMany(["visium", "spaceranger", "space", "spatial", "seurat", "squidpy", "spot", "image", "deconvolution", "cell2location", "rctd"]);
-  if (codeState.dataTypes.includes("xenium_in_situ")) addMany(["xenium", "xeniumranger", "transcript", "segmentation", "cell", "in-situ", "insitu", "molecule", "panel"]);
-  if (codeState.requestedLanguage === "r") addMany(["r", "seurat", "deseq2", "edger", "tximport", "bioconductor"]);
-  if (codeState.requestedLanguage === "python") addMany(["python", "scanpy", "pandas", "anndata", "squidpy", "snakemake"]);
-  return [...terms].filter(Boolean).slice(0, 40);
+function detectRequestedCodeLanguage(value = "") {
+  const text = String(value || "").toLowerCase();
+  const wantsR = /\br\b|r코드|r code|r script|r로|r으로|deseq2|edger|seurat|bioconductor/.test(text);
+  const wantsPython = /python|파이썬|py\b|scanpy|anndata|pandas|snakemake/.test(text);
+  const wantsShell = /bash|shell|\.sh|command line|cli|터미널|fastqc|star\b|hisat2|featurecounts|salmon|kallisto/.test(text);
+
+  if (wantsR && !wantsPython && !wantsShell) return "R";
+  if (wantsPython && !wantsR && !wantsShell) return "Python";
+  if (wantsShell && !wantsR && !wantsPython) return "Bash";
+  if (wantsR && wantsShell && !wantsPython) return "Bash + R";
+  if (wantsPython && wantsShell && !wantsR) return "Bash + Python";
+  if (wantsR && wantsPython) return "R + Python";
+  return "auto";
 }
 
-function rowLooksLikeCode(row) {
-  const fileName = String(row?.file_name || "").toLowerCase();
-  const sourceType = String(row?.source_type || "").toLowerCase();
-  const text = String(row?.text || "");
-  if (fileName.endsWith(".py") || fileName.endsWith(".r") || sourceType.includes("code") || sourceType.includes("python") || sourceType === "r_code") return true;
-  return /```|^\s*(library|require)\s*\(|^\s*install\.packages\s*\(|^\s*BiocManager::install|^\s*def\s+\w+\s*\(|^\s*import\s+\w+|^\s*from\s+\w+\s+import|^\s*class\s+\w+|^\s*#!\/bin\/(bash|sh)|^\s*(fastqc|multiqc|STAR|hisat2|salmon|kallisto|featureCounts|cellranger|spaceranger|xeniumranger)\b/im.test(text);
-}
+function detectPipelineDataTypes(value = "") {
+  const text = String(value || "").toLowerCase();
+  const types = [];
 
-function scoreCodeRetrievalRow(row, codeState, terms) {
-  const hay = `${row?.title || ""}\n${row?.file_name || ""}\n${row?.source_type || ""}\n${row?.text || ""}`.toLowerCase();
-  let score = rowLooksLikeCode(row) ? 10 : 0;
-  for (const term of terms) { const t = String(term || "").toLowerCase(); if (t && hay.includes(t)) score += 1; }
-  if (codeState.requestedLanguage === "r" && (/\.r\b|r_code|library\s*\(|deseq2|edger|seurat/i.test(hay))) score += 8;
-  if (codeState.requestedLanguage === "python" && (/\.py\b|python_code|import\s+|scanpy|pandas|anndata/i.test(hay))) score += 8;
-  for (const dt of codeState.dataTypes) {
-    if (dt === "bulk_rna_seq" && /fastq|fastqc|multiqc|star|hisat2|salmon|kallisto|featurecounts|deseq2|edger|tximport/i.test(hay)) score += 5;
-    if (dt === "scRNA_seq" && /scrna|single[- ]?cell|seurat|scanpy|cellranger|h5ad|anndata|umap|cluster/i.test(hay)) score += 5;
-    if (dt === "visium_spatial" && /visium|spaceranger|spatial|spot|squidpy|cell2location|rctd|tangram/i.test(hay)) score += 5;
-    if (dt === "xenium_in_situ" && /xenium|xeniumranger|segmentation|transcript assignment|molecule|in[- ]?situ/i.test(hay)) score += 5;
+  if (/bulk\s*rna|bulk\s*rnaseq|bulk\s*rna-seq|rna\s*seq|rna-seq|fastq|featurecounts|deseq2|edger|star\b|hisat2|salmon|kallisto/.test(text)) {
+    types.push("bulk_rna_seq_fastq");
   }
+  if (/scrna|sc\s*rna|single[- ]cell|single cell|seurat|scanpy|cellranger|cell ranger|10x/.test(text)) {
+    types.push("scrna_seq");
+  }
+  if (/visium|spatial transcriptomics|spaceranger|space ranger/.test(text)) {
+    types.push("visium");
+  }
+  if (/xenium|xoa|xenium explorer|in situ/.test(text)) {
+    types.push("xenium");
+  }
+
+  return types.length ? types : ["auto_detect_from_question"];
+}
+
+function looksLikeCodeChunk(text = "") {
+  const value = String(text || "");
+  if (!value.trim()) return false;
+
+  return /```|^\s*#!|\bimport\s+[A-Za-z0-9_.]+|\bfrom\s+[A-Za-z0-9_.]+\s+import\b|\blibrary\s*\(|\brequire\s*\(|<-\s*|%>%|\bfunction\s*\(|\bfor\s*\(|\bif\s*\(|\bdef\s+|\bclass\s+|\bsnakemake\b|\brule\s+\w+\s*:|\bprocess\s+\w+\s*\{|\bfastqc\b|\bmultiqc\b|\btrim_galore\b|\bcutadapt\b|\bSTAR\b|\bhisat2\b|\bfeatureCounts\b|\bsalmon\b|\bkallisto\b|\bDESeqDataSetFromMatrix\b|\bDESeq\s*\(|\bFindMarkers\s*\(|\bRead10X\s*\(|\bread10x\b|\bscanpy\b|\bsc\.\w+/im.test(value);
+}
+
+function scorePipelineCodeChunk(row, queryText) {
+  const haystack = [row.title, row.file_name, row.source_type, row.text].map(v => String(v || "").toLowerCase()).join("\n");
+  const query = String(queryText || "").toLowerCase();
+  let score = 0;
+
+  if (/\.py$/i.test(String(row.file_name || "")) || /python/i.test(String(row.source_type || ""))) score += 8;
+  if (/\.r$/i.test(String(row.file_name || "")) || /r_code|r script/i.test(String(row.source_type || ""))) score += 8;
+  if (/code/i.test(String(row.source_type || ""))) score += 7;
+  if (looksLikeCodeChunk(row.text)) score += 6;
+
+  const terms = [
+    "bulk", "rna", "rna-seq", "rnaseq", "fastq", "fastqc", "multiqc", "trim", "star", "hisat2", "featurecounts", "deseq2", "edger", "salmon", "kallisto",
+    "scrna", "single-cell", "single cell", "seurat", "scanpy", "cellranger", "10x",
+    "visium", "spaceranger", "spatial", "xenium"
+  ];
+
+  for (const term of terms) {
+    if (query.includes(term) && haystack.includes(term)) score += 3;
+  }
+
   return score;
 }
 
-async function retrieveUploadedCodeContextForUserRequest({ userMessage, gptKey, env, limit = 10 }) {
-  const codeState = detectCodeRequestAndDataType(userMessage);
-  if (!codeState.wantsCode || !env?.DB) return { codeState, rows: [], contextText: "" };
-  await ensurePaperFullTextTables(env).catch(() => {});
-  await ensureSpecialistGptTables(env).catch(() => {});
-  const terms = buildCodeRetrievalTerms(codeState, userMessage);
-  const likeTerms = terms.slice(0, 18).map(t => `%${String(t).toLowerCase().replace(/[%_]/g, " ")}%`);
-  let rows = [];
-  try {
-    const codeRows = await env.DB.prepare(`
-      SELECT post_id, title, source_url, pdf_link, file_name, source_type, chunk_index, text, created_at
-      FROM paper_fulltext_chunks
-      WHERE COALESCE(gpt_key, 'paper_talk') = ?
-        AND (
-          lower(COALESCE(file_name, '')) LIKE '%.py'
-          OR lower(COALESCE(file_name, '')) LIKE '%.r'
-          OR lower(COALESCE(source_type, '')) LIKE '%code%'
-          OR lower(COALESCE(source_type, '')) LIKE '%python%'
-          OR lower(COALESCE(source_type, '')) LIKE '%r_code%'
-        )
-      ORDER BY datetime(created_at) DESC, chunk_index ASC
-      LIMIT 80
-    `).bind(normalizeGptKey(gptKey)).all();
-    rows.push(...(codeRows.results || []));
-  } catch {}
-  if (likeTerms.length) {
-    const likeClauses = likeTerms.map(() => "lower(text) LIKE ?").join(" OR ");
-    try {
-      const pdfTextRows = await env.DB.prepare(`
-        SELECT post_id, title, source_url, pdf_link, file_name, source_type, chunk_index, text, created_at
-        FROM paper_fulltext_chunks
-        WHERE COALESCE(gpt_key, 'paper_talk') = ?
-          AND (${likeClauses})
-        ORDER BY datetime(created_at) DESC, chunk_index ASC
-        LIMIT 120
-      `).bind(normalizeGptKey(gptKey), ...likeTerms).all();
-      rows.push(...(pdfTextRows.results || []));
-    } catch {}
-  }
-  const seen = new Set();
-  rows = rows.filter(row => {
-      const key = `${row.post_id || ""}:${row.file_name || ""}:${row.chunk_index || 0}:${String(row.text || "").slice(0, 60)}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .map(row => ({ ...row, code_relevance_score: scoreCodeRetrievalRow(row, codeState, terms) }))
-    .filter(row => row.code_relevance_score > 0)
-    .sort((a, b) => b.code_relevance_score - a.code_relevance_score)
-    .slice(0, limit);
-  const contextText = rows.length
-    ? rows.map((row, i) => {
-        const fileName = row.file_name || "uploaded PDF/TXT/code file";
-        const sourceType = row.source_type || "unknown";
-        const title = cleanBibtexText(row.title || "Untitled uploaded source");
-        const snippet = String(row.text || "").slice(0, 4500);
-        return [`CODE_SOURCE_${i + 1}`, `TITLE: ${title}`, `FILE_NAME: ${fileName}`, `SOURCE_TYPE: ${sourceType}`, `CHUNK_INDEX: ${row.chunk_index ?? ""}`, `RELEVANCE_SCORE: ${row.code_relevance_score}`, `CODE_OR_TEXT_SNIPPET:\n${snippet}`].join("\n");
-      }).join("\n\n---\n\n")
-    : "NO_UPLOADED_CODE_OR_CODE_LIKE_PDF_TEXT_RETRIEVED";
-  return { codeState, rows, contextText };
+async function retrievePipelineCodeContext({ userMessage, gptKey, env }) {
+  if (!env.DB) return [];
+  await ensurePaperFullTextTables(env);
+  await ensureSpecialistGptTables(env);
+
+  const normalizedGptKey = normalizeGptKey(gptKey);
+  const rows = await env.DB.prepare(`
+    SELECT title, source_url, pdf_link, file_name, source_type, text, chunk_index, created_at
+    FROM paper_fulltext_chunks
+    WHERE COALESCE(gpt_key, 'paper_talk') = ?
+      AND (
+        lower(COALESCE(file_name, '')) LIKE '%.py'
+        OR lower(COALESCE(file_name, '')) LIKE '%.r'
+        OR lower(COALESCE(source_type, '')) LIKE '%code%'
+        OR text LIKE '%```%'
+        OR text LIKE '%library(%'
+        OR text LIKE '%import %'
+        OR text LIKE '%from % import%'
+        OR text LIKE '%fastqc%'
+        OR text LIKE '%multiqc%'
+        OR text LIKE '%trim_galore%'
+        OR text LIKE '%cutadapt%'
+        OR text LIKE '%STAR%'
+        OR text LIKE '%hisat2%'
+        OR text LIKE '%featureCounts%'
+        OR text LIKE '%DESeq%'
+        OR text LIKE '%edgeR%'
+        OR text LIKE '%Seurat%'
+        OR text LIKE '%scanpy%'
+        OR text LIKE '%cellranger%'
+        OR text LIKE '%spaceranger%'
+        OR text LIKE '%xenium%'
+      )
+    ORDER BY datetime(created_at) DESC, chunk_index ASC
+    LIMIT 80
+  `).bind(normalizedGptKey).all();
+
+  const scored = (rows.results || [])
+    .map(row => ({ ...row, _score: scorePipelineCodeChunk(row, userMessage) }))
+    .filter(row => row._score > 0 || looksLikeCodeChunk(row.text))
+    .sort((a, b) => b._score - a._score)
+    .slice(0, 14);
+
+  return scored;
 }
 
-function buildCodeAnswerInstruction(codeRetrieval) {
-  const state = codeRetrieval?.codeState || { wantsCode: false, requestedLanguage: "auto", dataTypes: [] };
-  if (!state.wantsCode) return "";
-  const dataTypes = state.dataTypes.length ? state.dataTypes.join(", ") : "auto-detect from user question";
-  const language = state.requestedLanguage || "auto";
-  return `
-CODE AND PIPELINE REQUEST OVERRIDE
+function buildPipelineCodeContextText(rows = []) {
+  if (!Array.isArray(rows) || !rows.length) return "NO_UPLOADED_CODE_OR_PDF_CODE_CONTEXT_FOUND";
 
-The user is asking for code/script/pipeline implementation.
-Detected requested output language: ${language}.
-Detected data type candidates: ${dataTypes}.
-Mixed data type request: ${state.hasMixedDataTypes ? "yes" : "no"}.
+  return rows.map((row, index) => {
+    const title = cleanBibtexText(row.title || "");
+    const fileName = cleanBibtexText(row.file_name || "");
+    const sourceType = cleanBibtexText(row.source_type || "");
+    const text = String(row.text || "").slice(0, 5500);
 
-Rules:
-- Do not ask what kind of code is needed if the user's message already mentions a data type, platform, language, FASTQ, pipeline, or script.
-- First use the uploaded code/PDF/TXT code-like snippets below as implementation evidence.
-- Uploaded Python code may be converted to R when the user asks for R. Uploaded R code may be converted to Python when the user asks for Python.
-- If code is inside a PDF/TXT full text, extract the useful code pattern or command logic and adapt it into a clean runnable script.
-- If bulk RNA-seq, scRNA-seq, Visium, and Xenium are mixed, automatically classify the input and provide separate branches or an auto-detection dispatcher.
-- For bulk RNA-seq FASTQ, include QC, trimming, alignment or pseudoalignment, counting/import, DESeq2/edgeR-ready count matrix, and QC outputs.
-- For scRNA-seq, include Cell Ranger/STARsolo or count matrix import, Seurat/Scanpy QC, normalization, PCA/UMAP/clustering, markers, and annotation hooks.
-- For Visium, include Space Ranger output import, spot QC, spatial visualization, normalization, clustering/domain analysis, and optional deconvolution.
-- For Xenium, include Xenium output import, cell/transcript QC, segmentation-aware filtering, panel/gene QC, clustering, spatial neighborhood analysis, and visualization.
-- Return executable code blocks in the requested language when possible. If the requested language is R, output R code even when the stored source code is Python.
-- Clearly separate stored-code-derived logic from general fallback additions when needed.
-- Keep the answer in the user's language, but code comments may be bilingual if helpful.
+    return [
+      `CODE_CONTEXT_${index + 1}`,
+      title ? `TITLE: ${title}` : "",
+      fileName ? `FILE_NAME: ${fileName}` : "",
+      sourceType ? `SOURCE_TYPE: ${sourceType}` : "",
+      `CHUNK_INDEX: ${row.chunk_index ?? ""}`,
+      "CONTENT:",
+      text
+    ].filter(Boolean).join("\n");
+  }).join("\n\n---\n\n").slice(0, 52000);
+}
 
-Retrieved uploaded code/PDF/TXT code context:
-${codeRetrieval?.contextText || "NO_CODE_CONTEXT"}
+async function callOpenAIForPipelineCode({ userMessage, effectiveMessage, codeRows, gptProfile }, env, cancelRuntime = null) {
+  const requestedLanguage = detectRequestedCodeLanguage(userMessage + "\n" + effectiveMessage);
+  const dataTypes = detectPipelineDataTypes(userMessage + "\n" + effectiveMessage);
+  const codeContextText = buildPipelineCodeContextText(codeRows);
+  const userLanguage = detectUserLanguage(userMessage);
+  const isKo = userLanguage === "Korean";
+
+  const prompt = `
+You are ${gptProfile?.title || "Paper_Talk Vision GPT"} in CODE-FIRST PIPELINE MODE.
+
+The user explicitly asked for executable code or script. Do not answer with a literature review, paper list, related-pipeline papers, or workflow-only explanation.
+
+User language: ${userLanguage}
+Requested output language for prose: ${isKo ? "Korean" : "same language as user"}
+Requested code language: ${requestedLanguage}
+Detected data type(s): ${dataTypes.join(", ")}
+
+Hard rules:
+1. Start with runnable code blocks immediately.
+2. Do not start with "먼저 찾은 관련 pipeline 논문" or any related-paper section.
+3. Do not ask a clarification question when the data type and request are already clear.
+4. If uploaded Python code is found but the user asks for R, translate the logic into R.
+5. If uploaded R code is found but the user asks for Python, translate the logic into Python.
+6. If uploaded PDF/TXT contains code-like snippets, use them as implementation hints.
+7. If uploaded code is missing, generate a standard practical pipeline from bioinformatics best practice.
+8. If the question mixes bulk RNA-seq, scRNA-seq, Visium, and Xenium, infer which one is requested from the words in the current user question. If multiple are requested, separate the code by data type.
+9. For "bulk RNA-seq FASTQ pipeline code", provide at minimum:
+   - Bash shell pipeline: FastQC, MultiQC, trimming, STAR or HISAT2 alignment, samtools, featureCounts.
+   - R DESeq2 script from featureCounts output to differential expression result.
+10. Use realistic placeholders such as /path/to/genomeDir, annotation.gtf, samples.tsv, condition column, and explain where the user should edit paths.
+11. Keep explanations short and after the code.
+12. Do not invent that a specific paper used a tool unless the context explicitly says so.
+13. Return plain text with markdown fenced code blocks.
+
+Uploaded code/PDF-code context:
+${codeContextText}
   `.trim();
+
+  const abortable = createLinkedAbortController(cancelRuntime, 120000);
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: abortable.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-4o",
+        messages: [
+          { role: "system", content: prompt },
+          { role: "user", content: String(effectiveMessage || userMessage || "").slice(0, 2400) }
+        ],
+        temperature: 0.15,
+        max_completion_tokens: 4500
+      })
+    });
+
+    const data = await readJsonResponseSafely(response, "OpenAI pipeline-code answer request");
+    return extractOpenAIText(data) || getOpenAIErrorMessage(data);
+  } catch (error) {
+    if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
+      throw new UserCanceledError();
+    }
+    return `OpenAI pipeline-code request failed: ${error?.message || error}`;
+  } finally {
+    abortable.cleanup();
+  }
 }
 
 async function gptChat(request, env) {
@@ -7879,6 +7940,112 @@ async function gptChat(request, env) {
         previousTopic,
         previousAssistant,
         fallbackStyle: ""
+      });
+    }
+
+
+    // Code-first override:
+    // If the user asks for a runnable pipeline/script/code, bypass the paper/workflow prose mode.
+    // This prevents answers such as "먼저 찾은 관련 pipeline 논문" and forces executable code output.
+    const wantsPipelineCode = isPipelineCodeRequest(message) || isPipelineCodeRequest(effectiveMessage);
+    if (wantsPipelineCode) {
+      await cancelRuntime.throwIfCanceled();
+
+      const codeRows = await retrievePipelineCodeContext({
+        userMessage: `${message}\n${effectiveMessage}`,
+        gptKey,
+        env
+      }).catch(() => []);
+
+      let codeAnswer = await callOpenAIForPipelineCode({
+        userMessage: message,
+        effectiveMessage,
+        codeRows,
+        gptProfile
+      }, env, cancelRuntime);
+
+      if (isUserCanceledText(codeAnswer)) {
+        await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
+        return canceledChatJson();
+      }
+
+      codeAnswer = String(codeAnswer || "")
+        .replace(/^먼저 찾은 관련 pipeline 논문[\s\S]*?(?=```|$)/i, "")
+        .trim();
+
+      if (!codeAnswer) {
+        codeAnswer = "코드 생성에 실패했습니다. 다시 한 번 더 구체적인 데이터 타입과 원하는 언어를 적어주세요.";
+      }
+
+      const codeAssistantFailed =
+        /^OpenAI API timeout/i.test(codeAnswer) ||
+        /^OpenAI pipeline-code request failed/i.test(codeAnswer) ||
+        /returned non-JSON response/i.test(codeAnswer);
+
+      if (codeAssistantFailed) {
+        await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
+        return json({
+          ok: false,
+          guest: isGuest,
+          threadId,
+          error: codeAnswer,
+          quota: {
+            used: quotaBefore.used,
+            limit: quotaBefore.limit,
+            remaining: quotaBefore.remaining,
+            monthKey: quotaBefore.monthKey || null,
+            date: quotaBefore.todayKey || null,
+            resetsAt: quotaBefore.resetsAt
+          },
+          sources: []
+        }, 502);
+      }
+
+      if (!isGuest) {
+        const assistantMessageId = crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
+          VALUES (?, ?, ?, 'assistant', ?, ?, CURRENT_TIMESTAMP)
+        `).bind(assistantMessageId, threadId, user.id, codeAnswer, gptKey).run();
+
+        await env.DB.prepare(`
+          UPDATE gpt_threads
+          SET updated_at = CURRENT_TIMESTAMP,
+              title = CASE WHEN title = 'New chat' THEN ? ELSE title END
+          WHERE id = ? AND user_id = ? AND COALESCE(gpt_key, 'paper_talk') = ?
+        `).bind(message.slice(0, 60), threadId, user.id, gptKey).run();
+      }
+
+      const quotaAfter = isGuest
+        ? await incrementGuestGptUsage(request, env)
+        : await incrementMonthlyGptUsage(user.id, env);
+
+      await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
+
+      return json({
+        ok: true,
+        guest: isGuest,
+        threadId,
+        answer: codeAnswer,
+        quota: {
+          used: quotaAfter.used,
+          limit: quotaAfter.limit,
+          remaining: quotaAfter.remaining,
+          monthKey: quotaAfter.monthKey || null,
+          date: quotaAfter.todayKey || null,
+          resetsAt: quotaAfter.resetsAt
+        },
+        gptKey,
+        gptTitle: gptProfile.title,
+        sources: codeRows.map((item, index) => ({
+          paper_label: index < 10 ? `코드 ${index + 1}` : null,
+          title: item.title,
+          source_url: item.source_url,
+          pdf_link: item.pdf_link,
+          file_name: item.file_name || null,
+          source_type: item.source_type || null,
+          similarity_score: item._score || null
+        }))
       });
     }
 
@@ -8038,26 +8205,13 @@ async function gptChat(request, env) {
 
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
 
-    const uploadedCodeRetrieval = await retrieveUploadedCodeContextForUserRequest({
-      userMessage: effectiveMessage,
-      gptKey,
-      env,
-      limit: 10
-    }).catch(() => ({
-      codeState: detectCodeRequestAndDataType(effectiveMessage),
-      rows: [],
-      contextText: ""
-    }));
-
-    const hasUploadedCodeContext = Boolean(uploadedCodeRetrieval?.codeState?.wantsCode);
-
     let assistantText = relatedPaperMode
       ? buildRelatedPaperAnswerFromContext({
           context,
           activePaperContext: strictActivePaperState.activePaperContext,
           userMessage: message
         })
-      : (generalOrBroad && !context.length && !hasUploadedCodeContext)
+      : (generalOrBroad && !context.length)
         ? await callOpenAIGeneralNoRetrieval(message, env, cancelRuntime)
         : await callOpenAIForPaperTalk({
             userMessage: `${gptProfile.title} context. User question: ${effectiveMessage}`,
@@ -8067,8 +8221,7 @@ async function gptChat(request, env) {
             generatedFramework: "",
             recentMessages: recentMessagesForContinuation,
             autoIntent,
-            strictActivePaperLocked: strictActivePaperState.activePaperLocked && !relatedPaperMode,
-            codeRetrieval: uploadedCodeRetrieval
+            strictActivePaperLocked: strictActivePaperState.activePaperLocked && !relatedPaperMode
           }, env, cancelRuntime);
 
     if (isUserCanceledText(assistantText)) {
@@ -8103,18 +8256,11 @@ async function gptChat(request, env) {
       }, 502);
     }
 
-    // Preserve executable code syntax for code/script/pipeline answers.
-    // Older formatting cleanup removed Markdown symbols globally, which can damage code
-    // and make R/Python/shell snippets unusable.
-    if (uploadedCodeRetrieval?.codeState?.wantsCode) {
-      assistantText = String(assistantText || "");
-    } else {
-      assistantText = String(assistantText || '')
-        .replace(/\*\*/g, "")
-        .replace(/__/g, "")
-        .replace(/#/g, "")
-        .replace(/\*/g, "");
-    }
+    assistantText = String(assistantText || '')
+      .replace(/\*\*/g, "")
+      .replace(/__/g, "")
+      .replace(/#/g, "")
+      .replace(/\*/g, "");
 
     const finalOutputStyle = relatedPaperMode
       ? "LITERATURE_REVIEW"
@@ -8126,7 +8272,7 @@ async function gptChat(request, env) {
     }
 
 
-    if (!isSupportingPaperFollowUp(message) && !uploadedCodeRetrieval?.codeState?.wantsCode) {
+    if (!isSupportingPaperFollowUp(message)) {
       assistantText = await normalizeFinalAnswerToUserIntentStyle({
         answer: assistantText,
         userMessage: effectiveMessage,
@@ -12290,7 +12436,7 @@ Expected answer behavior for this user request:
 `.trim();
 }
 
-async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false, codeRetrieval = null }, env, cancelRuntime = null) {
+async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env, cancelRuntime = null) {
   context = trimContextForChat(context);
   const hasContext = context.length > 0;
 
@@ -12318,7 +12464,6 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
 
   const thinkingLogicContext = buildThinkingLogicContext(thinkingLogicFrameworks);
   const requestedFormatInstruction = buildUserRequestedFormatInstruction(userMessage);
-  const codeAnswerInstruction = buildCodeAnswerInstruction(codeRetrieval);
 
   const contextText = hasContext
     ? context.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS).map((item, index) => {
@@ -12568,10 +12713,6 @@ ${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
       role: "system",
       content: strictDbRule
     },
-    ...(codeAnswerInstruction ? [{
-      role: "system",
-      content: codeAnswerInstruction
-    }] : []),
     ...(practicalMethodCatalog ? [{
       role: "system",
       content: practicalMethodCatalog
@@ -12592,7 +12733,7 @@ If outputStyle is PIPELINE_WORKFLOW:
 - First use retrieved Paper_Talk DB papers that match that keyword/domain as the workflow basis.
 - For single-cell/scRNA/scATAC/multiome workflow questions, extract workflow patterns from keyword-matched single-cell or multiome papers.
 - For spatial/spatial transcriptomics workflow questions, extract workflow patterns from keyword-matched spatial papers.
-- Start with a section titled "먼저 찾은 관련 pipeline 논문" listing the retrieved DB paper titles and why each supports the requested keyword/workflow.
+- Do not start with "먼저 찾은 관련 pipeline 논문" unless the user explicitly asks for related papers.
 - Then include a section that summarizes workflow patterns visible in the retrieved Paper_Talk DB papers.
 - Then synthesize a step-by-step workflow from raw data to biological interpretation.
 - For each step include: purpose, input, DB-supported tools/methods, general recommendations for missing steps, output, and QC/checkpoint.
