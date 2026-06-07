@@ -7700,7 +7700,7 @@ async function retrievePipelineCodeContext({ userMessage, gptKey, env }) {
         lower(COALESCE(file_name, '')) LIKE '%.py'
         OR lower(COALESCE(file_name, '')) LIKE '%.r'
         OR lower(COALESCE(source_type, '')) LIKE '%code%'
-        OR text LIKE '%```%'
+        OR instr(text, char(96) || char(96) || char(96)) > 0
         OR text LIKE '%library(%'
         OR text LIKE '%import %'
         OR text LIKE '%from % import%'
