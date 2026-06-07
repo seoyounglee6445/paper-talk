@@ -26,6 +26,15 @@ gtag('config', 'G-WWSD3F58L6');
 .auth-box #guestInfo {
   margin-right: 8px;
 }
+
+.auth-box .auth-action {
+  margin-left: 8px;
+}
+
+.auth-box button.auth-action {
+  border: 0;
+  cursor: pointer;
+}
 .gpt-layout {
   display: grid;
   grid-template-columns: 280px 1fr;
@@ -219,7 +228,8 @@ body.guest-mode .gpt-sidebar {
 
   <div id="topLogoutArea" class="auth-box" style="display:none;">
     <span id="userText"></span>
-    <a id="logoutBtn" class="btn danger-btn" href="/auth/logout">Logout</a>
+    <a id="logoutBtn" class="btn danger-btn auth-action" href="/auth/logout">Logout</a>
+    <button id="deleteAccountBtn" class="btn danger-btn auth-action" type="button" onclick="deleteAccount()">Delete Account</button>
   </div>
 
   <h1>Paper_Talk Vision GPT</h1>
@@ -530,6 +540,51 @@ async function deleteThread(threadId) {
 
   await loadThreads();
 }
+
+async function deleteAccount() {
+  if (!currentUser) {
+    alert("Please sign in first.");
+    return;
+  }
+
+  const firstConfirm = confirm(
+    "Delete your account?\n\nThis will remove your Paper_Talk account and cannot be undone."
+  );
+
+  if (!firstConfirm) return;
+
+  const typed = prompt('To confirm account deletion, type DELETE.');
+
+  if (typed !== "DELETE") {
+    alert("Account deletion cancelled.");
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/delete-account", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: "DELETE" })
+    });
+
+    const data = await readJsonSafely(res, "Delete account API");
+
+    if (!res.ok || !data.ok) {
+      alert(data.error || "Failed to delete account.");
+      return;
+    }
+
+    localStorage.removeItem("pt_guest_gpt_usage");
+
+    alert("Your account has been deleted.");
+    window.location.href = "/";
+  } catch (error) {
+    alert(error.message || "Failed to delete account.");
+  }
+}
+
 
 async function loadMessages(options = {}) {
   if (isGuestMode) return;
