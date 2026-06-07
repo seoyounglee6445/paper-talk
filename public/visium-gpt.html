@@ -163,6 +163,40 @@ body.guest-mode .gpt-sidebar {
   background: #ef4444;
 }
 
+.message pre {
+  white-space: pre;
+  overflow-x: auto;
+  background: #0f172a;
+  color: #e5e7eb;
+  padding: 14px;
+  border-radius: 12px;
+  line-height: 1.45;
+  margin: 10px 0;
+}
+
+.message code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+.code-block-wrap {
+  position: relative;
+}
+
+.copy-code-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  background: #e8f0ff;
+  color: #1428a0;
+}
+
 @media (max-width: 900px) {
   .gpt-layout {
     grid-template-columns: 1fr;
@@ -261,8 +295,8 @@ body.guest-mode .gpt-sidebar {
       <div class="chat-input-row">
  <textarea
   id="messageInput"
-  placeholder="Thinking may take 10–30 sec.
-Ask about papers, validation, gaps, or research ideas..."
+  placeholder="Ask about papers, validation, gaps, research ideas, or code/pipelines.
+Examples: bulk RNA-seq FASTQ R pipeline, scRNA-seq Seurat code, Visium/Xenium workflow..."
 ></textarea>
         
         <span id="quotaText">Free questions left today: 3/3</span>
@@ -811,11 +845,76 @@ function addMessage(role, content) {
 
   const div = document.createElement("div");
   div.className = `message ${role}`;
-  div.textContent = content;
+
+  if (role === "assistant") {
+    renderMessageContent(div, content);
+  } else {
+    div.textContent = content;
+  }
+
   box.appendChild(div);
   scrollChatToBottom();
 
   return div;
+}
+
+function renderMessageContent(container, content) {
+  const text = String(content || "");
+  container.innerHTML = "";
+
+  const codeFenceRegex = /```([a-zA-Z0-9_+.-]*)\n([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = codeFenceRegex.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index);
+    appendPlainText(container, before);
+
+    const language = (match[1] || "code").trim();
+    const code = match[2] || "";
+    appendCodeBlock(container, code, language);
+
+    lastIndex = codeFenceRegex.lastIndex;
+  }
+
+  appendPlainText(container, text.slice(lastIndex));
+}
+
+function appendPlainText(container, text) {
+  if (!text) return;
+  const span = document.createElement("span");
+  span.textContent = text;
+  container.appendChild(span);
+}
+
+function appendCodeBlock(container, code, language) {
+  const wrap = document.createElement("div");
+  wrap.className = "code-block-wrap";
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "copy-code-btn";
+  copyBtn.textContent = "Copy";
+  copyBtn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      copyBtn.textContent = "Copied";
+      setTimeout(() => { copyBtn.textContent = "Copy"; }, 1200);
+    } catch {
+      copyBtn.textContent = "Copy failed";
+      setTimeout(() => { copyBtn.textContent = "Copy"; }, 1200);
+    }
+  };
+
+  const pre = document.createElement("pre");
+  const codeEl = document.createElement("code");
+  codeEl.className = language ? `language-${language}` : "";
+  codeEl.textContent = code;
+  pre.appendChild(codeEl);
+
+  wrap.appendChild(copyBtn);
+  wrap.appendChild(pre);
+  container.appendChild(wrap);
 }
 
 async function typeWriterMessage(text) {
