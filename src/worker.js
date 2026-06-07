@@ -8103,11 +8103,18 @@ async function gptChat(request, env) {
       }, 502);
     }
 
-    assistantText = String(assistantText || '')
-      .replace(/\*\*/g, "")
-      .replace(/__/g, "")
-      .replace(/#/g, "")
-      .replace(/\*/g, "");
+    // Preserve executable code syntax for code/script/pipeline answers.
+    // Older formatting cleanup removed Markdown symbols globally, which can damage code
+    // and make R/Python/shell snippets unusable.
+    if (uploadedCodeRetrieval?.codeState?.wantsCode) {
+      assistantText = String(assistantText || "");
+    } else {
+      assistantText = String(assistantText || '')
+        .replace(/\*\*/g, "")
+        .replace(/__/g, "")
+        .replace(/#/g, "")
+        .replace(/\*/g, "");
+    }
 
     const finalOutputStyle = relatedPaperMode
       ? "LITERATURE_REVIEW"
@@ -12561,6 +12568,10 @@ ${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
       role: "system",
       content: strictDbRule
     },
+    ...(codeAnswerInstruction ? [{
+      role: "system",
+      content: codeAnswerInstruction
+    }] : []),
     ...(practicalMethodCatalog ? [{
       role: "system",
       content: practicalMethodCatalog
