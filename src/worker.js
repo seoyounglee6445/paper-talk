@@ -2927,7 +2927,7 @@ async function adminImportResearchFullText(request, env) {
   const sourceUrlInput = String(data.sourceUrl || data.articleLink || "").trim();
   const pdfLinkInput = String(data.pdfLink || "").trim();
   const fileName = String(data.fileName || "full-text-file").trim();
-  const sourceType = String(data.sourceType || "full_text_pdf_txt_or_code").trim();
+  const sourceType = String(data.sourceType || "full_text_pdf_or_txt").trim();
   const rawText = String(data.text || data.extractedText || "").trim();
 
   if (!titleInput && !sourceUrlInput && !pdfLinkInput) {
@@ -2940,7 +2940,7 @@ async function adminImportResearchFullText(request, env) {
   if (!rawText || rawText.length < PAPER_TALK_MIN_FULLTEXT_CHARS) {
     return json({
       ok: false,
-      error: "Full text/code is too short. If this PDF is scanned images, use a text-based PDF or OCR it first. Extracted characters: " + rawText.length
+      error: "Full text is too short. If this PDF is scanned images, use a text-based PDF or OCR it first. Extracted characters: " + rawText.length
     }, 400);
   }
 
@@ -2980,7 +2980,7 @@ async function adminImportResearchFullText(request, env) {
       title: duplicateRow.title || finalTitle,
       fileName: duplicateRow.file_name || fileName,
       fullTextCharacters: cleanedFullText.length,
-      message: "This exact PDF/TXT/code file was already imported, so it was skipped."
+      message: "This exact PDF/TXT full text was already imported, so it was skipped."
     });
   }
 
@@ -2989,7 +2989,7 @@ async function adminImportResearchFullText(request, env) {
   if (!chunks.length) {
     const metadataChunk = [
       "Paper_Talk DB Research Paper",
-      "Knowledge source: PDF_TXT_CODE_METADATA_ONLY_OR_LOW_TEXT_UPLOAD",
+      "Knowledge source: PDF_METADATA_ONLY_OR_LOW_TEXT_UPLOAD",
       `Title: ${finalTitle}`,
       finalSourceUrl ? `Article link: ${finalSourceUrl}` : "",
       finalPdfLink ? `PDF link: ${finalPdfLink}` : "",
@@ -3078,8 +3078,8 @@ async function adminImportResearchFullText(request, env) {
     duplicate: false,
     vectorIndexed,
     message: vectorIndexed
-      ? "Full text PDF/TXT/code file was stored as searchable chunks and indexed in Vectorize."
-      : "Full text PDF/TXT/code file was stored as safe D1 chunks. Vectorize indexing is intentionally skipped during batch upload to prevent Worker 500/503 errors."
+      ? "Full text PDF/TXT was stored as searchable chunks and indexed in Vectorize."
+      : "Full text PDF/TXT was stored as safe D1 chunks. Vectorize indexing is intentionally skipped during batch upload to prevent Worker 500/503 errors."
   });
 }
 
@@ -7607,6 +7607,161 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
   return merged;
 }
 
+
+// ======================================
+// Code-aware retrieval for GPT answers
+// ======================================
+function detectCodeRequestAndDataType(userMessage = "") {
+  const raw = String(userMessage || "");
+  const lower = raw.toLowerCase();
+  const wantsCode = /코드|스크립트|script|code|python|파이썬|r code|rcode|pipeline|파이프라인|workflow|워크플로우|fastq|bam|count matrix|matrix|seurat|scanpy|visium|xenium|scrna|single[- ]?cell|bulk rna|bulk rnaseq|rna[- ]?seq/i.test(raw);
+  const wantsR = /r\s*코드|r code|rcode|R로|R 코드|R script|r script|DESeq2|edgeR|Seurat|spacexr|RCTD|Giotto|SpatialExperiment|SingleCellExperiment/i.test(raw);
+  const wantsPython = /python|파이썬|py code|python code|scanpy|squidpy|scvi|anndata|pandas|snakemake|nextflow/i.test(raw);
+  let requestedLanguage = "auto";
+  if (wantsR && !wantsPython) requestedLanguage = "r";
+  else if (wantsPython && !wantsR) requestedLanguage = "python";
+  else if (wantsR && wantsPython) requestedLanguage = lower.indexOf("r") <= lower.indexOf("python") ? "r" : "python";
+  const dataTypes = [];
+  const add = key => { if (!dataTypes.includes(key)) dataTypes.push(key); };
+  if (/bulk\s*rna|bulk\s*rnaseq|bulk\s*rna[- ]?seq|fastq|star|hisat2|salmon|kallisto|featurecounts|htseq|deseq2|edger/i.test(raw)) add("bulk_rna_seq");
+  if (/scrna|sc\s*rna|single[- ]?cell|single cell|seurat|scanpy|cellranger|cell ranger|10x/i.test(raw)) add("scRNA_seq");
+  if (/visium|spatial transcriptomics|spatial\s*rna|space ranger|spaceranger|spot/i.test(raw)) add("visium_spatial");
+  if (/xenium|in[- ]?situ|insitu|transcript assignment|cell segmentation|xenium ranger/i.test(raw)) add("xenium_in_situ");
+  if (!dataTypes.length && /rna[- ]?seq|rnaseq|transcriptome/i.test(raw)) add("bulk_rna_seq");
+  return { wantsCode, requestedLanguage, dataTypes, hasMixedDataTypes: dataTypes.length > 1 };
+}
+
+function buildCodeRetrievalTerms(codeState, userMessage = "") {
+  const terms = new Set();
+  const raw = String(userMessage || "").toLowerCase();
+  for (const token of raw.split(/[^a-zA-Z0-9_+.-]+/).filter(v => v.length >= 3).slice(0, 30)) terms.add(token);
+  const addMany = arr => arr.forEach(v => terms.add(v));
+  if (codeState.dataTypes.includes("bulk_rna_seq")) addMany(["fastq", "fastqc", "multiqc", "trim", "cutadapt", "trimmomatic", "star", "hisat2", "salmon", "kallisto", "featurecounts", "htseq", "deseq2", "edger", "tximport", "counts"]);
+  if (codeState.dataTypes.includes("scRNA_seq")) addMany(["seurat", "scanpy", "singlecell", "single-cell", "scrna", "cellranger", "h5", "normalize", "pca", "umap", "cluster", "marker"]);
+  if (codeState.dataTypes.includes("visium_spatial")) addMany(["visium", "spaceranger", "space", "spatial", "seurat", "squidpy", "spot", "image", "deconvolution", "cell2location", "rctd"]);
+  if (codeState.dataTypes.includes("xenium_in_situ")) addMany(["xenium", "xeniumranger", "transcript", "segmentation", "cell", "in-situ", "insitu", "molecule", "panel"]);
+  if (codeState.requestedLanguage === "r") addMany(["r", "seurat", "deseq2", "edger", "tximport", "bioconductor"]);
+  if (codeState.requestedLanguage === "python") addMany(["python", "scanpy", "pandas", "anndata", "squidpy", "snakemake"]);
+  return [...terms].filter(Boolean).slice(0, 40);
+}
+
+function rowLooksLikeCode(row) {
+  const fileName = String(row?.file_name || "").toLowerCase();
+  const sourceType = String(row?.source_type || "").toLowerCase();
+  const text = String(row?.text || "");
+  if (fileName.endsWith(".py") || fileName.endsWith(".r") || sourceType.includes("code") || sourceType.includes("python") || sourceType === "r_code") return true;
+  return /```|^\s*(library|require)\s*\(|^\s*install\.packages\s*\(|^\s*BiocManager::install|^\s*def\s+\w+\s*\(|^\s*import\s+\w+|^\s*from\s+\w+\s+import|^\s*class\s+\w+|^\s*#!\/bin\/(bash|sh)|^\s*(fastqc|multiqc|STAR|hisat2|salmon|kallisto|featureCounts|cellranger|spaceranger|xeniumranger)\b/im.test(text);
+}
+
+function scoreCodeRetrievalRow(row, codeState, terms) {
+  const hay = `${row?.title || ""}\n${row?.file_name || ""}\n${row?.source_type || ""}\n${row?.text || ""}`.toLowerCase();
+  let score = rowLooksLikeCode(row) ? 10 : 0;
+  for (const term of terms) { const t = String(term || "").toLowerCase(); if (t && hay.includes(t)) score += 1; }
+  if (codeState.requestedLanguage === "r" && (/\.r\b|r_code|library\s*\(|deseq2|edger|seurat/i.test(hay))) score += 8;
+  if (codeState.requestedLanguage === "python" && (/\.py\b|python_code|import\s+|scanpy|pandas|anndata/i.test(hay))) score += 8;
+  for (const dt of codeState.dataTypes) {
+    if (dt === "bulk_rna_seq" && /fastq|fastqc|multiqc|star|hisat2|salmon|kallisto|featurecounts|deseq2|edger|tximport/i.test(hay)) score += 5;
+    if (dt === "scRNA_seq" && /scrna|single[- ]?cell|seurat|scanpy|cellranger|h5ad|anndata|umap|cluster/i.test(hay)) score += 5;
+    if (dt === "visium_spatial" && /visium|spaceranger|spatial|spot|squidpy|cell2location|rctd|tangram/i.test(hay)) score += 5;
+    if (dt === "xenium_in_situ" && /xenium|xeniumranger|segmentation|transcript assignment|molecule|in[- ]?situ/i.test(hay)) score += 5;
+  }
+  return score;
+}
+
+async function retrieveUploadedCodeContextForUserRequest({ userMessage, gptKey, env, limit = 10 }) {
+  const codeState = detectCodeRequestAndDataType(userMessage);
+  if (!codeState.wantsCode || !env?.DB) return { codeState, rows: [], contextText: "" };
+  await ensurePaperFullTextTables(env).catch(() => {});
+  await ensureSpecialistGptTables(env).catch(() => {});
+  const terms = buildCodeRetrievalTerms(codeState, userMessage);
+  const likeTerms = terms.slice(0, 18).map(t => `%${String(t).toLowerCase().replace(/[%_]/g, " ")}%`);
+  let rows = [];
+  try {
+    const codeRows = await env.DB.prepare(`
+      SELECT post_id, title, source_url, pdf_link, file_name, source_type, chunk_index, text, created_at
+      FROM paper_fulltext_chunks
+      WHERE COALESCE(gpt_key, 'paper_talk') = ?
+        AND (
+          lower(COALESCE(file_name, '')) LIKE '%.py'
+          OR lower(COALESCE(file_name, '')) LIKE '%.r'
+          OR lower(COALESCE(source_type, '')) LIKE '%code%'
+          OR lower(COALESCE(source_type, '')) LIKE '%python%'
+          OR lower(COALESCE(source_type, '')) LIKE '%r_code%'
+        )
+      ORDER BY datetime(created_at) DESC, chunk_index ASC
+      LIMIT 80
+    `).bind(normalizeGptKey(gptKey)).all();
+    rows.push(...(codeRows.results || []));
+  } catch {}
+  if (likeTerms.length) {
+    const likeClauses = likeTerms.map(() => "lower(text) LIKE ?").join(" OR ");
+    try {
+      const pdfTextRows = await env.DB.prepare(`
+        SELECT post_id, title, source_url, pdf_link, file_name, source_type, chunk_index, text, created_at
+        FROM paper_fulltext_chunks
+        WHERE COALESCE(gpt_key, 'paper_talk') = ?
+          AND (${likeClauses})
+        ORDER BY datetime(created_at) DESC, chunk_index ASC
+        LIMIT 120
+      `).bind(normalizeGptKey(gptKey), ...likeTerms).all();
+      rows.push(...(pdfTextRows.results || []));
+    } catch {}
+  }
+  const seen = new Set();
+  rows = rows.filter(row => {
+      const key = `${row.post_id || ""}:${row.file_name || ""}:${row.chunk_index || 0}:${String(row.text || "").slice(0, 60)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map(row => ({ ...row, code_relevance_score: scoreCodeRetrievalRow(row, codeState, terms) }))
+    .filter(row => row.code_relevance_score > 0)
+    .sort((a, b) => b.code_relevance_score - a.code_relevance_score)
+    .slice(0, limit);
+  const contextText = rows.length
+    ? rows.map((row, i) => {
+        const fileName = row.file_name || "uploaded PDF/TXT/code file";
+        const sourceType = row.source_type || "unknown";
+        const title = cleanBibtexText(row.title || "Untitled uploaded source");
+        const snippet = String(row.text || "").slice(0, 4500);
+        return [`CODE_SOURCE_${i + 1}`, `TITLE: ${title}`, `FILE_NAME: ${fileName}`, `SOURCE_TYPE: ${sourceType}`, `CHUNK_INDEX: ${row.chunk_index ?? ""}`, `RELEVANCE_SCORE: ${row.code_relevance_score}`, `CODE_OR_TEXT_SNIPPET:\n${snippet}`].join("\n");
+      }).join("\n\n---\n\n")
+    : "NO_UPLOADED_CODE_OR_CODE_LIKE_PDF_TEXT_RETRIEVED";
+  return { codeState, rows, contextText };
+}
+
+function buildCodeAnswerInstruction(codeRetrieval) {
+  const state = codeRetrieval?.codeState || { wantsCode: false, requestedLanguage: "auto", dataTypes: [] };
+  if (!state.wantsCode) return "";
+  const dataTypes = state.dataTypes.length ? state.dataTypes.join(", ") : "auto-detect from user question";
+  const language = state.requestedLanguage || "auto";
+  return `
+CODE AND PIPELINE REQUEST OVERRIDE
+
+The user is asking for code/script/pipeline implementation.
+Detected requested output language: ${language}.
+Detected data type candidates: ${dataTypes}.
+Mixed data type request: ${state.hasMixedDataTypes ? "yes" : "no"}.
+
+Rules:
+- Do not ask what kind of code is needed if the user's message already mentions a data type, platform, language, FASTQ, pipeline, or script.
+- First use the uploaded code/PDF/TXT code-like snippets below as implementation evidence.
+- Uploaded Python code may be converted to R when the user asks for R. Uploaded R code may be converted to Python when the user asks for Python.
+- If code is inside a PDF/TXT full text, extract the useful code pattern or command logic and adapt it into a clean runnable script.
+- If bulk RNA-seq, scRNA-seq, Visium, and Xenium are mixed, automatically classify the input and provide separate branches or an auto-detection dispatcher.
+- For bulk RNA-seq FASTQ, include QC, trimming, alignment or pseudoalignment, counting/import, DESeq2/edgeR-ready count matrix, and QC outputs.
+- For scRNA-seq, include Cell Ranger/STARsolo or count matrix import, Seurat/Scanpy QC, normalization, PCA/UMAP/clustering, markers, and annotation hooks.
+- For Visium, include Space Ranger output import, spot QC, spatial visualization, normalization, clustering/domain analysis, and optional deconvolution.
+- For Xenium, include Xenium output import, cell/transcript QC, segmentation-aware filtering, panel/gene QC, clustering, spatial neighborhood analysis, and visualization.
+- Return executable code blocks in the requested language when possible. If the requested language is R, output R code even when the stored source code is Python.
+- Clearly separate stored-code-derived logic from general fallback additions when needed.
+- Keep the answer in the user's language, but code comments may be bilingual if helpful.
+
+Retrieved uploaded code/PDF/TXT code context:
+${codeRetrieval?.contextText || "NO_CODE_CONTEXT"}
+  `.trim();
+}
+
 async function gptChat(request, env) {
   let activeCancelId = "";
   let activeCancelOwnerKey = "";
@@ -7883,13 +8038,26 @@ async function gptChat(request, env) {
 
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
 
+    const uploadedCodeRetrieval = await retrieveUploadedCodeContextForUserRequest({
+      userMessage: effectiveMessage,
+      gptKey,
+      env,
+      limit: 10
+    }).catch(() => ({
+      codeState: detectCodeRequestAndDataType(effectiveMessage),
+      rows: [],
+      contextText: ""
+    }));
+
+    const hasUploadedCodeContext = Boolean(uploadedCodeRetrieval?.codeState?.wantsCode);
+
     let assistantText = relatedPaperMode
       ? buildRelatedPaperAnswerFromContext({
           context,
           activePaperContext: strictActivePaperState.activePaperContext,
           userMessage: message
         })
-      : (generalOrBroad && !context.length)
+      : (generalOrBroad && !context.length && !hasUploadedCodeContext)
         ? await callOpenAIGeneralNoRetrieval(message, env, cancelRuntime)
         : await callOpenAIForPaperTalk({
             userMessage: `${gptProfile.title} context. User question: ${effectiveMessage}`,
@@ -7899,7 +8067,8 @@ async function gptChat(request, env) {
             generatedFramework: "",
             recentMessages: recentMessagesForContinuation,
             autoIntent,
-            strictActivePaperLocked: strictActivePaperState.activePaperLocked && !relatedPaperMode
+            strictActivePaperLocked: strictActivePaperState.activePaperLocked && !relatedPaperMode,
+            codeRetrieval: uploadedCodeRetrieval
           }, env, cancelRuntime);
 
     if (isUserCanceledText(assistantText)) {
@@ -7950,7 +8119,7 @@ async function gptChat(request, env) {
     }
 
 
-    if (!isSupportingPaperFollowUp(message)) {
+    if (!isSupportingPaperFollowUp(message) && !uploadedCodeRetrieval?.codeState?.wantsCode) {
       assistantText = await normalizeFinalAnswerToUserIntentStyle({
         answer: assistantText,
         userMessage: effectiveMessage,
@@ -12114,7 +12283,7 @@ Expected answer behavior for this user request:
 `.trim();
 }
 
-async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env, cancelRuntime = null) {
+async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false, codeRetrieval = null }, env, cancelRuntime = null) {
   context = trimContextForChat(context);
   const hasContext = context.length > 0;
 
@@ -12142,6 +12311,7 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
 
   const thinkingLogicContext = buildThinkingLogicContext(thinkingLogicFrameworks);
   const requestedFormatInstruction = buildUserRequestedFormatInstruction(userMessage);
+  const codeAnswerInstruction = buildCodeAnswerInstruction(codeRetrieval);
 
   const contextText = hasContext
     ? context.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS).map((item, index) => {
