@@ -1017,6 +1017,7 @@ gtag('config', 'G-WWSD3F58L6');
   <div id="topLogoutArea" class="auth-box" style="display:none;">
     <span id="userText"></span>
     <a id="logoutBtn" class="btn danger-btn" href="/auth/logout">Logout</a>
+    <button id="deleteAccountBtn" class="btn danger-btn" type="button" onclick="deleteAccount()">Delete Account</button>
   </div>
 
   <h1>Specialist GPTs</h1>
@@ -1182,6 +1183,36 @@ async function initAuthBox() {
   } catch {
     topLoginArea.style.display = "block";
     topLogoutArea.style.display = "none";
+  }
+}
+
+async function deleteAccount() {
+  if (!confirm("Delete your Paper_Talk account? This will remove your account and GPT chat history.")) {
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/delete-account", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" }
+    });
+
+    const data = await res.json().catch(function() { return {}; });
+
+    if (!res.ok || !data.ok) {
+      alert(data.error || "Account deletion failed.");
+      return;
+    }
+
+    localStorage.removeItem("pt_guest_gpt_usage");
+    localStorage.removeItem("paperTalkAdminKey");
+    localStorage.removeItem("paperTalkAdminKeyExpires");
+
+    alert("Your account has been deleted.");
+    location.href = "/";
+  } catch {
+    alert("Account deletion failed. Please try again.");
   }
 }
 
@@ -1725,22 +1756,99 @@ async function apiMe(request, env) {
 async function deleteAccount(request, env) {
   const user = await getSession(request, env);
 
-  if (!user) {
+  if (!user || !user.id) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
 
-  await env.DB.prepare(`
+  const userId = String(user.id || "");
+  let userEmail = String(user.email || "").trim();
+
+  try {
+    const row = await env.DB.prepare(`
+      SELECT email
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `).bind(userId).first();
+
+    if (row && row.email) {
+      userEmail = String(row.email || "").trim();
+    }
+  } catch {
+    // Continue with the email stored in the signed session.
+  }
+
+  async function safeDelete(sql, bindings = []) {
+    try {
+      let statement = env.DB.prepare(sql);
+      if (bindings.length) statement = statement.bind(...bindings);
+      await statement.run();
+    } catch {
+      // Some older deployments may not have every optional table/column yet.
+      // Account deletion should still clear the main user record and session.
+    }
+  }
+
+  // Remove the user's GPT chat data first, then the thread rows.
+  await safeDelete(`
+    DELETE FROM gpt_messages
+    WHERE user_id = ?
+  `, [userId]);
+
+  await safeDelete(`
+    DELETE FROM gpt_threads
+    WHERE user_id = ?
+  `, [userId]);
+
+  // Remove quota/cancel/active-user records tied to this account.
+  await safeDelete(`
+    DELETE FROM gpt_monthly_usage
+    WHERE user_id = ?
+  `, [userId]);
+
+  await safeDelete(`
+    DELETE FROM gpt_request_cancellations
+    WHERE owner_key = ?
+  `, [`user:${userId}`]);
+
+  await safeDelete(`
+    DELETE FROM active_users
+    WHERE user_id = ?
+  `, [userId]);
+
+  if (userEmail) {
+    await safeDelete(`
+      DELETE FROM active_users
+      WHERE email = ?
+    `, [userEmail]);
+
+    // Remove user-submitted posts. Admin-created posts use blank/admin emails and are not affected.
+    await safeDelete(`
+      DELETE FROM posts
+      WHERE author_email = ?
+    `, [userEmail]);
+  }
+
+  // Finally remove the user account row.
+  await safeDelete(`
     DELETE FROM users
     WHERE id = ?
-  `).bind(user.id).run();
+  `, [userId]);
 
-  return json(
-    { ok: true },
-    200,
-    {
-      "Set-Cookie": "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
-    }
-  );
+  const headers = new Headers({
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    ...corsHeaders()
+  });
+
+  headers.append("Set-Cookie", "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+  headers.append("Set-Cookie", "pt_neuro_gpt_access=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+
+  return new Response(JSON.stringify({ ok: true, deleted: true }, null, 2), {
+    status: 200,
+    headers
+  });
 }
 
 async function listPosts(request, env) {
