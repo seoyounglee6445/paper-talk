@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v86 GPT-4o unified + quota users-table + related-paper follow-up + one-line highlight format patch
+Paper_Talk Worker v87 GPT-4o semantic intent code-first gate + quota users-table + related-paper follow-up + one-line highlight format patch
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
 - User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, first search/retrieve papers matching the user's keyword/domain and extract the workflows used in those papers; only then synthesize a practical paper-grounded workflow. Never answer pipeline/workflow questions with a generic protocol before showing the relevant paper workflow evidence. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
@@ -10,6 +10,7 @@ Paper_Talk Worker v86 GPT-4o unified + quota users-table + related-paper follow-
 - Chat cancellation: /api/gpt/chat accepts cancelId; /api/gpt/cancel marks the request canceled; OpenAI calls are linked to the browser request signal and cancelId polling so Cancel can stop generation and avoid quota charging.
 - Related-paper follow-up patch: short requests such as "이거랑 비슷한 논문은" inherit the active paper, retrieve other DB papers, and return exact titles instead of a generic trend answer.
 - One-line highlight patch: "한줄만/one line" requests return one clean sentence without forcing bullet formatting.
+- v87 semantic code-first gate: runnable code mode is activated only by LLM intent field wants_executable_code, not by keyword matching. Literature/recommendation/follow-up questions cannot be hijacked into CODE-FIRST mode.
 */
 
 export default {
@@ -6796,6 +6797,71 @@ function normalizePaperTalkDomainLabel(value) {
   return "GENERAL";
 }
 
+function toSemanticBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const v = String(value || "").trim().toLowerCase();
+  return ["true", "yes", "y", "1"].includes(v);
+}
+
+function normalizeSemanticAnswerStyle(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function shouldUseCodeFirstMode({
+  inferredIntent,
+  forcedOutputStyle,
+  relatedPaperMode,
+  strictActivePaperState
+} = {}) {
+  const semanticIntent = normalizePaperTalkIntentLabel(
+    inferredIntent?.paper_talk_intent || inferredIntent?.question_type || ""
+  );
+
+  const answerStyle = normalizeSemanticAnswerStyle(inferredIntent?.answer_style || "");
+
+  // Only the semantic planner can turn this on. Do not use keyword matching here.
+  const wantsExecutableCode =
+    toSemanticBoolean(inferredIntent?.wants_executable_code) ||
+    answerStyle === "executable_code" ||
+    answerStyle === "runnable_code" ||
+    answerStyle === "script_generation" ||
+    answerStyle === "code_generation";
+
+  const literatureOrResearchIntent = [
+    "LITERATURE_REVIEW",
+    "RESEARCH_IDEA",
+    "VALIDATION",
+    "COMPARISON",
+    "PAPER_SUMMARY",
+    "SOURCE_TRACE",
+    "CONCEPT"
+  ].includes(semanticIntent);
+
+  const nonCodeContinuationStyle = [
+    "LITERATURE_REVIEW",
+    "RESEARCH_INSIGHT",
+    "RESEARCH_SYNTHESIS",
+    "VALIDATION_PLAN",
+    "COMPARISON",
+    "PAPER_SUMMARY",
+    "SOURCE_TRACE",
+    "CONCEPT_EXPLANATION",
+    "FOLLOW_UP_MORE"
+  ].includes(String(forcedOutputStyle || ""));
+
+  if (relatedPaperMode) return false;
+  if (strictActivePaperState?.activePaperLocked && forcedOutputStyle === "PAPER_SUMMARY") return false;
+  if (literatureOrResearchIntent) return false;
+  if (nonCodeContinuationStyle) return false;
+
+  return wantsExecutableCode;
+}
+
 function heuristicPaperTalkPlanner(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -7002,6 +7068,9 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
       heuristic.paperTalkIntent === "PIPELINE_WORKFLOW" ? "end_to_end_workflow" :
       heuristic.paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" :
       "calm_research_mentor",
+    // Conservative fallback: do not enter code-first mode without an explicit semantic planner decision.
+    // This prevents paper-recommendation/literature questions from being hijacked by old keyword routing.
+    wants_executable_code: false,
     should_generate_hypotheses: heuristic.paperTalkIntent === "RESEARCH_IDEA" || (!["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(heuristic.paperTalkIntent) && /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text)),
     should_use_db_evidence: !isLikelyGeneralQuestionFast(text) || heuristic.paperTalkIntent !== "GENERAL",
     interpreted_intent: text.slice(0, 500),
@@ -7048,7 +7117,10 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
               "Create 3-4 concise English biomedical retrieval_queries for Paper_Talk DB.",
               "For PIPELINE_WORKFLOW, retrieval_queries must be keyword-anchored, domain-specific, and paper-grounded. Start from the exact user keyword/entities, then add workflow/pipeline/used methods/preprocessing/QC/downstream analysis terms. For spatial questions include Visium/Xenium/CosMx/MERFISH, spatial domains, deconvolution, cell-cell interaction, histology/image analysis. For single-cell or multiome questions include scRNA, scATAC, multiome, Seurat/Signac WNN, ArchR, LIGER, GLUE, MultiVI, SnapATAC2, SCENIC/SCENIC+ when relevant.",
               "For METHOD_EXTRACTION, retrieval_queries should include method-oriented terms such as analysis method, package, software, algorithm, model, implementation, benchmark, and the relevant assay/domain.",
-              "Return keys: is_research_related, question_type, paper_talk_intent, primary_domain, answer_style, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
+              "Semantic code-routing rule: set wants_executable_code=true only when the user explicitly wants runnable code, a script, debugging, implementation, or executable commands. Do not set it true merely because the question mentions pipeline, workflow, spatial, Visium, package, or method.",
+              "For literature recommendation, related-paper, follow-up-study, paper-summary, validation, comparison, concept, or research-idea questions, wants_executable_code must be false even if the topic includes computational terms.",
+              "If the user wants an analysis workflow explained in prose from papers, choose PIPELINE_WORKFLOW but keep wants_executable_code=false unless they specifically ask for executable code.",
+              "Return keys: is_research_related, question_type, paper_talk_intent, primary_domain, answer_style, wants_executable_code, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
             ].join(" ")
           },
           { role: "user", content: text.slice(0, 1200) }
@@ -7080,6 +7152,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
       primary_domain: primaryDomain,
       is_research_related: Boolean(parsed.is_research_related) || paperTalkIntent !== "GENERAL",
       should_use_db_evidence: Boolean(parsed.should_use_db_evidence || parsed.is_research_related || paperTalkIntent !== "GENERAL"),
+      wants_executable_code: toSemanticBoolean(parsed.wants_executable_code),
       should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses || paperTalkIntent === "RESEARCH_IDEA") && !["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(paperTalkIntent),
       question_type:
         paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
@@ -7944,11 +8017,113 @@ async function gptChat(request, env) {
     }
 
 
-    // Code-first override:
-    // If the user asks for a runnable pipeline/script/code, bypass the paper/workflow prose mode.
-    // This prevents answers such as "먼저 찾은 관련 pipeline 논문" and forces executable code output.
-    const wantsPipelineCode = isPipelineCodeRequest(message) || isPipelineCodeRequest(effectiveMessage);
-    if (wantsPipelineCode) {
+    if (!isGuest && isSupportingPaperFollowUp(message)) {
+      const rows = await getLastSupportingPapersForThread({ threadId, userId: user.id, env });
+      const sourceAnswer = formatStoredSupportingPapersAnswer(rows, message);
+      const assistantMessageId = crypto.randomUUID();
+
+      await env.DB.prepare(`
+        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
+        VALUES (?, ?, ?, 'assistant', ?, ?, CURRENT_TIMESTAMP)
+      `).bind(assistantMessageId, threadId, user.id, sourceAnswer, gptKey).run();
+
+      await env.DB.prepare(`
+        UPDATE gpt_threads
+        SET updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).bind(threadId, user.id).run();
+
+      const quotaAfter = await incrementMonthlyGptUsage(user.id, env);
+
+      return json({
+        ok: true,
+        guest: false,
+        threadId,
+        answer: sourceAnswer,
+        quota: {
+          used: quotaAfter.used,
+          limit: quotaAfter.limit,
+          remaining: quotaAfter.remaining,
+          monthKey: quotaAfter.monthKey || null,
+          date: null,
+          resetsAt: quotaAfter.resetsAt
+        },
+        sources: rows.map((item, index) => ({
+          paper_label: item.paper_label || `논문 ${String.fromCharCode(65 + index)}`,
+          title: item.title,
+          source_url: item.source_url,
+          pdf_link: item.pdf_link,
+          similarity_score: item.similarity_score || null
+        }))
+      });
+    }
+
+    await cancelRuntime.throwIfCanceled();
+    const inferredIntent = await inferPaperTalkResearchIntentForChat(effectiveMessage, env, cancelRuntime);
+
+    // If the current message is an automatically detected follow-up, do not let
+    // the intent planner downgrade it to a generic question. The target is the
+    // previous paper/topic stored in effectiveMessage.
+    if (forcedOutputStyle) {
+      inferredIntent.is_research_related = true;
+      inferredIntent.should_use_db_evidence = true;
+
+      if (forcedOutputStyle === "PAPER_SUMMARY") {
+        inferredIntent.paper_talk_intent = "PAPER_SUMMARY";
+        inferredIntent.question_type = "LITERATURE";
+        inferredIntent.answer_style = "paper_summary";
+        inferredIntent.interpreted_intent = "Short follow-up asking for a highlight/summary/format change of the previous paper or topic.";
+      } else if (forcedOutputStyle === "LITERATURE_REVIEW") {
+        inferredIntent.paper_talk_intent = "LITERATURE_REVIEW";
+        inferredIntent.question_type = "LITERATURE";
+        inferredIntent.answer_style = "paper_recommendation_by_theme";
+      } else if (forcedOutputStyle === "RESEARCH_INSIGHT") {
+        inferredIntent.paper_talk_intent = "RESEARCH_IDEA";
+        inferredIntent.question_type = "RESEARCH";
+        inferredIntent.answer_style = "actionable_project_ideas";
+      }
+    }
+
+    await cancelRuntime.throwIfCanceled();
+
+    let strictActivePaperState = makeEmptyStrictActivePaperContext();
+    if (!isGuest) {
+      const activePaperRecentMessages = recentMessagesForContinuation.length
+        ? recentMessagesForContinuation
+        : await getRecentThreadMessagesForContinuation({
+            threadId,
+            userId: user.id,
+            env,
+            limit: 8
+          }).catch(() => []);
+
+      strictActivePaperState = await getStrictActivePaperContext({
+        message: effectiveMessage,
+        recentMessages: activePaperRecentMessages,
+        env
+      }).catch(() => makeEmptyStrictActivePaperContext());
+    }
+
+    const relatedPaperMode = isRelatedPaperDiscoveryRequest(message, inferredIntent);
+
+    if (relatedPaperMode) {
+      inferredIntent.is_research_related = true;
+      inferredIntent.should_use_db_evidence = true;
+      inferredIntent.paper_talk_intent = "LITERATURE_REVIEW";
+      inferredIntent.question_type = "LITERATURE";
+      inferredIntent.answer_style = "paper_recommendation_by_active_paper";
+      inferredIntent.interpreted_intent = "The user is asking for papers similar or related to the active paper in the current thread.";
+    }
+
+
+    const wantsSemanticCodeFirst = shouldUseCodeFirstMode({
+      inferredIntent,
+      forcedOutputStyle,
+      relatedPaperMode,
+      strictActivePaperState
+    });
+
+    if (wantsSemanticCodeFirst) {
       await cancelRuntime.throwIfCanceled();
 
       const codeRows = await retrievePipelineCodeContext({
@@ -8047,104 +8222,6 @@ async function gptChat(request, env) {
           similarity_score: item._score || null
         }))
       });
-    }
-
-    if (!isGuest && isSupportingPaperFollowUp(message)) {
-      const rows = await getLastSupportingPapersForThread({ threadId, userId: user.id, env });
-      const sourceAnswer = formatStoredSupportingPapersAnswer(rows, message);
-      const assistantMessageId = crypto.randomUUID();
-
-      await env.DB.prepare(`
-        INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
-        VALUES (?, ?, ?, 'assistant', ?, ?, CURRENT_TIMESTAMP)
-      `).bind(assistantMessageId, threadId, user.id, sourceAnswer, gptKey).run();
-
-      await env.DB.prepare(`
-        UPDATE gpt_threads
-        SET updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND user_id = ?
-      `).bind(threadId, user.id).run();
-
-      const quotaAfter = await incrementMonthlyGptUsage(user.id, env);
-
-      return json({
-        ok: true,
-        guest: false,
-        threadId,
-        answer: sourceAnswer,
-        quota: {
-          used: quotaAfter.used,
-          limit: quotaAfter.limit,
-          remaining: quotaAfter.remaining,
-          monthKey: quotaAfter.monthKey || null,
-          date: null,
-          resetsAt: quotaAfter.resetsAt
-        },
-        sources: rows.map((item, index) => ({
-          paper_label: item.paper_label || `논문 ${String.fromCharCode(65 + index)}`,
-          title: item.title,
-          source_url: item.source_url,
-          pdf_link: item.pdf_link,
-          similarity_score: item.similarity_score || null
-        }))
-      });
-    }
-
-    await cancelRuntime.throwIfCanceled();
-    const inferredIntent = await inferPaperTalkResearchIntentForChat(effectiveMessage, env, cancelRuntime);
-
-    // If the current message is an automatically detected follow-up, do not let
-    // the intent planner downgrade it to a generic question. The target is the
-    // previous paper/topic stored in effectiveMessage.
-    if (forcedOutputStyle) {
-      inferredIntent.is_research_related = true;
-      inferredIntent.should_use_db_evidence = true;
-
-      if (forcedOutputStyle === "PAPER_SUMMARY") {
-        inferredIntent.paper_talk_intent = "PAPER_SUMMARY";
-        inferredIntent.question_type = "LITERATURE";
-        inferredIntent.answer_style = "paper_summary";
-        inferredIntent.interpreted_intent = "Short follow-up asking for a highlight/summary/format change of the previous paper or topic.";
-      } else if (forcedOutputStyle === "LITERATURE_REVIEW") {
-        inferredIntent.paper_talk_intent = "LITERATURE_REVIEW";
-        inferredIntent.question_type = "LITERATURE";
-        inferredIntent.answer_style = "paper_recommendation_by_theme";
-      } else if (forcedOutputStyle === "RESEARCH_INSIGHT") {
-        inferredIntent.paper_talk_intent = "RESEARCH_IDEA";
-        inferredIntent.question_type = "RESEARCH";
-        inferredIntent.answer_style = "actionable_project_ideas";
-      }
-    }
-
-    await cancelRuntime.throwIfCanceled();
-
-    let strictActivePaperState = makeEmptyStrictActivePaperContext();
-    if (!isGuest) {
-      const activePaperRecentMessages = recentMessagesForContinuation.length
-        ? recentMessagesForContinuation
-        : await getRecentThreadMessagesForContinuation({
-            threadId,
-            userId: user.id,
-            env,
-            limit: 8
-          }).catch(() => []);
-
-      strictActivePaperState = await getStrictActivePaperContext({
-        message: effectiveMessage,
-        recentMessages: activePaperRecentMessages,
-        env
-      }).catch(() => makeEmptyStrictActivePaperContext());
-    }
-
-    const relatedPaperMode = isRelatedPaperDiscoveryRequest(message, inferredIntent);
-
-    if (relatedPaperMode) {
-      inferredIntent.is_research_related = true;
-      inferredIntent.should_use_db_evidence = true;
-      inferredIntent.paper_talk_intent = "LITERATURE_REVIEW";
-      inferredIntent.question_type = "LITERATURE";
-      inferredIntent.answer_style = "paper_recommendation_by_active_paper";
-      inferredIntent.interpreted_intent = "The user is asking for papers similar or related to the active paper in the current thread.";
     }
 
     const retrievalMessageForDb = relatedPaperMode && strictActivePaperState.activePaperLocked
