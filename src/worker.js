@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v87 GPT-4o semantic intent code-first gate + quota users-table + related-paper follow-up + one-line highlight format patch
+Paper_Talk Worker v88 GPT-4o semantic intent + clean related-paper titles + no keyword-only code-first routing
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
 - User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, first search/retrieve papers matching the user's keyword/domain and extract the workflows used in those papers; only then synthesize a practical paper-grounded workflow. Never answer pipeline/workflow questions with a generic protocol before showing the relevant paper workflow evidence. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
@@ -6256,17 +6256,28 @@ async function getStrictActivePaperContext({ message, recentMessages, env }) {
 
 
 function isRelatedPaperDiscoveryRequest(message, autoIntent = {}) {
-  const text = [
-    message,
-    autoIntent?.interpreted_intent,
-    autoIntent?.retrieval_query,
-    autoIntent?.answer_style,
-    autoIntent?.question_type
-  ].filter(Boolean).join("\n").toLowerCase();
+  const semanticIntent = normalizePaperTalkIntentLabel(
+    autoIntent?.paper_talk_intent || autoIntent?.question_type || ""
+  );
+  const answerStyle = String(autoIntent?.answer_style || "").toLowerCase();
+  const interpretedIntent = String(autoIntent?.interpreted_intent || "").toLowerCase();
 
-  // v41: this is an intent detector, not the normal follow-up lock.
-  // When the user asks for similar/related/other papers, the active paper becomes the seed
-  // and Paper_Talk DB retrieval is allowed again. Ordinary follow-ups remain locked.
+  // Primary route: semantic planner output.
+  // This avoids forcing related-paper routing only by a fixed keyword list.
+  if (toSemanticBoolean(autoIntent?.is_related_paper_request)) return true;
+
+  if (
+    semanticIntent === "LITERATURE_REVIEW" &&
+    /similar|related|comparable|follow[-\s]?up|recommend|reference|citation|비슷|유사|관련|후속|추천|참고/.test(
+      `${answerStyle} ${interpretedIntent}`
+    )
+  ) {
+    return true;
+  }
+
+  // Safety fallback only when the planner is unavailable or returns incomplete JSON.
+  // Do not use this for code-first routing.
+  const text = String(message || "").toLowerCase();
   return /비슷한\s*논문|유사한\s*논문|관련\s*논문|다른\s*논문|또\s*(뭐|무엇)|같은\s*주제|후속\s*연구|비슷한\s*연구|관련\s*연구|similar\s+papers?|related\s+papers?|other\s+papers?|more\s+papers?|follow[-\s]?up\s+stud/i.test(text);
 }
 
@@ -6288,16 +6299,42 @@ function buildRelatedPaperDiscoveryQuery(activePaperContext, message, autoIntent
   ].filter(Boolean).join("\n\n");
 }
 
-function getRelatedPaperUserFacingTopic(activePaperContext, userMessage) {
+function cleanUserFacingPaperTitleForLanguage(title, language = "English") {
+  let value = stripUserRequestTailFromPaperTitle(title || "");
+  if (!value) return "";
+
+  // If the user asked for English, never expose the Korean follow-up instruction
+  // that may have been appended to the active-paper title by the chat state.
+  // Example bad state:
+  // "ecPICK: ... histopathology 논문이랑 비슷한 논문이나 ... 영어로"
+  if (language === "English" && /[가-힣]/.test(value)) {
+    value = value.split(/[가-힣]/)[0].trim();
+  }
+
+  value = value
+    .replace(/\s+(?:please|pls)?\s*(?:give|recommend|show|list|find)\s+(?:me\s+)?(?:similar|related|follow[-\s]?up)[\s\S]*$/i, "")
+    .replace(/\s+(?:in\s+english|answer\s+in\s+english|english\s+only)[\s\S]*$/i, "")
+    .replace(/["“”'`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return value;
+}
+
+function getRelatedPaperUserFacingTopic(activePaperContext, userMessage, language = "English") {
   const active = Array.isArray(activePaperContext) && activePaperContext.length
     ? activePaperContext[0]
     : null;
 
-  const title = cleanBibtexText(active?.title || "").trim();
-  if (title) return title;
+  const title = cleanUserFacingPaperTitleForLanguage(active?.title || "", language);
+  if (!isLowInformationPaperTitle(title)) return title;
 
-  const extracted = extractLikelyPaperTitleForSafeLookup(String(userMessage || ""));
-  return cleanBibtexText(extracted || "").trim();
+  const extracted = cleanUserFacingPaperTitleForLanguage(
+    extractLikelyPaperTitleForSafeLookup(String(userMessage || "")),
+    language
+  );
+
+  return isLowInformationPaperTitle(extracted) ? "" : extracted;
 }
 
 function buildRelatedPaperWhyLine(item, activePaperContext, userMessage, isKo) {
@@ -6353,7 +6390,7 @@ function buildRelatedPaperWhyLine(item, activePaperContext, userMessage, isKo) {
 function buildRelatedPaperAnswerFromContext({ context, activePaperContext = [], userMessage = "" }) {
   const language = detectUserLanguage(userMessage);
   const isKo = language === "Korean";
-  const activeTitle = getRelatedPaperUserFacingTopic(activePaperContext, userMessage);
+  const activeTitle = getRelatedPaperUserFacingTopic(activePaperContext, userMessage, language);
 
   const activeItems = Array.isArray(activePaperContext) ? activePaperContext : [];
   const candidates = selectTopSupportingPapersForAnswer(
@@ -6384,8 +6421,8 @@ function buildRelatedPaperAnswerFromContext({ context, activePaperContext = [], 
       ? `"${activeTitle}"와 비슷한 논문은 아래처럼 보면 좋습니다.`
       : "이 논문과 비슷한 논문은 아래처럼 보면 좋습니다.")
     : (activeTitle
-      ? `Papers similar to "${activeTitle}" can be read as follows.`
-      : "Similar papers can be read as follows.");
+      ? `Here are papers that may be useful as related or follow-up references for "${activeTitle}."`
+      : "Here are papers that may be useful as related or follow-up references.");
 
   const lines = candidates.map((item, index) => {
     const title = cleanBibtexText(item?.title || "Untitled Paper").trim() || "Untitled Paper";
@@ -7119,8 +7156,9 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
               "For METHOD_EXTRACTION, retrieval_queries should include method-oriented terms such as analysis method, package, software, algorithm, model, implementation, benchmark, and the relevant assay/domain.",
               "Semantic code-routing rule: set wants_executable_code=true only when the user explicitly wants runnable code, a script, debugging, implementation, or executable commands. Do not set it true merely because the question mentions pipeline, workflow, spatial, Visium, package, or method.",
               "For literature recommendation, related-paper, follow-up-study, paper-summary, validation, comparison, concept, or research-idea questions, wants_executable_code must be false even if the topic includes computational terms.",
+              "If the user is asking for papers similar to the active paper, related papers, papers to cite for follow-up research, or comparable studies, set is_related_paper_request=true. This must be semantic, not keyword-based.",
               "If the user wants an analysis workflow explained in prose from papers, choose PIPELINE_WORKFLOW but keep wants_executable_code=false unless they specifically ask for executable code.",
-              "Return keys: is_research_related, question_type, paper_talk_intent, primary_domain, answer_style, wants_executable_code, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
+              "Return keys: is_research_related, question_type, paper_talk_intent, primary_domain, answer_style, wants_executable_code, is_related_paper_request, should_generate_hypotheses, should_use_db_evidence, interpreted_intent, key_entities, retrieval_queries, gap_axes, hypothesis_angle, validation_angle."
             ].join(" ")
           },
           { role: "user", content: text.slice(0, 1200) }
@@ -7153,6 +7191,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
       is_research_related: Boolean(parsed.is_research_related) || paperTalkIntent !== "GENERAL",
       should_use_db_evidence: Boolean(parsed.should_use_db_evidence || parsed.is_research_related || paperTalkIntent !== "GENERAL"),
       wants_executable_code: toSemanticBoolean(parsed.wants_executable_code),
+      is_related_paper_request: toSemanticBoolean(parsed.is_related_paper_request),
       should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses || paperTalkIntent === "RESEARCH_IDEA") && !["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(paperTalkIntent),
       question_type:
         paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
@@ -7257,14 +7296,15 @@ function selectTopSupportingPapersForAnswer(context, limit = null, outputStyle =
   const adaptiveLimit = limit || estimateAdaptiveSupportingPaperLimit(context, outputStyle) || 0;
 
   for (const item of Array.isArray(context) ? context : []) {
-    const title = cleanBibtexText(item?.title || "").trim();
+    const normalized = normalizeKnowledgeItem(item) || item;
+    const title = bestDisplayPaperTitleFromItem(normalized);
     if (!title) continue;
 
-    const key = title.toLowerCase();
-    if (seen.has(key)) continue;
+    const key = normalizeSearchText(title);
+    if (!key || seen.has(key)) continue;
     seen.add(key);
 
-    selected.push(item);
+    selected.push({ ...normalized, title });
     if (selected.length >= adaptiveLimit) break;
   }
 
@@ -10615,6 +10655,59 @@ function isMetadataOnlyTitle(value) {
   if (title.length < 3) return true;
 
   return false;
+}
+
+
+function stripUserRequestTailFromPaperTitle(value) {
+  let title = cleanBibtexText(value || "").trim();
+  if (!title) return "";
+
+  // Sometimes the active paper title is stored together with the user's follow-up
+  // sentence, e.g. "ecPICK: ... 논문이랑 비슷한 논문...". Keep only the paper title.
+  const cutPatterns = [
+    /\s+논문(?:이랑|과|와|하고|이나|이나요|은|는)?\s*(?:비슷|유사|관련|후속|추천|참고|이\s*연구)[\s\S]*$/i,
+    /\s+이\s*연구\s*(?:후속|관련|참고|비슷|유사|추천)[\s\S]*$/i,
+    /\s+(?:papers?\s+similar|similar\s+papers?|related\s+papers?|recommend(?:ed)?\s+papers?|follow[-\s]?up\s+stud(?:y|ies)|follow[-\s]?up\s+papers?|references?\s+for\s+this\s+study)[\s\S]*$/i,
+    /\s+(?:can\s+be\s+read\s+as\s+follows|영어로|영문으로|in\s+english|answer\s+in\s+english|english\s+only)[\s\S]*$/i
+  ];
+
+  for (const pattern of cutPatterns) {
+    title = title.replace(pattern, "").trim();
+  }
+
+  return title.replace(/["“”]+$/g, "").trim();
+}
+
+function isLowInformationPaperTitle(value) {
+  const title = stripUserRequestTailFromPaperTitle(value || "");
+  const lower = title.toLowerCase();
+
+  if (!title || isMetadataOnlyTitle(title)) return true;
+  if (/^untitled(?:\s+paper)?$/i.test(title)) return true;
+  if (/^main$/i.test(title)) return true;
+
+  // Common broken titles caused by imported ScienceDirect/Elsevier IDs being
+  // stored as the title field, e.g. "r s2.0 S221112471831636X main".
+  if (/^(?:r\s*)?s2\.0\s+s?\d{8,}[a-z0-9]*\s*(?:main)?$/i.test(title)) return true;
+  if (/^(?:r\s*)?s?\d{10,}[a-z0-9]*\s*(?:main)?$/i.test(title)) return true;
+
+  // Too short and mostly identifier-like strings are not useful paper titles.
+  const alpha = (title.match(/[A-Za-z]/g) || []).length;
+  const digits = (title.match(/\d/g) || []).length;
+  if (title.length < 12 && digits >= alpha) return true;
+
+  return false;
+}
+
+function bestDisplayPaperTitleFromItem(item) {
+  const rawTitle = stripUserRequestTailFromPaperTitle(item?.title || "");
+  if (!isLowInformationPaperTitle(rawTitle)) return rawTitle;
+
+  const content = [item?.content || "", item?.matched_chunk || ""].filter(Boolean).join("\n");
+  const extracted = stripUserRequestTailFromPaperTitle(extractTitleFromKnowledgeContent(content));
+  if (!isLowInformationPaperTitle(extracted)) return extracted;
+
+  return "";
 }
 
 function extractTitleFromKnowledgeContent(content) {
