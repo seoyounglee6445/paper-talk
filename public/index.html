@@ -3,10 +3,52 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <meta name="robots" content="index, follow, noai, noimageai">
 <meta name="google-site-verification" content="gPcR43KPc0e3DfjmFXxZUNhwR5UK1aTFqZ5KqqJ4AdM" />
 
-<meta name="description" content="Paper_Talk is a research platform for cancer genomics, bioinformatics, research paper reviews, study materials, conference notices, and academic career resources.">
+<title>Paper_Talk GPT | Cancer Genomics Research GPT and Paper Reviews</title>
+
+<meta name="description" content="Paper_Talk GPT, also known as Paper Talk GPT, is a cancer genomics and bioinformatics research GPT platform for paper reviews, spatial transcriptomics, single-cell analysis, study materials, conference notices, and academic career resources.">
+
+<meta name="keywords" content="Paper_Talk GPT, Paper Talk GPT, cancer genomics GPT, bioinformatics GPT, research paper GPT, paper review GPT, spatial transcriptomics GPT, single-cell analysis, tumor ecosystem, cancer research papers">
+
+<link rel="canonical" href="https://paper-talk.seoyounglee6445.workers.dev/">
+
+<meta property="og:title" content="Paper_Talk GPT | Cancer Genomics Research GPT">
+<meta property="og:description" content="Paper_Talk GPT is a cancer genomics and bioinformatics research GPT platform for paper reviews, spatial transcriptomics, single-cell analysis, study materials, conference notices, and academic career resources.">
+<meta property="og:url" content="https://paper-talk.seoyounglee6445.workers.dev/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Paper_Talk GPT">
+
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Paper_Talk GPT | Cancer Genomics Research GPT">
+<meta name="twitter:description" content="Cancer genomics and bioinformatics research GPT platform for paper reviews, spatial transcriptomics, single-cell analysis, and academic research resources.">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "Paper_Talk GPT",
+  "alternateName": [
+    "Paper Talk GPT",
+    "Paper_Talk",
+    "Cancer Genomics Research GPT"
+  ],
+  "url": "https://paper-talk.seoyounglee6445.workers.dev/",
+  "description": "Paper_Talk GPT is a cancer genomics and bioinformatics research GPT platform for paper reviews, spatial transcriptomics, single-cell analysis, study materials, conference notices, and academic career resources.",
+  "inLanguage": "en",
+  "about": [
+    "Cancer genomics",
+    "Bioinformatics",
+    "Research paper reviews",
+    "Spatial transcriptomics",
+    "Single-cell analysis",
+    "Tumor ecosystem research",
+    "Academic career resources"
+  ]
+}
+</script>
 
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-WWSD3F58L6"></script>
 <script>
@@ -16,7 +58,6 @@ gtag('js', new Date());
 gtag('config', 'G-WWSD3F58L6');
 </script>
 
-<title>Paper_Talk | Cancer Genomics, Bioinformatics and Research Papers</title>
 <link rel="stylesheet" href="/style.css">
 
 <style>
@@ -73,6 +114,7 @@ gtag('config', 'G-WWSD3F58L6');
   color: white;
   text-decoration: none;
 }
+
 .logo,
 .logo:link,
 .logo:visited {
@@ -95,7 +137,6 @@ gtag('config', 'G-WWSD3F58L6');
   text-decoration: none !important;
 }
 
-/* Keep navigation labels on one line. */
 .header .nav {
   flex-wrap: nowrap !important;
   overflow-x: auto;
@@ -107,6 +148,20 @@ gtag('config', 'G-WWSD3F58L6');
   white-space: nowrap !important;
   flex: 0 0 auto;
 }
+
+.seo-intro {
+  margin-top: 10px;
+  margin-bottom: 22px;
+  max-width: 980px;
+  color: #263247;
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.seo-intro strong {
+  color: #071f9f;
+  font-weight: 900;
+}
 </style>
 </head>
 
@@ -117,13 +172,14 @@ gtag('config', 'G-WWSD3F58L6');
       href="/"
       class="logo"
       id="homeLogoLink"
-      aria-label="Go to Home"
+      aria-label="Go to Paper_Talk GPT Home"
       onclick="event.preventDefault(); event.stopPropagation(); window.top.location.href = window.location.origin + '/'; return false;"
-    >Paper_Talk</a>
+    >Paper_Talk GPT</a>
+
     <a href="/">Home</a>
     <a href="/research.html">Research Paper</a>
     <a href="/study.html">Study Materials</a>
-    <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
+    <a href="/visium-gpt.html">Paper_Talk GPT</a>
     <a href="/specialist-gpts.html" onclick="event.preventDefault(); window.location.href='/specialist-gpts.html'; return false;">Specialist GPTs</a>
     <a href="/community.html">Community</a>
     <a href="/career.html">Career</a>
@@ -132,18 +188,23 @@ gtag('config', 'G-WWSD3F58L6');
 
 <main class="container">
   <h1 class="home-title-row">
-    <span>Paper_Talk</span>
+    <span>Paper_Talk GPT</span>
     <span class="member-pill">
       Today’s visits
       <strong id="todayVisitCount">Loading...</strong>
     </span>
   </h1>
 
-  <p>Research paper, conference notice, and LinkedIn networking platform.</p>
+  <p class="seo-intro">
+    <strong>Paper_Talk GPT</strong>, also searchable as <strong>Paper Talk GPT</strong>,
+    is a cancer genomics and bioinformatics research GPT platform for research paper reviews,
+    spatial transcriptomics, single-cell analysis, tumor ecosystem studies, study materials,
+    conference notices, and academic career resources.
+  </p>
 
   <section class="home-three-grid">
     <div class="home-column">
-      <h2>Vision GPT DB Updates</h2>
+      <h2>Paper_Talk GPT DB Updates</h2>
       <div id="homePapers"></div>
     </div>
 
@@ -281,7 +342,7 @@ async function loadHomePapers() {
       .slice(0, HOME_LIMIT);
 
     if (posts.length === 0) {
-      renderEmpty(box, "No Vision GPT DB updates yet.");
+      renderEmpty(box, "No Paper_Talk GPT DB updates yet.");
       return;
     }
 
@@ -293,7 +354,7 @@ async function loadHomePapers() {
     `).join("");
   } catch (error) {
     console.error(error);
-    renderError(box, "Could not load Vision GPT DB updates.");
+    renderError(box, "Could not load Paper_Talk GPT DB updates.");
   }
 }
 
