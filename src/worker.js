@@ -231,6 +231,86 @@ function json(data, status = 200, headers = {}) {
   });
 }
 
+function normalizeChatInputNoise(value) {
+  let text = String(value || "").normalize("NFKC");
+  if (!text) return "";
+
+  // Remove invisible characters and normalize common mobile/IME spacing noise.
+  text = text
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[ \t]{2,}/g, " ");
+
+  // Common mobile/IME typo: Korean polite ending is split into final syllable + jamo.
+  // Example: "이 논문 요약해주세ㅇ ㅛ" -> "이 논문 요약해주세요".
+  // Keep this conservative so scientific symbols and gene names are not damaged.
+  text = text
+    .replace(/해\s*주\s*세\s*ㅇ\s*ㅛ/g, "해주세요")
+    .replace(/해\s*주\s*세\s*요/g, "해주세요")
+    .replace(/주\s*세\s*ㅇ\s*ㅛ/g, "주세요")
+    .replace(/주\s*세\s*요/g, "주세요")
+    .replace(/하\s*세\s*ㅇ\s*ㅛ/g, "하세요")
+    .replace(/세\s*ㅇ\s*ㅛ/g, "세요")
+    .replace(/줘\s*ㅇ\s*ㅛ/g, "줘요")
+    .replace(/([가-힣])\s*ㅇ\s*ㅛ(?=$|[\s?.!,。！？])/g, "$1요");
+
+  // A few high-frequency request words often arrive with accidental spaces.
+  // These are examples only. The language-agnostic fallback below handles other languages.
+  // Keep this conservative so scientific terms, gene symbols, and paper titles are not damaged.
+  text = text
+    .replace(/\bsummari\s*([sz])\s*e\b/gi, "summari$1e")
+    .replace(/\bsum\s*mar\s*y\b/gi, "summary")
+    .replace(/\bhigh\s*light(s)?\b/gi, "highlight$1")
+    .replace(/\bplea\s*se\b/gi, "please")
+    .replace(/\barti\s*cle\b/gi, "article")
+    .replace(/\bpape\s*r\b/gi, "paper")
+    .replace(/\br[ée]\s*sum[ée]\b/gi, "résumé")
+    .replace(/\br[ée]\s*sumer\b/gi, "résumer")
+    .replace(/\bresu\s*men\b/gi, "resumen")
+    .replace(/\bresu\s*mir\b/gi, "resumir")
+    .replace(/\bzusammen\s*fassung\b/gi, "zusammenfassung")
+    .replace(/\bri\s*assunto\b/gi, "riassunto");
+
+  return text.replace(/[ \t]{2,}/g, " ").trim();
+}
+
+function makeLanguageAgnosticIntentKey(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[\s\p{P}\p{S}_]+/gu, "");
+}
+
+function hasAnyLanguageAgnosticIntentTerm(value, terms) {
+  const key = makeLanguageAgnosticIntentKey(value);
+  if (!key) return false;
+
+  return (terms || []).some(term => {
+    const termKey = makeLanguageAgnosticIntentKey(term);
+    return termKey && key.includes(termKey);
+  });
+}
+
+function isSafeUniversalShortFollowUpShape(value) {
+  const text = normalizeChatInputNoise(value);
+  if (!text) return false;
+
+  // Language-agnostic fallback:
+  // If a user sends a very short message after a paper/topic was discussed, it is often a
+  // continuation such as "summarize", "shorter", "again", "translate", "explain", etc.
+  // We avoid code-like or admin-like strings so this does not hijack programming requests.
+  if (text.length > 80) return false;
+  if (/```|[{}`;$<>]|=>|<-|==|!=|\/api\/|SELECT\s+|INSERT\s+|UPDATE\s+|DELETE\s+/i.test(text)) return false;
+  if (/^(hi|hello|hey|thanks|thank you|test|테스트|안녕|안녕하세요)$/i.test(text.trim())) return false;
+
+  const nonSpaceChars = text.replace(/\s+/g, "");
+  if (nonSpaceChars.length < 2) return false;
+
+  // Works for any script because it relies on length/shape, not a language-specific dictionary.
+  return text.split(/\s+/).filter(Boolean).length <= 10;
+}
+
 
 // ======================================
 // Cancelable GPT request support
@@ -3337,14 +3417,16 @@ async function adminImportThinkingLogic(request, env) {
     env
   });
 
-  // Remove previous thinking-logic rows first. Keeping only the latest distilled rules prevents
-  // old full-PDF rows from being scanned during chat and avoids Cloudflare CPU-limit 503 errors.
+  // Keep multiple distilled thinking-logic imports so different books/frameworks can be combined.
+  // Only remove legacy thinking-logic rows that do not use the safe compact post_id pattern.
   await env.DB.prepare(`
     DELETE FROM research_knowledge
-    WHERE post_id LIKE 'thinking_logic_%'
-       OR title LIKE '[Thinking Logic]%'
-       OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
-       OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
+    WHERE post_id NOT LIKE 'thinking_logic_%'
+      AND (
+        title LIKE '[Thinking Logic]%'
+        OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
+        OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
+      )
   `).run();
 
   const content = [
@@ -6459,7 +6541,7 @@ const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 0;
 const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 5;
 const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 7000;
 const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 2200;
-const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 1200;
+const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 6000;
 const PAPER_TALK_MIN_FULLTEXT_CHARS = 20;
 const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS = 12000;
 const PAPER_TALK_SKIP_VECTORIZE_DURING_IMPORT = true;
@@ -7373,31 +7455,45 @@ function isPaperHighlightOrShortSummaryFollowUp(message) {
   // "아니 앞에는 논문 하이라이트를 한줄만 달라고" must keep the previous
   // paper/topic context instead of being treated as a brand-new generic question.
   const shortEnough = text.length <= 260;
-  const hasFollowUpTask = /(?:하이라이트|highlight|핵심|중요\s*부분|중요한\s*부분|takeaway|key\s*point|main\s*finding|summary|summari[sz]e|요약|한\s*줄|한줄|1\s*줄|one[-\s]?line|one\s*sentence|짧게|간단히|영어로|한국어로|한글로|번역|다시|rewrite|rephrase|앞에는|위에는|방금|아까|이\s*논문|그\s*논문|this\s+paper|that\s+paper|previous\s+paper|above)/i.test(text);
+  const hasFollowUpTask = /(?:하이라이트|highlight|핵심|중요\s*부분|중요한\s*부분|takeaway|key\s*point|main\s*finding|summary|summari[sz]e|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要|요약|한\s*줄|한줄|1\s*줄|one[-\s]?line|one\s*sentence|짧게|간단히|영어로|한국어로|한글로|번역|다시|rewrite|rephrase|앞에는|위에는|방금|아까|이\s*논문|그\s*논문|this\s+paper|that\s+paper|previous\s+paper|above)/i.test(text);
+  const hasLooseRequestIntent = hasAnyLanguageAgnosticIntentTerm(text, [
+    "summary", "summarize", "summarise", "highlight", "takeaway", "translate", "shorter", "longer", "again",
+    "요약", "정리", "하이라이트", "핵심", "번역", "짧게", "다시",
+    "résumé", "résumer", "resumen", "resumir", "sumario",
+    "zusammenfassung", "riassunto", "sintesi", "要約", "总结", "總結", "摘要"
+  ]);
   const hasNewLongScientificTitle = /[A-Za-z0-9][A-Za-z0-9:+,()\/[\] ._-]{45,}/.test(text);
 
-  return shortEnough && hasFollowUpTask && !hasNewLongScientificTitle;
+  return shortEnough && (hasFollowUpTask || hasLooseRequestIntent || isSafeUniversalShortFollowUpShape(text)) && !hasNewLongScientificTitle;
 }
 
 function isAutomaticPreviousContextFollowUp(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
   if (!text) return false;
 
-  // Very short Korean/English follow-ups should automatically inherit the previous
+  // Very short follow-ups in any language should automatically inherit the previous
   // paper/topic context. The user should not have to repeat the paper title.
   // Examples: "하이라이트를 줘", "한줄로", "영어로", "좀 더 자세히",
-  // "앞에는 논문 하이라이트를 한줄만 달라고", "translate", "make it shorter".
+  // "앞에는 논문 하이라이트를 한줄만 달라고", "translate", "make it shorter",
+  // or short typo/noisy messages in other scripts.
   const shortEnough = text.length <= 320;
 
-  const explicitFollowUpTask = /(하이라이트|highlight|highlights|핵심|중요\s*부분|중요한\s*부분|takeaway|takeaways|key\s*point|key\s*points|main\s*finding|main\s*findings|요약|summary|summari[sz]e|resumen|résumé|résume|sumario|한\s*줄|한줄|1\s*줄|one[-\s]?line|one\s*sentence|짧게|간단히|briefly|shortly|concise|좀\s*더|더\s*자세히|자세히|풀어서|영어로|한국어로|한글로|일본어로|중국어로|다국어|multilingual|multi[-\s]?language|번역|translate|translation|다시|rewrite|rephrase|paraphrase|앞에는|위에는|방금|아까|이\s*논문|그\s*논문|this\s+paper|that\s+paper|previous\s+paper|above|it|this|that)/i.test(text);
+  const explicitFollowUpTask = /(하이라이트|highlight|highlights|핵심|중요\s*부분|중요한\s*부분|takeaway|takeaways|key\s*point|key\s*points|main\s*finding|main\s*findings|요약|summary|summari[sz]e|resumen|resumir|résumé|résume|résumer|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要|한\s*줄|한줄|1\s*줄|one[-\s]?line|one\s*sentence|짧게|간단히|briefly|shortly|concise|좀\s*더|더\s*자세히|자세히|풀어서|영어로|한국어로|한글로|일본어로|중국어로|다국어|multilingual|multi[-\s]?language|번역|translate|translation|다시|rewrite|rephrase|paraphrase|앞에는|위에는|방금|아까|이\s*논문|그\s*논문|this\s+paper|that\s+paper|previous\s+paper|above|it|this|that)/i.test(text);
 
-  const isJustFormatInstruction = /^(하이라이트(를)?\s*줘|하이라이트만|핵심만|요약해줘|요약|한\s*줄로?|한줄로?|1\s*줄로?|영어로(\s*줘)?|한국어로(\s*줘)?|한글로(\s*줘)?|짧게|간단히|다시|more|shorter|longer|translate|summari[sz]e|highlight)$/i.test(text);
+  const isJustFormatInstruction = /^(하이라이트(를)?\s*줘|하이라이트만|핵심만|요약해줘|요약|한\s*줄로?|한줄로?|1\s*줄로?|영어로(\s*줘)?|한국어로(\s*줘)?|한글로(\s*줘)?|짧게|간단히|다시|more|shorter|longer|translate|summari[sz]e|summary|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要|highlight)$/i.test(text);
+  const hasLooseRequestIntent = hasAnyLanguageAgnosticIntentTerm(text, [
+    "summary", "summarize", "summarise", "highlight", "takeaway", "translate", "shorter", "longer", "again", "more",
+    "요약", "정리", "하이라이트", "핵심", "번역", "짧게", "다시", "자세히",
+    "résumé", "résumer", "resumen", "resumir", "sumario",
+    "zusammenfassung", "riassunto", "sintesi", "要約", "总结", "總結", "摘要"
+  ]);
+  const universalShortFollowUp = isSafeUniversalShortFollowUpShape(text);
 
   // If the user pasted a new long scientific title, treat it as a new paper query,
   // not as a follow-up. Otherwise inherit the previous context.
   const hasNewLongScientificTitle = /[A-Za-z0-9][A-Za-z0-9:+,()\/[\] ._-]{55,}/.test(text) && !/(이\s*논문|그\s*논문|this\s+paper|that\s+paper|앞에는|위에는|방금|아까)/i.test(text);
 
-  return shortEnough && (explicitFollowUpTask || isJustFormatInstruction) && !hasNewLongScientificTitle;
+  return shortEnough && (explicitFollowUpTask || isJustFormatInstruction || hasLooseRequestIntent || universalShortFollowUp) && !hasNewLongScientificTitle;
 }
 
 function isContextualThreadFollowUpRequest(message) {
@@ -7955,7 +8051,8 @@ async function gptChat(request, env) {
     await ensureSpecialistGptTables(env);
 
     const data = await request.json().catch(() => ({}));
-    const message = String(data.message || "").trim();
+    const rawMessage = String(data.message || "").trim();
+    const message = normalizeChatInputNoise(rawMessage);
     const gptKey = getGptKeyFromRequestData(data);
     const gptProfile = getGptProfile(gptKey);
     let threadId = String(data.threadId || "").trim();
@@ -8321,6 +8418,9 @@ async function gptChat(request, env) {
     context = selectTopSupportingPapersForAnswer(context, null, outputStyleForSelection);
 
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
+    const thinkingLogicFrameworks = await retrieveThinkingLogicFrameworks({
+      userMessage: effectiveMessage
+    }, env).catch(() => []);
 
     let assistantText = relatedPaperMode
       ? buildRelatedPaperAnswerFromContext({
@@ -8333,7 +8433,7 @@ async function gptChat(request, env) {
         : await callOpenAIForPaperTalk({
             userMessage: `${gptProfile.title} context. User question: ${effectiveMessage}`,
             context,
-            thinkingLogicFrameworks: [],
+            thinkingLogicFrameworks,
             pastFrameworks: [],
             generatedFramework: "",
             recentMessages: recentMessagesForContinuation,
@@ -9448,7 +9548,7 @@ function extractLikelyPaperTitlesFromQuestion(value) {
   for (const line of lines) {
     const cleaned = line
       .replace(/^(title|paper|논문|제목)\s*[:：]\s*/i, "")
-      .replace(/(이\s*논문을|이\s*논문|읽고|요약|정리|중요|부분|답변|해주세요|해줘|찾아|줘|기반으로|abstract|초록)/g, " ")
+      .replace(/(이\s*논문을|이\s*논문|읽고|요약|정리|중요|부분|답변|해주세요|해줘|찾아|줘|기반으로|abstract|초록|summary|summari[sz]e|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要)/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
 
@@ -9460,7 +9560,7 @@ function extractLikelyPaperTitlesFromQuestion(value) {
 
   // Sometimes the user pastes title + request in one line. Keep a phrase before Korean request words.
   const single = text.replace(/\s+/g, " ").trim();
-  const beforeKoreanRequest = single.split(/이\s*논문|읽고|요약|정리|중요|해줘|해주세요|답해|분석/)[0]?.trim();
+  const beforeKoreanRequest = single.split(/이\s*논문|읽고|요약|정리|중요|해줘|해주세요|답해|분석|summary|summari[sz]e|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要/i)[0]?.trim();
   if (beforeKoreanRequest) {
     const englishWords = (beforeKoreanRequest.match(/[A-Za-z][A-Za-z\-]+/g) || []).length;
     if (beforeKoreanRequest.length >= 25 && englishWords >= 4) titles.push(beforeKoreanRequest);
@@ -10340,10 +10440,10 @@ async function directResearchKnowledgeSearch(query, env) {
 function getImportantSearchTokens(query) {
   const stopWords = new Set([
     "the", "and", "for", "with", "from", "into", "onto", "this", "that", "these", "those",
-    "paper", "article", "study", "research", "please", "summary", "summarize", "summarise", "about",
+    "paper", "article", "study", "research", "please", "summary", "summarize", "summarise", "résumé", "résume", "résumer", "resumen", "resumir", "sumario", "zusammenfassung", "riassunto", "sintesi", "about",
     "what", "which", "where", "when", "how", "why", "can", "could", "would", "should",
     "논문", "연구", "관련", "자료", "정보", "뭐가", "무엇", "어떤", "있지", "있어", "있나요",
-    "요약", "요약해줘", "요약해주세요", "정리", "정리해줘", "알려줘", "해주세요",
+    "요약", "요약해줘", "요약해주세요", "정리", "정리해줘", "알려줘", "해주세요", "要約", "总结", "總結", "摘要",
     "있는", "대한", "해당", "그", "이", "저", "좀"
   ]);
 
@@ -10358,8 +10458,8 @@ function getImportantSearchTokens(query) {
 
 function stripQuestionIntentWords(value) {
   return String(value || "")
-    .replace(/\b(paper|article|study|research|please|summary|summarize|summarise|about)\b/gi, " ")
-    .replace(/논문|연구|관련|자료|정보|뭐가|무엇|어떤|있지|있어|있나요|요약해주세요|요약해줘|요약|정리해줘|정리|알려줘|해주세요/g, " ")
+    .replace(/\b(paper|article|study|research|please|summary|summarize|summarise|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|about)\b/gi, " ")
+    .replace(/논문|연구|관련|자료|정보|뭐가|무엇|어떤|있지|있어|있나요|요약해주세요|요약해줘|요약|정리해줘|정리|알려줘|해주세요|要約|总结|總結|摘要/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -10980,7 +11080,7 @@ async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
   // CPU-safe v33:
   // Thinking Logic PDF/TXT is summarized at import time.
   // During chat, NEVER scan the full PDF text and NEVER run keyword LIKE over content.
-  // Just load the latest compact distilled framework and pass only a small slice to GPT.
+  // Load several latest compact distilled frameworks so multiple books can guide reasoning together.
   try {
     if (!env.DB) return [];
 
@@ -10990,7 +11090,7 @@ async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
       WHERE status = 'indexed'
         AND post_id LIKE 'thinking_logic_%'
       ORDER BY datetime(updated_at) DESC
-      LIMIT 1
+      LIMIT 4
     `).all();
 
     const rows = result.results || [];
@@ -11003,7 +11103,7 @@ async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
 
       return {
         title: cleanBibtexText(row.title || "Scientific Thinking Logic").slice(0, 240),
-        content: distilled.slice(0, 3500),
+        content: distilled.slice(0, 2500),
         updated_at: row.updated_at || ""
       };
     });
@@ -11017,12 +11117,12 @@ function buildThinkingLogicContext(thinkingLogicFrameworks = []) {
     return "No admin-uploaded distilled thinking logic was retrieved. Use only the built-in Paper_Talk scientific thinking logic.";
   }
 
-  return thinkingLogicFrameworks.slice(0, 2).map((item, index) => {
+  return thinkingLogicFrameworks.slice(0, 4).map((item, index) => {
     return [
       `THINKING_LOGIC_SOURCE_${index + 1}`,
       `TITLE: ${cleanBibtexText(item.title || "Scientific Thinking Logic")}`,
       `ROLE: Silent reasoning framework only. Not biological evidence. Never summarize this to the user.`,
-      `DISTILLED_RULES:\n${cleanBibtexText(item.content || "").slice(0, 2200)}`
+      `DISTILLED_RULES:\n${cleanBibtexText(item.content || "").slice(0, 1400)}`
     ].join("\n");
   }).join("\n\n---\n\n");
 }
@@ -11333,7 +11433,7 @@ function inferQuestionTypeHeuristically(userMessage) {
   const validationPattern = /(validate|validation|experiment|experimental design|protocol|control|statistic|analysis plan|test this|검증|실험|프로토콜|대조군|분석 방법|어떻게 확인)/i;
   const pipelinePattern = /(pipeline|workflow|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step|analysis\s+order|procedure|파이프라인|워크플로우|분석\s*순서|분석\s*단계|단계별|전체\s*분석|처음부터)/i;
   const methodPattern = /(package|packages|software|tool|tools|method|methods|algorithm|implementation|model|패키지|툴|도구|방법론|분석법|알고리즘|구현|모델)/i;
-  const literaturePattern = /(paper|papers|literature|review|summarize|related studies|논문|문헌|리뷰|요약|관련 연구)/i;
+  const literaturePattern = /(paper|papers|article|literature|review|summary|summari[sz]e|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要|related studies|논문|문헌|리뷰|요약|관련 연구)/i;
 
   if (researchPattern.test(message)) return "RESEARCH";
   if (pipelinePattern.test(message)) return "PIPELINE";
