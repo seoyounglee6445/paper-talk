@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v88 GPT-4o semantic intent + clean related-paper titles + no keyword-only code-first routing
+Paper_Talk Worker v89 GPT-4o semantic intent + ROI/spatial method DB-first routing + Thinking-logic theme comparison + adaptive answer organization
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
 - User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, first search/retrieve papers matching the user's keyword/domain and extract the workflows used in those papers; only then synthesize a practical paper-grounded workflow. Never answer pipeline/workflow questions with a generic protocol before showing the relevant paper workflow evidence. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
@@ -11,6 +11,8 @@ Paper_Talk Worker v88 GPT-4o semantic intent + clean related-paper titles + no k
 - Related-paper follow-up patch: short requests such as "이거랑 비슷한 논문은" inherit the active paper, retrieve other DB papers, and return exact titles instead of a generic trend answer.
 - One-line highlight patch: "한줄만/one line" requests return one clean sentence without forcing bullet formatting.
 - v87 semantic code-first gate: runnable code mode is activated only by LLM intent field wants_executable_code, not by keyword matching. Literature/recommendation/follow-up questions cannot be hijacked into CODE-FIRST mode.
+- v89 ROI/spatial method patch: questions such as "ROI를 어떻게 찾지", "spatial에서 region을 어떻게 잡지", or "multiplex imaging으로 어떻게 분석" are routed to PIPELINE_WORKFLOW. The assistant must retrieve top DB papers, group them by methodological theme, compare themes using the uploaded Thinking logic as a rubric, discuss the best strategy for the user's data/question, and then provide a practical workflow.
+- v89 adaptive answer patch: DB-grounded answers should not use a rigid fixed template. After retrieval and Thinking-logic comparison, the model chooses the most readable structure for the specific question: prose, compact tables, bullets, workflow, or recommendation-first discussion.
 */
 
 export default {
@@ -6995,6 +6997,22 @@ function shouldUseCodeFirstMode({
   return wantsExecutableCode;
 }
 
+function isSpatialRoiMethodWorkflowQuestion(message) {
+  const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!text) return false;
+
+  const hasSpatialImagingSignal =
+    /(spatial|공간|multiplex|multiplexing|multi[-\s]?plex|멀티플렉스|다중화|imaging|image|이미지|codex|mibi|imc|cycif|xenium|cosmx|merfish|seqfish|visium|slide[-\s]?seq|spatial transcriptomics|공간전사체|공간 전사체)/i.test(text);
+
+  const hasRegionSignal =
+    /(roi|region of interest|region|regions|tissue region|spatial region|domain|niche|neighborhood|neighbourhood|microenvironment|territory|compartment|area|영역|관심영역|관심 영역|구역|부위|니치|도메인|네이버후드|근처|주변|조직 구조|조직영역)/i.test(text);
+
+  const hasHowToSignal =
+    /(how to|how do|how should|find|detect|identify|define|select|choose|segment|discover|extract|analy[sz]e|workflow|pipeline|어떻게|어케|찾|잡|정의|선정|고르|뽑|검출|발견|분석|나누|구분|만들|할지|하지)/i.test(text);
+
+  return hasSpatialImagingSignal && hasRegionSignal && hasHowToSignal;
+}
+
 function heuristicPaperTalkPlanner(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -7013,6 +7031,13 @@ function heuristicPaperTalkPlanner(message) {
   // Fallback only. Primary routing is done by the LLM planner below.
   // Pipeline/workflow requests should produce a step-by-step workflow, not just a tool list.
   add(/(pipeline|workflow|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step|analysis\s+order|procedure|파이프라인|워크플로우|분석\s*순서|분석\s*단계|단계별|전체\s*분석|처음부터|raw\s*data\s*to|FASTQ.*interpretation)/i, 6, s => pipelineScore += s);
+
+  // v89: ROI / spatial region / multiplex imaging "how to find/analyze" questions
+  // are practical workflow questions. They need DB-grounded paper candidates,
+  // theme comparison, discussion, and a usable ROI-finding workflow.
+  if (isSpatialRoiMethodWorkflowQuestion(text)) {
+    pipelineScore += 8;
+  }
 
   // This catches obvious package/tool/method questions when OpenAI intent inference is unavailable.
   add(/(package|packages|software|tool|tools|library|libraries|method|methods|methodology|algorithm|implementation|code|model|models|패키지|툴|도구|소프트웨어|방법론|분석법|분석 방법|알고리즘|구현|모델)/i, 4, s => methodScore += s);
@@ -7087,6 +7112,15 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
     );
   }
 
+  if (isSpatialRoiMethodWorkflowQuestion(q)) {
+    queries.unshift(
+      "multiplex imaging spatial ROI region of interest cell neighborhood tissue architecture CODEX MIBI IMC CyCIF",
+      "spatial proteomics multiplex imaging ROI selection cell neighborhoods tissue niches graph community detection",
+      "spatial omics ROI detection region definition cell segmentation marker intensity neighborhood enrichment",
+      "tumor microenvironment multiplex imaging ROI CAF myeloid tumor epithelial CD8 exclusion spatial niche"
+    );
+  }
+
   if (primaryDomain === "CANCER_GENOMICS" || /cancer|tumor|암|종양/i.test(t)) {
     queries.push(
       "cancer genomics tumor evolution immune escape spatial",
@@ -7131,7 +7165,9 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
       queries.push(
         `${keywordAnchor || "spatial transcriptomics"} spatial transcriptomics paper workflow preprocessing QC normalization spatial domains deconvolution cell cell interaction`,
         `${keywordAnchor || "spatial transcriptomics"} Visium Xenium CosMx MERFISH spatial transcriptomics analysis pipeline used methods papers Seurat Scanpy Squidpy Giotto BayesSpace SpaGCN STAGATE cell2location Tangram`,
-        `${keywordAnchor || "spatial omics"} spatial omics workflow histology image segmentation deconvolution niche analysis ligand receptor analysis papers`
+        `${keywordAnchor || "spatial omics"} spatial omics workflow histology image segmentation deconvolution niche analysis ligand receptor analysis papers`,
+        `${keywordAnchor || "multiplex imaging ROI"} multiplex imaging CODEX MIBI IMC CyCIF cell segmentation ROI selection cell neighborhood spatial domain graph community tissue architecture`,
+        `${keywordAnchor || "spatial ROI"} region of interest detection spatial proteomics cell neighborhoods marker composition spatial graph tissue niche analysis`
       );
     }
 
@@ -7240,6 +7276,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
               "paper_talk_intent must be one of: LITERATURE_REVIEW, RESEARCH_IDEA, METHOD_EXTRACTION, PIPELINE_WORKFLOW, CONCEPT, VALIDATION, COMPARISON, PAPER_SUMMARY, SOURCE_TRACE, GENERAL.",
               "Use LITERATURE_REVIEW only when the user wants papers to read, recent trends, hot topics, representative studies, paper recommendations, or field overview.",
               "Use PIPELINE_WORKFLOW when the user wants an actual analysis pipeline, workflow, step-by-step procedure, analysis order, or end-to-end process. This must be paper-grounded: infer the user's keyword/entities and assay/domain, retrieve papers matching that keyword/domain, then extract workflows used in those papers.",
+              "Important: spatial ROI questions are PIPELINE_WORKFLOW. If the user asks how to find, define, select, detect, or analyze ROI/region/niche/domain/neighborhood in spatial, multiplex imaging, CODEX, MIBI, IMC, CyCIF, Xenium, CosMx, MERFISH, Visium, or spatial transcriptomics data, choose PIPELINE_WORKFLOW even if the wording sounds like a concept question.",
               "Use METHOD_EXTRACTION when the user wants practical analysis methods, packages, software, tools, algorithms, models, or wants to know what methods were actually used in papers.",
               "Important: if the user asks for a workflow/pipeline/analysis order, choose PIPELINE_WORKFLOW, not METHOD_EXTRACTION and not LITERATURE_REVIEW. A workflow request should first find relevant papers for the provided keyword/domain and then synthesize the workflow used in those papers; do not list generic tools only.",
               "Important: if the user asks what papers used, what researchers used, what analysis was done, which package/method/tool is used, or what can be used for actual data analysis, choose METHOD_EXTRACTION, not LITERATURE_REVIEW.",
@@ -7270,9 +7307,12 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
 
     const parsed = JSON.parse(raw);
     const associationEvidenceStyle = isEvidenceStyleAssociationQuestion(text);
-    const paperTalkIntent = associationEvidenceStyle
-      ? "LITERATURE_REVIEW"
-      : normalizePaperTalkIntentLabel(parsed.paper_talk_intent || parsed.question_type || fallback.paper_talk_intent);
+    const spatialRoiWorkflowQuestion = isSpatialRoiMethodWorkflowQuestion(text);
+    const paperTalkIntent = spatialRoiWorkflowQuestion
+      ? "PIPELINE_WORKFLOW"
+      : associationEvidenceStyle
+        ? "LITERATURE_REVIEW"
+        : normalizePaperTalkIntentLabel(parsed.paper_talk_intent || parsed.question_type || fallback.paper_talk_intent);
     const primaryDomain = normalizePaperTalkDomainLabel(parsed.primary_domain || fallback.primary_domain);
     const queries = Array.isArray(parsed.retrieval_queries)
       ? parsed.retrieval_queries.map(v => String(v || "").trim()).filter(Boolean)
@@ -11956,6 +11996,10 @@ function detectPaperTalkUserIntent(userMessage, intent = null, hasContext = fals
     return "PIPELINE_WORKFLOW";
   }
 
+  if (isSpatialRoiMethodWorkflowQuestion(raw)) {
+    return "PIPELINE_WORKFLOW";
+  }
+
   if (semanticIntent === "METHOD_EXTRACTION" || questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") {
     return "METHOD_EXTRACTION";
   }
@@ -12169,6 +12213,9 @@ GENERAL READABILITY RULES
 - Keep a calm senior cancer-genomics mentor tone: clear, kind, practical, and research-aware.
 - Do not invent papers, authors, years, datasets, biomarkers, or conclusions.
 - If DB evidence is used internally but the user did not ask for sources, do not expose paper labels or source tracing.
+- Do not force a fixed template. Decide the most readable structure from the user's actual question.
+- Use tables only when comparison or decision-making becomes clearer. Use prose for interpretation, bullets for action steps, and workflow blocks for implementation.
+- Treat any named answer structures as optional examples, not mandatory headings.
   `.trim();
 
   const associationEvidenceStyle = isEvidenceStyleAssociationQuestion(userMessage);
@@ -12223,6 +12270,21 @@ Do not give a generic workflow first.
 Do not answer as trends or paper recommendations.
 If the retrieved DB context does not contain enough keyword-matched workflow evidence, say that clearly before giving any general fallback workflow.
 
+Adaptive organization rule:
+- Do not use a rigid fixed template.
+- After DB retrieval and Thinking-logic comparison, choose the most readable structure for the specific user question.
+- If the user asks "어떻게 찾지 / how do I find", lead with the practical recommendation, then show the paper-grounded method groups, comparison/discussion, and a usable workflow.
+- If the user asks "뭐가 제일 좋아 / which is best", lead with the recommendation, then use a compact decision table and explain when each option is appropriate.
+- If the user asks for papers, make the paper groups more visible.
+- If the user asks for implementation, make the workflow/action steps more visible.
+- Section names, number of sections, and table use should be chosen dynamically.
+
+Thinking-logic theme comparison rule:
+- When grouping retrieved DB papers by methodological theme, do not merely summarize trends or list papers.
+- Use the ADMIN-UPLOADED DISTILLED THINKING LOGIC as the comparison rubric.
+- Compare each theme by the biological/analytical question, data type, unit of analysis, ROI/region/niche definition, core method/model, output, validation strategy, strength, limitation, and practical implication for the user's project.
+- The goal is to turn retrieved papers into a decision framework for the user's analysis, not into a bibliography dump.
+
 Core behavior:
 1. Infer the domain from the question.
    - If the user asks single-cell/scRNA/scATAC/multiome, use single-cell or multiome papers as the workflow basis.
@@ -12233,11 +12295,11 @@ Core behavior:
 4. Then synthesize a practical workflow from those paper-grounded patterns.
 5. Only after that, add general practical recommendations when the DB context is thin or a step is missing.
 
-Required output structure:
+Recommended answer ingredients, not a fixed template:
 1. Start with a direct sentence in the user's language, for example:
    "이건 generic workflow가 아니라, 관련 논문들에서 실제로 어떤 분석 흐름을 썼는지 기준으로 정리해야 합니다."
 
-2. Section: "먼저 찾은 관련 pipeline 논문"
+2. Include the top relevant DB paper candidates when they are useful for the user's decision.
    Use a table with columns:
    - 논문 / DB 근거 제목
    - 왜 이 키워드와 관련 있는지
@@ -12246,16 +12308,19 @@ Required output structure:
    - 명시된 tool / method
    If there are no keyword-matched papers in the retrieved DB context, say: "현재 검색된 Paper_Talk DB context만으로는 이 키워드에 맞는 pipeline 논문 근거가 충분하지 않습니다."
 
-3. Section: "논문에서 보이는 workflow 패턴"
+3. Compare workflow patterns or methodological themes using the Thinking-logic rubric.
    Use a table with columns:
-   - workflow 단계
-   - 이 단계가 나온 논문 / DB 근거 제목
-   - 실제 분석 흐름
+   - 방법론 주제
+   - biological/analytical question
+   - data type / unit of analysis
+   - ROI/region/niche definition
    - 명시된 tool / method
+   - output / validation
+   - 장점 / 한계
    - 내가 가져다 쓰면 좋은 부분
    If retrieved DB context does not explicitly show the workflow or tools, say so clearly.
 
-4. Section: "종합 workflow"
+4. Provide a synthesized practical workflow.
    Give a step-by-step workflow with columns:
    - 단계
    - 목적
@@ -12286,7 +12351,7 @@ Required output structure:
    - "General practical recommendation": useful standard workflow step, but not directly confirmed in the retrieved DB excerpt.
    - Never claim a specific paper used a tool unless the retrieved DB excerpt says or strongly supports it.
 
-7. End with "실제로 시작한다면" and recommend the simplest paper-consistent workflow first.
+7. End with a practical recommendation. The wording does not have to be "실제로 시작한다면"; choose a natural ending that fits the question and recommend the simplest paper-consistent workflow first.
 
 Return the answer in the user's language.
   `.trim();
@@ -12527,6 +12592,8 @@ For literature recommendation questions, organize titles under trend/theme secti
 For METHOD_EXTRACTION, organize by package/tool/method and analysis purpose, not by trend.
 For PIPELINE_WORKFLOW, first identify keyword-matched papers from the retrieved context, extract workflow patterns from those papers, then synthesize the analysis steps from raw data to interpretation. Do not give a generic workflow before paper-grounded patterns. If no keyword-matched workflow paper evidence is retrieved, say so explicitly before any general fallback.
 For spatial workflow questions, use spatial papers as the grounding context. For single-cell/multiome workflow questions, use single-cell/multiome papers as the grounding context.
+For spatial ROI, multiplex imaging ROI, region, niche, domain, or neighborhood questions, automatically show the top relevant DB paper candidates if context exists, group them by methodological theme, compare the themes with the uploaded Thinking logic rubric, and discuss the best-fit approach for the user's data/question before giving the workflow.
+Do not use a rigid fixed answer template. The model should choose the clearest organization for the user's question while still including DB-grounded candidates, Thinking-logic comparison, discussion, and practical next steps when relevant.
 Never invent papers, packages, datasets, methods, or implementation details outside the retrieved DB context. If a workflow step is a general recommendation rather than DB-supported, label it clearly.
     `.trim();
   }
@@ -12975,9 +13042,16 @@ Target answer style:
 - Avoid overly casual filler phrases unless the user explicitly wants casual chat.
 - Avoid report-like section labels.
 
-Default scientist-facing answer structure:
-Use this structure whenever the user asks for a paper summary, highlight, interpretation, future research direction, or "깔끔하게 정리".
-Do not force every section if the user asked for a very short answer.
+Adaptive scientist-facing answer organization:
+Do not force a fixed answer template.
+Choose the structure that best fits the user's actual question after considering DB evidence, the uploaded Thinking logic, and the user's likely research goal.
+The example sections below are optional patterns, not mandatory headings.
+Use them only when they improve readability.
+For method/workflow/ROI questions, prefer paper-grounded candidate groups, Thinking-logic comparison, discussion, and practical workflow over the generic paper-summary headings.
+For comparison questions, use compact tables only when they clarify the decision.
+For interpretation questions, use short prose paragraphs.
+For implementation questions, use action steps or workflow blocks.
+Do not use the same section names and order every time.
 
 핵심 한 줄
 - One precise takeaway. If the user asked in English, use "Core takeaway" instead.
@@ -13105,11 +13179,14 @@ If outputStyle is PIPELINE_WORKFLOW:
 - Do NOT answer with trends or paper recommendations.
 - First infer the user's keyword/entities and domain from the question.
 - First use retrieved Paper_Talk DB papers that match that keyword/domain as the workflow basis.
+- For spatial ROI / multiplex imaging ROI / region / niche / domain / neighborhood questions, treat the request as a method-selection and workflow-design problem. Retrieve top relevant DB papers, group them by methodological theme, compare the themes using the uploaded Thinking logic, discuss which approach best fits the user's data/question, and then give a practical workflow.
 - For single-cell/scRNA/scATAC/multiome workflow questions, extract workflow patterns from keyword-matched single-cell or multiome papers.
 - For spatial/spatial transcriptomics workflow questions, extract workflow patterns from keyword-matched spatial papers.
 - Do not start with "먼저 찾은 관련 pipeline 논문" unless the user explicitly asks for related papers.
-- Then include a section that summarizes workflow patterns visible in the retrieved Paper_Talk DB papers.
-- Then synthesize a step-by-step workflow from raw data to biological interpretation.
+- Do not force a fixed answer template. Choose section names, order, table use, and level of detail based on the user's question.
+- Include top candidate papers and paper-grounded method groups when they help the user decide.
+- Then summarize workflow patterns visible in the retrieved Paper_Talk DB papers.
+- Then synthesize a practical workflow from raw data to biological interpretation.
 - For each step include: purpose, input, DB-supported tools/methods, general recommendations for missing steps, output, and QC/checkpoint.
 - For scRNA-seq + scATAC-seq/multiome, include same-cell multiome and separate scRNA+scATAC alternatives when useful.
 - For spatial transcriptomics, include platform-aware preprocessing, QC, normalization, deconvolution/mapping, spatial domain/niche analysis, cell-cell interaction, and image/histology integration when useful.
@@ -13168,7 +13245,7 @@ Never answer a paper recommendation request with only a field summary.
       role: "system",
       content: hasContext
         ? (["LITERATURE_REVIEW", "SOURCE_TRACE", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle)
-          ? "A DB context is present. The user explicitly asked for papers/literature/sources, paper-grounded methods, or an analysis workflow. You may show retrieved EXACT_DB_TITLE values only when they support a method/workflow step. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method. For PIPELINE_WORKFLOW, first list keyword-matched retrieved papers and summarize workflow patterns from those papers, then organize the synthesized workflow by analysis step from raw data to interpretation. Do not use paper labels. Do not use external papers as DB evidence. If keyword-matched workflow evidence is insufficient, say so clearly before any general fallback."
+          ? "A DB context is present. The user explicitly asked for papers/literature/sources, paper-grounded methods, or an analysis workflow. You may show retrieved EXACT_DB_TITLE values only when they support a method/workflow step. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method. For PIPELINE_WORKFLOW, identify keyword-matched retrieved papers, group them by methodological theme, compare themes using the uploaded Thinking logic rubric, discuss the best-fit option for the user's data/question, then provide a practical workflow. Do not force a fixed template; choose the most readable structure for the question. Do not use paper labels. Do not use external papers as DB evidence. If keyword-matched workflow evidence is insufficient, say so clearly before any general fallback."
           : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources. Answer the user's question first in a friendly explanatory way.")
         : "No DB context is present. Do not start with a Paper_Talk DB retrieval-failure sentence unless the user explicitly asked for sources/evidence. For ordinary concept, algorithm, method, or research-idea questions, answer the scientific question directly from general knowledge. Do not invent paper titles, authors, years, journals, sample sizes, or datasets."
     },
@@ -13256,12 +13333,14 @@ Do not answer as trend recommendation.
 Do not recommend papers as reading material unless the user asks.
 Use retrieved Paper_Talk DB evidence when it supports a workflow step, but clearly separate DB-supported tools from general practical recommendations.
 
-Recommended structure:
-- Direct answer in the user's language.
-- Step-by-step workflow from raw data to biological interpretation.
-- For each step: purpose, input, recommended packages/tools, output, and QC/checkpoint.
+Adaptive workflow organization:
+- Do not force a fixed structure.
+- If the question is about ROI/region/niche/domain/neighborhood in spatial or multiplex imaging data, first retrieve top relevant DB papers, group them by methodological theme, compare themes using the uploaded Thinking logic rubric, discuss the best-fit option, and then give a practical workflow.
+- For other workflow questions, still start from keyword-matched DB papers when context exists and synthesize the workflow from paper-grounded patterns.
+- Choose the clearest format for the question: compact paper-candidate table, method comparison table, short discussion, action steps, or end-to-end workflow.
+- Include purpose, input, recommended packages/tools, output, and QC/checkpoint where useful, but do not mechanically repeat these columns if a prose explanation is clearer.
 - For scRNA-seq + scATAC-seq or multiome, separate same-cell multiome from separate-dataset integration when useful.
-- End with the simplest starting pipeline.
+- End with the simplest starting pipeline or most practical recommendation.
     `.trim();
   }
 
