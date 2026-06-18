@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v93 GPT-4o semantic intent + DB-first adaptive paper comparison + fixed new-topic vs related-paper routing
+Paper_Talk Worker v95 GPT-4o semantic intent + DB-first relevance-adaptive paper candidates + clean structured non-narrative answers
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
 - User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, first search/retrieve papers matching the user's keyword/domain and extract the workflows used in those papers; only then synthesize a practical paper-grounded workflow. Never answer pipeline/workflow questions with a generic protocol before showing the relevant paper workflow evidence. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
@@ -17,6 +17,8 @@ Paper_Talk Worker v93 GPT-4o semantic intent + DB-first adaptive paper compariso
 - v91 global DB-first concrete-answer patch: this is not limited to ROI. For any biomedical research, method, workflow, analysis, validation, comparison, or literature question, the assistant must first use retrieved Paper_Talk DB papers when available, extract how the papers actually approached the problem, compare them with the uploaded Thinking logic when comparison is useful, and then give a concrete, friendly, operational answer. Generic textbook answers are not sufficient.
 - v92 related-paper routing fix: independent new-topic questions such as "최근 protein drug 동향은" must not inherit the previous active paper and must not be answered as "similar papers to the active paper". Related-paper mode is activated only when the current user text explicitly asks for papers similar/related to the active paper or uses clear active-paper references such as "이 논문", "이거랑", "this paper".
 - v93 adaptive paper comparison patch: for method/workflow/literature questions with DB context, the answer must explicitly present an appropriate number of retrieved papers or paper groups based on the topic breadth and DB evidence, explain how each paper actually used the method/concept, compare them using the Thinking logic rubric, and only then synthesize the practical recommendation. "Related paper available" or "TACIT/Sopa are relevant" is not enough.
+- v94 relevance-adaptive candidate patch: do not decide candidate count from fixed ranges such as 2-4 or 4-8. The number of papers should come from the DB result itself. If many papers strongly match the user's question, include many strong candidates up to the bounded context limit and group them by theme. If only a few papers match, show only those few and state that DB evidence is sparse. Never pad with weak papers and never arbitrarily cut strong candidates to a small fixed number.
+- v95 clean structured answer patch: when the user asks "깔끔하게 정리", "서술형 말고", "표로", "한눈에", or similar, the answer must be organized as compact tables/checklists/short bullets with a clear conclusion first. Long narrative paragraphs are not acceptable.
 */
 
 export default {
@@ -6572,9 +6574,9 @@ const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 0;
 // v93: allow enough DB papers for agent-style comparison.
 // Keep this bounded to avoid Cloudflare/OpenAI prompt failures, but do not cut broad
 // literature/method questions to only 1-2 papers.
-const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 8;
-const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 12000;
-const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 1800;
+const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 10;
+const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 14000;
+const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 1600;
 const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 6000;
 const PAPER_TALK_MIN_FULLTEXT_CHARS = 20;
 const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS = 12000;
@@ -7433,27 +7435,38 @@ function estimateAdaptiveSupportingPaperLimit(context, outputStyle = "STANDARD")
   const items = Array.isArray(context) ? context : [];
   if (!items.length) return 0;
 
-  // Source/literature modes can use more papers because the user asked for papers.
-  const maxLimit = outputStyle === "SOURCE_TRACE" || outputStyle === "LITERATURE_REVIEW" ? 10 : 8;
+  // v94:
+  // Candidate count should come from the DB evidence itself, not from a fixed
+  // "narrow topic = N papers" rule. If many retrieved papers strongly match the
+  // question, include many strong candidates up to the bounded context limit.
+  // If only a few papers are truly relevant, include only those few.
+  const maxLimit =
+    outputStyle === "SOURCE_TRACE" ||
+    outputStyle === "LITERATURE_REVIEW" ||
+    outputStyle === "METHOD_EXTRACTION" ||
+    outputStyle === "PIPELINE_WORKFLOW"
+      ? 10
+      : 8;
 
   const scores = items
     .map(item => Number(item?.similarity_score || 0))
     .filter(score => Number.isFinite(score) && score > 0);
 
-  const topScores = scores.slice(0, Math.min(scores.length, 10));
-  const best = topScores.length ? Math.max(...topScores) : 0;
-  const average = topScores.length
-    ? topScores.reduce((a, b) => a + b, 0) / topScores.length
-    : 0;
+  if (!scores.length) {
+    return Math.min(items.length, maxLimit);
+  }
 
-  // Adaptive N:
-  // - Narrow/focused evidence: 3~4 papers
-  // - Moderately broad evidence: 5~6 papers
-  // - Broad/diffuse research-direction questions: 7~10 papers
-  if (items.length <= 3) return items.length;
-  if (best >= 0.88 || average >= 0.76) return Math.min(4, items.length, maxLimit);
-  if (best >= 0.72 || average >= 0.58) return Math.min(6, items.length, maxLimit);
-  if (items.length >= 10) return Math.min(10, items.length, maxLimit);
+  const best = Math.max(...scores);
+  const relevanceFloor = Math.max(0.35, best * 0.55);
+  const strongCount = items.filter(item => {
+    const score = Number(item?.similarity_score || 0);
+    return Number.isFinite(score) && score >= relevanceFloor;
+  }).length;
+
+  if (strongCount > 0) {
+    return Math.min(strongCount, items.length, maxLimit);
+  }
+
   return Math.min(items.length, maxLimit);
 }
 
@@ -11932,9 +11945,37 @@ function detectStrictUserOutputFormat(userMessage) {
   };
 }
 
+function detectCleanStructuredAnswerRequest(userMessage) {
+  const text = String(userMessage || "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+
+  return /(깔끔하게|정리해서|정리해\s*줘|구조화|한눈에|보기\s*좋게|서술형\s*말고|문단\s*말고|길게\s*풀지\s*말고|표로|테이블로|비교표|체크리스트|bullet|bullets|table|checklist|structured|not\s+narrative|non[-\s]?narrative)/i.test(text);
+}
+
 function buildUserRequestedFormatInstruction(userMessage) {
   const format = detectStrictUserOutputFormat(userMessage);
-  if (!format.strict) return "";
+  const cleanStructured = detectCleanStructuredAnswerRequest(userMessage);
+  if (!format.strict && !cleanStructured) return "";
+
+  if (cleanStructured && !format.strict) {
+    return `
+USER-REQUESTED CLEAN STRUCTURED ANSWER OVERRIDE
+The user explicitly asked for a clean organized answer, not a narrative explanation.
+Answer in the user's language.
+
+Required style:
+- Do NOT write long 서술형 paragraphs.
+- Start with a short conclusion/recommendation first.
+- Then use compact tables, checklists, or short bullets.
+- Use section headings only when they make scanning easier.
+- For paper-grounded questions, show selected DB paper candidates or paper groups in a table.
+- For each selected paper/paper group, show what it actually did and what can be reused.
+- Then provide a short comparison/discussion table.
+- End with a practical "what I would do first" checklist.
+- Keep each bullet/table cell concise.
+- Do not add generic background unless it directly helps the user's decision.
+`.trim();
+  }
 
   const countRule = format.count
     ? `- Return exactly ${format.count} lines/items.`
@@ -12259,6 +12300,8 @@ GENERAL READABILITY RULES
 - Do not force a fixed template. Decide the most readable structure from the user's actual question.
 - Use tables only when comparison or decision-making becomes clearer. Use prose for interpretation, bullets for action steps, and workflow blocks for implementation.
 - Treat any named answer structures as optional examples, not mandatory headings.
+- If the user asks for a clean organized answer, avoid 서술형 paragraphs and use conclusion-first tables/checklists.
+- For method/workflow questions, prefer a decision table plus practical checklist over long explanatory prose.
 - Be kind and concrete. Do not sound like a generic textbook, grant abstract, or algorithm brochure.
 - Avoid empty workflow words unless you immediately explain what the user should calculate or decide.
 - A generic stage list is not enough for any method question. For example, answers like "preprocessing, clustering, differential analysis, validation" or "QC, normalization, modeling, interpretation" are insufficient unless each step is translated into concrete operations and paper-grounded choices.
@@ -12681,12 +12724,11 @@ For each relevant paper or paper group, extract how the paper actually used the 
 Agent-style paper reading rule:
 - Do not behave as if the papers were only search hits.
 - Behave like an agent that read the top retrieved papers one by one.
-- For method/workflow/literature questions with DB context, explicitly present an appropriate number of papers or paper groups.
-- Choose the number adaptively from the topic and DB evidence:
-  narrow method question: usually 2-4 strongest papers;
-  broad trend question: usually 4-8 papers grouped by theme;
-  workflow question: enough papers to cover the main workflow options, usually 3-6;
-  if DB evidence is sparse: use only the relevant papers found and state that the DB evidence is limited.
+- For method/workflow/literature questions with DB context, explicitly present the papers or paper groups that strongly match the user's question.
+- Choose the candidate count from the DB result itself, not from a pre-set number.
+- If many DB papers strongly match the question, include more candidates and group them by theme.
+- If only a few DB papers strongly match the question, include only those few and say the DB evidence is limited.
+- If the DB contains many weakly related papers but only a few directly answer the question, show only the direct candidates and mention that weaker papers were not used as main evidence.
 - For each paper, write what the paper actually did, how it used the relevant method/concept, and what can be reused.
 - Then compare papers across common axes using the uploaded Thinking logic.
 - Then write a discussion that explains the best strategy for the user's question.
@@ -13288,8 +13330,15 @@ If outputStyle is PIPELINE_WORKFLOW:
 - For these ROI questions, a generic answer with only "preprocessing, segmentation, feature extraction, clustering, ROI selection, validation" is unacceptable. The answer must be friendly and operational: define the unit of analysis, candidate ROI score, spatial graph/window, connected-region merging, QC filters, and biological interpretation.
 - When useful, include a concrete scoring example tailored to the user's biology, such as CAF/tumor/myeloid/SERPINE1/TGF-beta high and CD8 low for a pro-metastatic or immune-excluded ROI.
 - Do not only list relevant papers. For each important paper or paper group, explain how the paper actually used the method: the biological/analytical purpose, data type, unit of analysis, region/ROI definition, computation/model/tool, output, validation, and which part can be reused for the user's analysis.
-- Behave like an agent reading papers one by one. Select the number of papers adaptively based on the topic and DB evidence, not a fixed number. Narrow questions may need 2-4 papers; broad trend questions may need 4-8 papers grouped by theme; workflow questions should include enough papers to cover the main workflow options. Do not pad with weak papers.
+- Behave like an agent reading papers one by one. Select candidate papers from the DB based on direct relevance to the user's question, not a fixed number. If the DB has many strong matches, show more candidates and group them by theme. If the DB has few strong matches, show only those few and say the evidence is limited. Do not pad with weak papers.
 - The answer should visibly show the selected papers or paper groups, then compare them, then discuss the practical conclusion. Do not jump straight to a generic workflow.
+- If the user asks "깔끔하게 정리", "서술형 말고", or similar, use a concise structure:
+  1) 추천 결론
+  2) DB에서 직접 맞는 후보 논문/논문군 table
+  3) 논문들이 실제로 한 방식 비교 table
+  4) 내 질문에 맞는 선택 기준 table
+  5) 바로 적용 checklist
+- Keep the discussion short and decision-oriented. Do not write long narrative paragraphs.
 - If a retrieved DB excerpt is too thin to know exactly how the paper did it, say that clearly and use it only as weak support.
 - For single-cell/scRNA/scATAC/multiome workflow questions, extract workflow patterns from keyword-matched single-cell or multiome papers.
 - For spatial/spatial transcriptomics workflow questions, extract workflow patterns from keyword-matched spatial papers.
@@ -13363,7 +13412,7 @@ Never answer a paper recommendation request with only a field summary.
       role: "system",
       content: hasContext
         ? (["LITERATURE_REVIEW", "SOURCE_TRACE", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle)
-          ? "A DB context is present. The user explicitly asked for papers/literature/sources, paper-grounded methods, or an analysis workflow. You may show retrieved EXACT_DB_TITLE values only when they support a method/workflow step. Select an appropriate number of retrieved papers or paper groups based on the topic and DB evidence; do not force a fixed number and do not pad with weak papers. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method. For PIPELINE_WORKFLOW, identify keyword-matched retrieved papers, explain how each selected paper actually used the relevant method/concept, group them by methodological theme, compare themes using the uploaded Thinking logic rubric, discuss the best-fit option for the user's data/question, then provide a practical workflow. Do not jump directly to a generic workflow. Do not force a fixed template; choose the most readable structure for the question. Do not use paper labels without exact titles. Do not use external papers as DB evidence. If keyword-matched workflow evidence is insufficient, say so clearly before any general fallback."
+          ? "A DB context is present. The user explicitly asked for papers/literature/sources, paper-grounded methods, or an analysis workflow. You may show retrieved EXACT_DB_TITLE values only when they support a method/workflow step. Select candidate papers or paper groups based on direct relevance in the DB, not a fixed number. If many DB papers strongly match the question, include more candidates and group them by theme. If only a few strongly match, show only those few and state that DB evidence is limited. Do not pad with weak papers. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method. For PIPELINE_WORKFLOW, identify keyword-matched retrieved papers, explain how each selected paper actually used the relevant method/concept, group them by methodological theme, compare themes using the uploaded Thinking logic rubric, discuss the best-fit option for the user's data/question, then provide a practical workflow. Do not jump directly to a generic workflow. If the user asks for a clean organized answer or says not to use narrative style, prefer tables/checklists/short bullets and avoid long paragraphs. Do not force a fixed template; choose the most readable structure for the question. Do not use paper labels without exact titles. Do not use external papers as DB evidence. If keyword-matched workflow evidence is insufficient, say so clearly before any general fallback."
           : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources. Still extract how the retrieved papers approached the problem: what data, unit, method/model, output, validation, limitation, and reusable idea they contain. Answer the user's question first in a friendly, concrete, operational way rather than a generic overview.")
         : "No DB context is present. Do not start with a Paper_Talk DB retrieval-failure sentence unless the user explicitly asked for sources/evidence. For ordinary concept, algorithm, method, or research-idea questions, answer the scientific question directly from general knowledge. Do not invent paper titles, authors, years, journals, sample sizes, or datasets."
     },
