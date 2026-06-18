@@ -6707,6 +6707,19 @@ async function safeRetrievePaperContextForChat(message, env, gptKey = DEFAULT_GP
 
   const allItems = [];
 
+  // Exact paper/title/DOI/URL lookup must run before fuzzy keyword retrieval.
+  // Otherwise a real stored paper can be missed when the user adds multilingual
+  // instructions after the title, e.g. "<title> 논문에서 하이라이트를 한줄로 줘".
+  try {
+    const explicitMatches = await findExplicitPaperMatchesFromQuestion(userQuery, env, gptKey);
+    if (Array.isArray(explicitMatches) && explicitMatches.length) {
+      const enriched = await enrichKnowledgeItemsWithFullTextChunks(explicitMatches, userQuery, env, gptKey);
+      allItems.push(...enriched);
+    }
+  } catch {
+    // Continue to fuzzy retrieval.
+  }
+
   try {
     allItems.push(...await searchPaperFullTextChunks(userQuery, env, 6, gptKey));
   } catch {
@@ -9548,7 +9561,7 @@ function extractLikelyPaperTitlesFromQuestion(value) {
   for (const line of lines) {
     const cleaned = line
       .replace(/^(title|paper|논문|제목)\s*[:：]\s*/i, "")
-      .replace(/(이\s*논문을|이\s*논문|읽고|요약|정리|중요|부분|답변|해주세요|해줘|찾아|줘|기반으로|abstract|초록|summary|summari[sz]e|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要)/gi, " ")
+      .replace(/(이\s*논문을|이\s*논문|논문에서|논문을|논문|읽고|요약|정리|중요|부분|하이라이트|핵심|한\s*줄|한줄|영어로|한국어로|번역|답변|해주세요|해줘|찾아|줘|기반으로|abstract|초록|summary|summari[sz]e|highlight|takeaway|one[-\s]?line|one\s*sentence|translate|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要)/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
 
@@ -9560,7 +9573,7 @@ function extractLikelyPaperTitlesFromQuestion(value) {
 
   // Sometimes the user pastes title + request in one line. Keep a phrase before Korean request words.
   const single = text.replace(/\s+/g, " ").trim();
-  const beforeKoreanRequest = single.split(/이\s*논문|읽고|요약|정리|중요|해줘|해주세요|답해|분석|summary|summari[sz]e|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要/i)[0]?.trim();
+  const beforeKoreanRequest = single.split(/이\s*논문|논문에서|논문을|논문|읽고|요약|정리|중요|하이라이트|핵심|한\s*줄|한줄|영어로|한국어로|해줘|해주세요|답해|분석|summary|summari[sz]e|highlight|takeaway|one[-\s]?line|one\s*sentence|translate|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要/i)[0]?.trim();
   if (beforeKoreanRequest) {
     const englishWords = (beforeKoreanRequest.match(/[A-Za-z][A-Za-z\-]+/g) || []).length;
     if (beforeKoreanRequest.length >= 25 && englishWords >= 4) titles.push(beforeKoreanRequest);
@@ -9569,7 +9582,8 @@ function extractLikelyPaperTitlesFromQuestion(value) {
   return [...new Set(titles.map(cleanBibtexText).filter(v => v.length >= 20))].slice(0, 5);
 }
 
-async function findExplicitPaperMatchesFromQuestion(query, env) {
+async function findExplicitPaperMatchesFromQuestion(query, env, gptKey = DEFAULT_GPT_KEY) {
+  gptKey = normalizeGptKey(gptKey);
   const text = String(query || "").trim();
   if (!text) return [];
 
@@ -9593,6 +9607,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env) {
         WHERE status = 'indexed'
           AND post_id NOT LIKE 'thinking_logic_%'
           AND title NOT LIKE '[Thinking Logic]%'
+          AND COALESCE(gpt_key, 'paper_talk') = ?
           AND (
             LOWER(source_url) LIKE ?
             OR LOWER(pdf_link) LIKE ?
@@ -9608,7 +9623,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env) {
           END,
           datetime(updated_at) DESC
         LIMIT 6
-      `).bind(like, like, like, like, like, like, like).all();
+      `).bind(gptKey, like, like, like, like, like, like, like).all();
 
       results.push(...(found.results || []).map(item => ({
         ...item,
@@ -9636,6 +9651,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env) {
         WHERE status = 'indexed'
           AND post_id NOT LIKE 'thinking_logic_%'
           AND title NOT LIKE '[Thinking Logic]%'
+          AND COALESCE(gpt_key, 'paper_talk') = ?
           AND (
             LOWER(title) LIKE ?
             OR LOWER(content) LIKE ?
@@ -9644,7 +9660,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env) {
           CASE WHEN LOWER(title) LIKE ? THEN 0 ELSE 1 END,
           datetime(updated_at) DESC
         LIMIT 6
-      `).bind(exactLike, exactLike, exactLike).all();
+      `).bind(gptKey, exactLike, exactLike, exactLike).all();
 
       results.push(...(found.results || []).map(item => ({
         ...item,
@@ -9669,10 +9685,11 @@ async function findExplicitPaperMatchesFromQuestion(query, env) {
           WHERE status = 'indexed'
             AND post_id NOT LIKE 'thinking_logic_%'
             AND title NOT LIKE '[Thinking Logic]%'
+            AND COALESCE(gpt_key, 'paper_talk') = ?
             AND ((${titleClauses}) OR (${contentClauses}))
           ORDER BY datetime(updated_at) DESC
           LIMIT 6
-        `).bind(...params).all();
+        `).bind(gptKey, ...params).all();
 
         results.push(...(found.results || []).map(item => ({
           ...item,
