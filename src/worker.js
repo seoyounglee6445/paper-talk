@@ -1347,7 +1347,8 @@ function specialistGptChatPage(request) {
     h1 { margin:0; font-size:22px; letter-spacing:-0.03em; }
     .subtitle { margin:4px 0 0; color:var(--muted); font-size:13px; }
     .messages { flex:1; overflow:auto; padding:24px; display:flex; flex-direction:column; gap:16px; }
-    .msg { max-width:880px; width:fit-content; padding:15px 17px; border-radius:18px; border:1px solid var(--line); line-height:1.62; white-space:pre-wrap; word-break:break-word; background:#fff; box-shadow:0 10px 30px rgba(15,23,42,.04); }
+    .msg { max-width:920px; width:fit-content; padding:15px 17px; border-radius:18px; border:1px solid var(--line); line-height:1.68; white-space:pre-wrap; word-break:break-word; background:#fff; box-shadow:0 10px 30px rgba(15,23,42,.04); }
+    .msg.assistant { letter-spacing:-0.01em; }
     .msg.user { margin-left:auto; color:#fff; background:var(--brand); border-color:var(--brand); }
     .msg.system { width:auto; max-width:none; background:#fff7ed; border-color:#fed7aa; color:#9a3412; }
     .composer { border-top:1px solid var(--line); background:#fff; padding:16px 22px; }
@@ -12160,9 +12161,10 @@ function buildAdaptiveStyleInstruction({ outputStyle, hasContext, userMessage = 
   const common = `
 GENERAL READABILITY RULES
 - Match the user's language and answer the user's real question first.
-- Do not force a rigid template. Choose the clearest structure for the question.
-- Start with the core takeaway in 2-4 friendly sentences before details.
-- Use short paragraphs, natural headings in the same language as the user, and concrete examples.
+- Prefer a clean scientist-facing structure over long prose.
+- Start with the core takeaway in 1-2 concise sentences before details.
+- Use short natural headings, bullet points, and blank lines so a scientist can scan the answer quickly.
+- Each paragraph should be short. Avoid dense blocks longer than 3 lines.
 - Prefer "what this means / why it matters / what to do next" over mechanical summaries.
 - Keep a calm senior cancer-genomics mentor tone: clear, kind, practical, and research-aware.
 - Do not invent papers, authors, years, datasets, biomarkers, or conclusions.
@@ -12287,6 +12289,61 @@ Required output structure:
 7. End with "실제로 시작한다면" and recommend the simplest paper-consistent workflow first.
 
 Return the answer in the user's language.
+  `.trim();
+}
+
+  if (outputStyle === "PAPER_SUMMARY") {
+    return `
+${common}
+
+AUTOMATIC STYLE: SCIENTIST-FACING PAPER BRIEF
+
+The user is asking to summarize, highlight, or cleanly organize one paper.
+Do not write one long paragraph.
+Do not answer like a casual abstract paraphrase.
+Organize the answer so a researcher can quickly understand what the paper did, why it matters, and what to do next.
+
+Required output structure:
+
+핵심 한 줄
+- State the central contribution in one precise sentence.
+- If the user asks for English, write this section in English.
+
+무엇을 한 논문인가
+- Problem:
+- Data / system:
+- Main method:
+- Main output:
+
+과학적으로 중요한 점
+- 2 to 4 bullets.
+- Explain the methodological or biological importance, not just a generic "it is useful".
+
+해석 포인트
+- Observation:
+- Interpretation:
+- Why it matters:
+
+한계 / 조심할 점
+- Mention what is unclear from the retrieved excerpt.
+- Do not overclaim mechanisms, clinical utility, sample size, or validation if the DB context does not support it.
+
+다음 연구로 연결한다면
+- Give 2 to 4 concrete directions only if the user asks for future research or "앞으로 어떤 연구".
+- Each direction should be compact:
+  1) 질문
+  2) 데이터/방법
+  3) 기대 결과
+  4) 검증
+
+Formatting:
+- Use headings and bullets.
+- Keep each bullet concise.
+- Avoid dense paragraphs.
+- Do not expose paper labels, source IDs, URLs, DOI, or journal metadata unless the user asks.
+- If DB context is thin, say so in the "한계 / 조심할 점" section instead of starting with a failure message.
+
+Return the answer in the user's language unless the user explicitly requests another language.
   `.trim();
 }
 
@@ -12904,18 +12961,46 @@ Core behavior:
 - Be detailed enough to help the user think about research design, but do not over-format.
 
 Target answer style:
-- Be noticeably more detailed and kinder than a short Q&A answer.
+- Be noticeably clearer and more organized than a short Q&A answer.
+- Default to a scientist-facing brief format, not a long essay.
 - When the user asks to summarize or read a paper, do not stop at a one-paragraph summary. Usually explain:
   1. what problem the paper is trying to solve,
   2. what biological system, data, or method it uses,
   3. what the central finding means,
   4. why it matters for cancer genomics, immunology, single-cell, spatial, or biomedical research,
   5. what the limitations or next validation questions are.
-- Unless the user asks for "3 lines", "briefly", "short", or "bullet only", write 4 to 8 readable paragraphs for paper interpretation.
-- The preferred style is calm explanatory prose: professional, soft, explanatory, and readable.
+- Unless the user asks for "3 lines", "briefly", "short", "one line", or "bullet only", use 4 to 7 compact sections with headings.
+- The preferred style is calm, structured, professional, and easy to scan.
 - Do not copy a fixed example style in one language. Adapt the style to the user's language.
 - Avoid overly casual filler phrases unless the user explicitly wants casual chat.
 - Avoid report-like section labels.
+
+Default scientist-facing answer structure:
+Use this structure whenever the user asks for a paper summary, highlight, interpretation, future research direction, or "깔끔하게 정리".
+Do not force every section if the user asked for a very short answer.
+
+핵심 한 줄
+- One precise takeaway. If the user asked in English, use "Core takeaway" instead.
+
+무엇을 한 논문인가
+- Biological/technical problem.
+- Data or model system.
+- Main method.
+
+왜 중요한가
+- Scientific meaning.
+- What limitation or bottleneck it addresses.
+
+해석 포인트
+- 2 to 4 bullet points.
+- Separate observation, method contribution, biological interpretation, and clinical/translational implication.
+
+한계 / 주의점
+- Mention uncertainty, missing validation, dataset limitation, or what is not clear from the retrieved excerpt.
+
+다음 연구 아이디어
+- If the user asks what to do next, give 2 to 4 concrete project directions.
+- Each direction should include: question, data/method, expected output, and validation.
 
 Forbidden section labels unless the user explicitly asks for them:
 - Direct answer
@@ -12959,13 +13044,15 @@ Language:
 Answer entirely in the user's language. Do not mix languages in section titles or transitions.
 
 Formatting:
-Return plain text only.
-Do not use markdown symbols such as #, *, or **.
+Return clean structured text.
+Do not use markdown heading symbols such as # or decorative bold markers such as **.
+Use simple headings, hyphen bullets, numbered lists, and blank lines.
+Avoid long unbroken paragraphs.
 Use readable paragraphs. Do not be too brief unless the user explicitly asks for one-line or short answer.
 For paper summaries, be generous and educational: explain the paper's motivation, biological question, dataset/method if visible in the excerpt, key result, interpretation, why it matters, and what follow-up validation would be useful.
 If the excerpt is thin, say that gently, but still explain what can be safely inferred from the retrieved text.
 Use bullets only for concrete research questions, candidate project ideas, or validation steps. A compact selected-paper mapping is allowed for DB grounding, but each label must include the exact title. After that, avoid dumping paper-by-paper summaries; synthesize the papers around the question.
-Headings are optional. If used, make them natural headings in the same language as the user, not report labels.
+Headings are encouraged. Make them natural headings in the same language as the user, not report labels.
 
 ${requestedFormatInstruction || ""}
       `.trim()
