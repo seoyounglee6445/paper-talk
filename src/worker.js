@@ -1,5 +1,5 @@
 /*
-Paper_Talk Worker v91 GPT-4o semantic intent + DB-first paper-use extraction + Thinking-logic comparison + concrete mentor-style answers for all research questions
+Paper_Talk Worker v92 GPT-4o semantic intent + DB-first paper-use extraction + fixed new-topic vs related-paper routing
 - Long version history comments removed to reduce file size.
 - LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
 - User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, first search/retrieve papers matching the user's keyword/domain and extract the workflows used in those papers; only then synthesize a practical paper-grounded workflow. Never answer pipeline/workflow questions with a generic protocol before showing the relevant paper workflow evidence. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
@@ -15,6 +15,7 @@ Paper_Talk Worker v91 GPT-4o semantic intent + DB-first paper-use extraction + T
 - v89 adaptive answer patch: DB-grounded answers should not use a rigid fixed template. After retrieval and Thinking-logic comparison, the model chooses the most readable structure for the specific question: prose, compact tables, bullets, workflow, or recommendation-first discussion.
 - v90 concrete mentor-style patch: generic textbook workflows such as "preprocessing -> segmentation -> feature extraction -> ROI selection -> validation" are explicitly forbidden as a sufficient answer. For ROI/spatial method questions, the answer must be concrete, friendly, example-driven, and decision-oriented: what to calculate, what unit to use, how to score candidate regions, how to merge cells/windows into ROI, what QC to check, and which approach best fits the user's biological question.
 - v91 global DB-first concrete-answer patch: this is not limited to ROI. For any biomedical research, method, workflow, analysis, validation, comparison, or literature question, the assistant must first use retrieved Paper_Talk DB papers when available, extract how the papers actually approached the problem, compare them with the uploaded Thinking logic when comparison is useful, and then give a concrete, friendly, operational answer. Generic textbook answers are not sufficient.
+- v92 related-paper routing fix: independent new-topic questions such as "최근 protein drug 동향은" must not inherit the previous active paper and must not be answered as "similar papers to the active paper". Related-paper mode is activated only when the current user text explicitly asks for papers similar/related to the active paper or uses clear active-paper references such as "이 논문", "이거랑", "this paper".
 */
 
 export default {
@@ -6343,18 +6344,42 @@ async function getStrictActivePaperContext({ message, recentMessages, env }) {
 
 
 function isRelatedPaperDiscoveryRequest(message, autoIntent = {}) {
+  const rawText = String(message || "").trim();
+  const text = rawText.toLowerCase();
+
+  const explicitRelatedPaperText =
+    /(?:이\s*논문|이\s*연구|이\s*paper|this\s+paper|this\s+study|이거|이것|위\s*논문|앞\s*논문|방금\s*논문|active\s+paper).{0,80}(?:비슷|유사|관련|similar|related|comparable|follow[-\s]?up|후속|참고|citation|reference)/i.test(rawText) ||
+    /(?:비슷한|유사한|관련된?|comparable|similar|related|follow[-\s]?up).{0,30}(?:논문|paper|papers|study|studies|연구)/i.test(rawText) ||
+    /(?:논문|paper|papers|study|studies|연구).{0,30}(?:비슷|유사|관련|similar|related|comparable|follow[-\s]?up)/i.test(rawText);
+
+  const activePaperReferent =
+    /(?:이\s*논문|이\s*연구|이\s*paper|this\s+paper|this\s+study|이거랑|이것과|위\s*논문|앞\s*논문|방금\s*논문|active\s+paper)/i.test(rawText);
+
+  const independentNewTopicTrendRequest =
+    /(?:최근|최신|요즘|동향|트렌드|트렌디|핫한|emerging|latest|recent|trend|trends|state[-\s]?of[-\s]?the[-\s]?art|sota|field\s+overview|분야\s*흐름)/i.test(rawText) &&
+    !activePaperReferent &&
+    !explicitRelatedPaperText;
+
+  // v92: A new-topic trend/literature question must not inherit the previous active paper.
+  // Example: "최근 protein drug 동향은" should be answered as protein-drug trend,
+  // not as papers similar to the previously discussed spatial ROI paper.
+  if (independentNewTopicTrendRequest) return false;
+
   const semanticIntent = normalizePaperTalkIntentLabel(
     autoIntent?.paper_talk_intent || autoIntent?.question_type || ""
   );
   const answerStyle = String(autoIntent?.answer_style || "").toLowerCase();
   const interpretedIntent = String(autoIntent?.interpreted_intent || "").toLowerCase();
 
-  // Primary route: semantic planner output.
-  // This avoids forcing related-paper routing only by a fixed keyword list.
-  if (toSemanticBoolean(autoIntent?.is_related_paper_request)) return true;
+  // Primary route: trust semantic related-paper output only when the current text
+  // explicitly points to related/similar papers or clearly refers to the active paper.
+  if (toSemanticBoolean(autoIntent?.is_related_paper_request)) {
+    return explicitRelatedPaperText || activePaperReferent;
+  }
 
   if (
     semanticIntent === "LITERATURE_REVIEW" &&
+    (explicitRelatedPaperText || activePaperReferent) &&
     /similar|related|comparable|follow[-\s]?up|recommend|reference|citation|비슷|유사|관련|후속|추천|참고/.test(
       `${answerStyle} ${interpretedIntent}`
     )
@@ -6364,8 +6389,8 @@ function isRelatedPaperDiscoveryRequest(message, autoIntent = {}) {
 
   // Safety fallback only when the planner is unavailable or returns incomplete JSON.
   // Do not use this for code-first routing.
-  const text = String(message || "").toLowerCase();
-  return /비슷한\s*논문|유사한\s*논문|관련\s*논문|다른\s*논문|또\s*(뭐|무엇)|같은\s*주제|후속\s*연구|비슷한\s*연구|관련\s*연구|similar\s+papers?|related\s+papers?|other\s+papers?|more\s+papers?|follow[-\s]?up\s+stud/i.test(text);
+  return explicitRelatedPaperText ||
+    /비슷한\s*논문|유사한\s*논문|관련\s*논문|다른\s*논문|같은\s*주제의\s*논문|similar\s+papers?|related\s+papers?|other\s+papers?|more\s+papers?|follow[-\s]?up\s+stud/i.test(text);
 }
 
 function buildRelatedPaperDiscoveryQuery(activePaperContext, message, autoIntent = {}) {
@@ -8494,7 +8519,9 @@ async function gptChat(request, env) {
             generatedFramework: "",
             recentMessages: recentMessagesForContinuation,
             autoIntent,
-            strictActivePaperLocked: strictActivePaperState.activePaperLocked && !relatedPaperMode
+            // v92: Do not let an old active-paper lock leak into independent new-topic questions.
+            // Active-paper lock is only needed for explicit/automatic paper-summary follow-ups.
+            strictActivePaperLocked: strictActivePaperState.activePaperLocked && !relatedPaperMode && forcedOutputStyle === "PAPER_SUMMARY"
           }, env, cancelRuntime);
 
     if (isUserCanceledText(assistantText)) {
