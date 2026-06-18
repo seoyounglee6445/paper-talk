@@ -294,20 +294,20 @@
 
   <section class="card write-form">
     <h2>Import Scientific Thinking Logic PDF / TXT</h2>
-    <p>Upload a PDF or TXT source that teaches the GPT how to think scientifically. It will be used as a reasoning framework only, not as paper evidence.</p>
+    <p>Upload one or more PDF/TXT sources that teach the GPT how to think scientifically. They will be used as reasoning frameworks only, not as paper evidence.</p>
 
     <form onsubmit="importThinkingLogicFile(event)">
       <div class="full-row">
-        <label>Logic Title</label>
-        <input id="thinkingLogicTitle" placeholder="Thinking Data Science, Scientific Reasoning, Reviewer Logic...">
+        <label>Logic Title / Batch Label</label>
+        <input id="thinkingLogicTitle" placeholder="Optional. For multiple files, this becomes a batch label.">
       </div>
 
       <div class="full-row">
-        <label>Thinking Logic PDF / TXT File</label>
-        <input type="file" id="thinkingLogicFile" accept=".pdf,.txt,text/plain,application/pdf">
+        <label>Thinking Logic PDF / TXT Files</label>
+        <input type="file" id="thinkingLogicFile" accept=".pdf,.txt,text/plain,application/pdf" multiple>
       </div>
 
-      <button type="submit">Import Thinking Logic File</button>
+      <button type="submit">Import Thinking Logic File(s)</button>
       <button type="button" class="danger-btn" onclick="deleteThinkingLogic()">Delete All Thinking Logic</button>
       <p id="thinkingLogicStatus"></p>
     </form>
@@ -1599,64 +1599,93 @@ async function importThinkingLogicFile(e) {
   const fileInput = document.getElementById("thinkingLogicFile");
   const titleInput = document.getElementById("thinkingLogicTitle");
   const status = document.getElementById("thinkingLogicStatus");
-  const file = fileInput.files[0];
+  const files = Array.from(fileInput.files || []);
 
-  if (!file) {
-    alert("Please select a PDF or TXT file for thinking logic.");
+  if (!files.length) {
+    alert("Please select one or more PDF/TXT files for thinking logic.");
     return;
   }
 
-  const fileName = file.name || "thinking-logic-file";
-  const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
+  const batchTitle = (titleInput.value || "").trim();
+  const importResults = [];
+  const importFailures = [];
 
   try {
-    if (status) {
-      status.textContent = isPdf
-        ? "Reading PDF text in your browser... This can take a little while for large books."
-        : "Reading text file...";
-    }
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const fileName = file.name || `thinking-logic-file-${i + 1}`;
+      const fileStem = fileName.replace(/\.[^.]+$/, "");
+      const isPdf = /\.pdf$/i.test(fileName) || file.type === "application/pdf";
+      const title = files.length === 1
+        ? (batchTitle || fileStem)
+        : (batchTitle ? `${batchTitle} - ${fileStem}` : fileStem);
 
-    const extractedText = isPdf
-      ? await extractPdfTextFromFile(file)
-      : await file.text();
+      if (status) {
+        status.textContent = isPdf
+          ? `Reading PDF ${i + 1}/${files.length}: ${fileName} ... Large books can take a while.`
+          : `Reading text file ${i + 1}/${files.length}: ${fileName} ...`;
+      }
 
-    if (!String(extractedText || "").trim() || String(extractedText || "").trim().length < 200) {
-      alert("I could not extract enough text from this file. If the PDF is scanned images, please upload a text-based PDF or TXT version.");
-      if (status) status.textContent = "Import stopped: not enough readable text was extracted.";
-      return;
-    }
+      let extractedText = "";
+      try {
+        extractedText = isPdf
+          ? await extractPdfTextFromFile(file)
+          : await file.text();
+      } catch (error) {
+        importFailures.push(`${fileName}: text extraction failed (${error?.message || error})`);
+        continue;
+      }
 
-    if (status) {
-      status.textContent = "Uploading thinking logic to Paper_Talk GPT knowledge...";
-    }
+      if (!String(extractedText || "").trim() || String(extractedText || "").trim().length < 200) {
+        importFailures.push(`${fileName}: not enough readable text was extracted. If this is a scanned PDF, upload a text-based PDF or TXT version.`);
+        continue;
+      }
 
-    const res = await fetch("/api/admin/thinking-logic/import", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Admin-Key": key
-      },
-      body: JSON.stringify({
-        title: titleInput.value.trim() || fileName.replace(/\.[^.]+$/, ""),
+      if (status) {
+        status.textContent = `Uploading thinking logic ${i + 1}/${files.length}: ${fileName} ...`;
+      }
+
+      const res = await fetch("/api/admin/thinking-logic/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Key": key
+        },
+        body: JSON.stringify({
+          title,
+          fileName,
+          sourceType: getResearchUploadSourceType(fileName, file.type),
+          text: extractedText
+        })
+      });
+
+      const result = await parseApiJsonOrText(res);
+
+      if (!res.ok || !result.ok) {
+        importFailures.push(`${fileName}: ${result.error || result.message || "Thinking logic import failed."}`);
+        continue;
+      }
+
+      importResults.push({
         fileName,
-        sourceType: getResearchUploadSourceType(fileName, file.type),
-        text: extractedText
-      })
-    });
-
-    const result = await parseApiJsonOrText(res);
-
-    if (!res.ok || !result.ok) {
-      const message = result.error || result.message || "Thinking logic import failed.";
-      if (status) status.textContent = message;
-      alert(message);
-      return;
+        title,
+        characters: result.characters || result.learnedCharacters || 0
+      });
     }
 
-    const doneMessage = `Thinking logic imported. Characters learned: ${result.characters || 0}.`;
+    const learnedCharacters = importResults.reduce((sum, item) => sum + Number(item.characters || 0), 0);
+    const doneMessage = [
+      `Thinking logic import finished: ${importResults.length}/${files.length} file(s) imported.`,
+      `Total characters learned: ${learnedCharacters}.`,
+      importFailures.length ? `Failed/skipped: ${importFailures.length}. ${importFailures.slice(0, 3).join(" | ")}${importFailures.length > 3 ? " ..." : ""}` : ""
+    ].filter(Boolean).join(" ");
+
     if (status) status.textContent = doneMessage;
     alert(doneMessage);
-    e.target.reset();
+
+    if (importResults.length) {
+      e.target.reset();
+    }
   } catch (error) {
     const message = `Thinking logic import failed: ${error?.message || error}`;
     if (status) status.textContent = message;
