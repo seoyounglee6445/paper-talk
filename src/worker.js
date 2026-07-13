@@ -17,9 +17,10 @@ var worker_default = {
         return json({
           hasKey: !!env.OPENAI_API_KEY,
           hasModel: !!env.OPENAI_MODEL,
-          hasGateway: !!env.CLOUDFLARE_ACCOUNT_ID && !!env.CLOUDFLARE_AI_GATEWAY_ID,
+          hasSessionSecret: !!env.SESSION_SECRET,
+          hasNeuroPassword: !!env.NEURO_GPT_PASSWORD,
           model: env.OPENAI_MODEL || "gpt-4o",
-          gatewayId: env.CLOUDFLARE_AI_GATEWAY_ID || ""
+          provider: "openai-direct"
         });
       }
       if (pathname === "/api/test-openai") {
@@ -227,10 +228,18 @@ function normalizeGptCancelId(value) {
   return /^[A-Za-z0-9_-]{8,120}$/.test(id) ? id : "";
 }
 __name(normalizeGptCancelId, "normalizeGptCancelId");
+function getRequiredSessionSecret(env) {
+  const secret = String(env?.SESSION_SECRET || "").trim();
+  if (!secret) {
+    throw new Error("SESSION_SECRET is missing.");
+  }
+  return secret;
+}
+__name(getRequiredSessionSecret, "getRequiredSessionSecret");
 async function getGuestGptIdentityKey(request, env) {
   const todayKey = getTodayKey(/* @__PURE__ */ new Date());
   const visitorIp = getVisitorIp(request);
-  const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
+  const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${getRequiredSessionSecret(env)}:guest-gpt`);
   return `guest:${todayKey}:${ipHash}`;
 }
 __name(getGuestGptIdentityKey, "getGuestGptIdentityKey");
@@ -439,7 +448,7 @@ __name(canceledChatJson, "canceledChatJson");
 var DEFAULT_GPT_KEY = "paper_talk";
 var SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT = 50;
 var GUEST_GPT_DAILY_LIMIT = 3;
-var DEFAULT_NEURO_GPT_PASSWORD = "engram";
+var DEFAULT_NEURO_GPT_PASSWORD = "";
 var NEURO_GPT_ACCESS_COOKIE = "pt_neuro_gpt_access";
 var ALLOWED_GPT_KEYS = /* @__PURE__ */ new Set([
   "paper_talk",
@@ -609,28 +618,18 @@ function getOpenAIErrorMessage(data, fallback = "OpenAI API returned no answer."
   return fallback;
 }
 __name(getOpenAIErrorMessage, "getOpenAIErrorMessage");
-function getOpenAIChatCompletionsUrl(env) {
-  const accountId = String(env.CLOUDFLARE_ACCOUNT_ID || "").trim();
-  const gatewayId = String(env.CLOUDFLARE_AI_GATEWAY_ID || "").trim();
-  if (!accountId) {
-    throw new Error("CLOUDFLARE_ACCOUNT_ID is missing.");
-  }
-  if (!gatewayId || gatewayId === "REPLACE_WITH_YOUR_GATEWAY_ID") {
-    throw new Error("CLOUDFLARE_AI_GATEWAY_ID is missing. Create an AI Gateway in Cloudflare and set its Gateway ID in wrangler.toml.");
-  }
-  return `https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(gatewayId)}/openai/chat/completions`;
+function getOpenAIChatCompletionsUrl() {
+  return "https://api.openai.com/v1/chat/completions";
 }
 __name(getOpenAIChatCompletionsUrl, "getOpenAIChatCompletionsUrl");
 function getOpenAIRequestHeaders(env) {
-  const headers = {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is missing.");
+  }
+  return {
     "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
     "Content-Type": "application/json"
   };
-  const gatewayToken = String(env.CF_AIG_TOKEN || "").trim();
-  if (gatewayToken) {
-    headers["cf-aig-authorization"] = `Bearer ${gatewayToken}`;
-  }
-  return headers;
 }
 __name(getOpenAIRequestHeaders, "getOpenAIRequestHeaders");
 async function testOpenAI(env) {
@@ -1057,7 +1056,7 @@ async function createSessionCookie(user, env) {
     picture: user.picture || "",
     createdAt: Date.now()
   }));
-  const signature = await sign(payload, env.SESSION_SECRET);
+  const signature = await sign(payload, getRequiredSessionSecret(env));
   const value = `${payload}.${signature}`;
   return `pt_session=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`;
 }
@@ -1066,7 +1065,7 @@ async function getSession(request, env) {
   const cookie = getCookie(request, "pt_session");
   if (!cookie || !cookie.includes(".")) return null;
   const [payload, signature] = cookie.split(".");
-  const expected = await sign(payload, env.SESSION_SECRET);
+  const expected = await sign(payload, getRequiredSessionSecret(env));
   if (signature !== expected) return null;
   try {
     return JSON.parse(atob(payload));
@@ -1540,7 +1539,7 @@ async function adminDebugVisitor(request, env) {
   }
   const todayKey = getTodayKey();
   const visitorIp = getVisitorIp(request);
-  const guestHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
+  const guestHash = await sha256Hex(`${todayKey}:${visitorIp}:${getRequiredSessionSecret(env)}:guest-gpt`);
   return json({
     ok: true,
     visitorIp,
@@ -1588,7 +1587,7 @@ async function publicActiveHeartbeat(request, env) {
   const forceGuest = Boolean(data.forceGuest || data.adminPage);
   const user = forceGuest ? null : await getSession(request, env);
   const visitorIp = getVisitorIp(request);
-  const visitorKey = "ip:" + await sha256Hex(`${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:active-user`);
+  const visitorKey = "ip:" + await sha256Hex(`${visitorIp}:${getRequiredSessionSecret(env)}:active-user`);
   await env.DB.prepare(`
     INSERT INTO active_users (
       visitor_key,
@@ -1681,7 +1680,7 @@ __name(ensureDailyVisitsTable, "ensureDailyVisitsTable");
 async function publicTodayVisitCount(request, env) {
   const todayKey = getTodayKey();
   const visitorIp = getVisitorIp(request);
-  const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}`);
+  const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${getRequiredSessionSecret(env)}`);
   await ensureDailyVisitsTable(env);
   const insertIpResult = await env.DB.prepare(`
     INSERT OR IGNORE INTO daily_visit_ips (
@@ -6641,7 +6640,7 @@ async function getGuestGptQuota(request, env) {
   const now = /* @__PURE__ */ new Date();
   const todayKey = getTodayKey(now);
   const visitorIp = getVisitorIp(request);
-  const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
+  const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${getRequiredSessionSecret(env)}:guest-gpt`);
   const guestLimit = GUEST_GPT_DAILY_LIMIT;
   await ensureGuestGptDailyUsageTable(env);
   const row = await env.DB.prepare(`
@@ -6673,7 +6672,7 @@ async function incrementGuestGptUsage(request, env) {
     ON CONFLICT(visit_date, ip_hash) DO UPDATE SET
       used = used + 1,
       updated_at = CURRENT_TIMESTAMP
-  `).bind(quota.todayKey, await sha256Hex(`${quota.todayKey}:${getVisitorIp(request)}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`)).run();
+  `).bind(quota.todayKey, await sha256Hex(`${quota.todayKey}:${getVisitorIp(request)}:${getRequiredSessionSecret(env)}:guest-gpt`)).run();
   return getGuestGptQuota(request, env);
 }
 __name(incrementGuestGptUsage, "incrementGuestGptUsage");
