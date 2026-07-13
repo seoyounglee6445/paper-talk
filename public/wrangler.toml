@@ -5,7 +5,7 @@ compatibility_date = "2025-01-01"
 [vars]
 OPENAI_MODEL = "gpt-4o"
 CLOUDFLARE_ACCOUNT_ID = "2ad68d7c95b0a6b418ab1d0a0f6a0593"
-CLOUDFLARE_AI_GATEWAY_ID = "REPLACE_WITH_YOUR_GATEWAY_ID"
+CLOUDFLARE_AI_GATEWAY_ID = "default"
 
 [assets]
 directory = "./public"
