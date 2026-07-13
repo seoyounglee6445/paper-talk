@@ -1,31 +1,11 @@
-/*
-Paper_Talk Worker v96 Cloudflare Workers AI (gpt-oss-120b) + DB-first relevance-adaptive paper candidates + clean structured non-narrative answers
-- Long version history comments removed to reduce file size.
-- LLM-based intent/domain planning for literature trend vs research idea vs method/package extraction routing.
-- User-first answer behavior: answer the scientific question first. If the user asks for tools, software, packages, methods, or analysis options, answer with a practical tool list first before literature trends. If the user asks for a pipeline/workflow, first search/retrieve papers matching the user's keyword/domain and extract the workflows used in those papers; only then synthesize a practical paper-grounded workflow. Never answer pipeline/workflow questions with a generic protocol before showing the relevant paper workflow evidence. For scRNA-seq and scATAC-seq integration, always include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
-- Practical tool questions: if the user asks for tools/software/packages/methods/analysis options, answer with a practical tool list first. If the user asks for pipeline/workflow, use a paper-grounded domain-specific workflow. For scRNA-seq + scATAC-seq integration, include LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
-- Multilingual behavior: detect and preserve the user's language across the entire answer.
-- Do not start with DB retrieval failure messages unless user explicitly asks for sources/evidence.
-- Literature/trend questions still show DB paper titles when requested.
-- Chat cancellation: /api/gpt/chat accepts cancelId; /api/gpt/cancel marks the request canceled; OpenAI calls are linked to the browser request signal and cancelId polling so Cancel can stop generation and avoid quota charging.
-- Related-paper follow-up patch: short requests such as "이거랑 비슷한 논문은" inherit the active paper, retrieve other DB papers, and return exact titles instead of a generic trend answer.
-- One-line highlight patch: "한줄만/one line" requests return one clean sentence without forcing bullet formatting.
-- v87 semantic code-first gate: runnable code mode is activated only by LLM intent field wants_executable_code, not by keyword matching. Literature/recommendation/follow-up questions cannot be hijacked into CODE-FIRST mode.
-- v89 ROI/spatial method patch: questions such as "ROI를 어떻게 찾지", "spatial에서 region을 어떻게 잡지", or "multiplex imaging으로 어떻게 분석" are routed to PIPELINE_WORKFLOW. The assistant must retrieve top DB papers, group them by methodological theme, compare themes using the uploaded Thinking logic as a rubric, discuss the best strategy for the user's data/question, and then provide a practical workflow.
-- v89 adaptive answer patch: DB-grounded answers should not use a rigid fixed template. After retrieval and Thinking-logic comparison, the model chooses the most readable structure for the specific question: prose, compact tables, bullets, workflow, or recommendation-first discussion.
-- v90 concrete mentor-style patch: generic textbook workflows such as "preprocessing -> segmentation -> feature extraction -> ROI selection -> validation" are explicitly forbidden as a sufficient answer. For ROI/spatial method questions, the answer must be concrete, friendly, example-driven, and decision-oriented: what to calculate, what unit to use, how to score candidate regions, how to merge cells/windows into ROI, what QC to check, and which approach best fits the user's biological question.
-- v91 global DB-first concrete-answer patch: this is not limited to ROI. For any biomedical research, method, workflow, analysis, validation, comparison, or literature question, the assistant must first use retrieved Paper_Talk DB papers when available, extract how the papers actually approached the problem, compare them with the uploaded Thinking logic when comparison is useful, and then give a concrete, friendly, operational answer. Generic textbook answers are not sufficient.
-- v92 related-paper routing fix: independent new-topic questions such as "최근 protein drug 동향은" must not inherit the previous active paper and must not be answered as "similar papers to the active paper". Related-paper mode is activated only when the current user text explicitly asks for papers similar/related to the active paper or uses clear active-paper references such as "이 논문", "이거랑", "this paper".
-- v93 adaptive paper comparison patch: for method/workflow/literature questions with DB context, the answer must explicitly present an appropriate number of retrieved papers or paper groups based on the topic breadth and DB evidence, explain how each paper actually used the method/concept, compare them using the Thinking logic rubric, and only then synthesize the practical recommendation. "Related paper available" or "TACIT/Sopa are relevant" is not enough.
-- v94 relevance-adaptive candidate patch: do not decide candidate count from fixed ranges such as 2-4 or 4-8. The number of papers should come from the DB result itself. If many papers strongly match the user's question, include many strong candidates up to the bounded context limit and group them by theme. If only a few papers match, show only those few and state that DB evidence is sparse. Never pad with weak papers and never arbitrarily cut strong candidates to a small fixed number.
-- v95 clean structured answer patch: when the user asks "깔끔하게 정리", "서술형 말고", "표로", "한눈에", or similar, the answer must be organized as compact tables/checklists/short bullets with a clear conclusion first. Long narrative paragraphs are not acceptable.
-*/
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
-export default {
+// src/worker.js
+var worker_default = {
   async fetch(request, env) {
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/+$/, "") || "/";
-
     try {
       if (request.method === "OPTIONS" && pathname.startsWith("/api/")) {
         return new Response(null, {
@@ -33,44 +13,35 @@ export default {
           headers: corsHeaders()
         });
       }
-
       if (pathname === "/api/test-secret") {
         return json({
-          hasAI: !!env.AI,
-          hasModel: true,
-          model: env.CLOUDFLARE_AI_MODEL || "@cf/openai/gpt-oss-120b"
+          hasKey: !!env.OPENAI_API_KEY,
+          hasModel: !!env.OPENAI_MODEL,
+          model: "gpt-4o"
         });
       }
-
       if (pathname === "/api/test-openai") {
         return testOpenAI(env);
       }
-
       if (pathname === "/auth/google") return googleLogin(request, env);
       if (pathname === "/auth/google/callback") return googleCallback(request, env);
       if (pathname === "/auth/logout") return logout();
       if (pathname === "/api/me") return apiMe(request, env);
       if (pathname === "/api/neuro-gpt/access" && request.method === "POST") return neuroGptAccessCheck(request, env);
-
       if (pathname === "/api/delete-account" && request.method === "POST") return deleteAccount(request, env);
-
       if (pathname === "/api/my/posts" && request.method === "GET") return myPosts(request, env);
       if (pathname === "/api/my/update" && request.method === "POST") return updateMyPost(request, env);
       if (pathname === "/api/my/delete" && request.method === "POST") return deleteMyPost(request, env);
-
       if (pathname === "/api/posts" && request.method === "GET") return listPosts(request, env);
       if (pathname === "/api/posts" && request.method === "POST") return createPost(request, env);
-
       if (pathname === "/api/gpt/threads" && request.method === "GET") return listGptThreads(request, env);
       if (pathname === "/api/gpt/threads" && request.method === "POST") return createGptThread(request, env);
       if (pathname.startsWith("/api/gpt/threads/") && request.method === "DELETE") return deleteGptThread(request, env);
       if (pathname === "/api/gpt/messages" && request.method === "GET") return listGptMessages(request, env);
       if (pathname === "/api/gpt/chat" && request.method === "POST") return gptChat(request, env);
       if (pathname === "/api/gpt/cancel" && request.method === "POST") return cancelGptRequest(request, env);
-
       if (pathname === "/api/admin/gpt/threads" && request.method === "GET") return adminListGptThreads(request, env);
       if (pathname === "/api/admin/gpt/messages" && request.method === "GET") return adminListGptMessages(request, env);
-
       if (pathname === "/api/admin/check" && (request.method === "GET" || request.method === "POST")) return adminCheck(request, env);
       if (pathname === "/api/admin/debug/visitor" && request.method === "GET") return adminDebugVisitor(request, env);
       if (pathname === "/api/admin/posts" && request.method === "GET") return adminListPosts(request, env);
@@ -81,121 +52,89 @@ export default {
       if (pathname === "/api/admin/approve" && request.method === "POST") return adminApprovePost(request, env);
       if (pathname === "/api/admin/delete" && request.method === "POST") return adminDeletePost(request, env);
       if (pathname === "/api/admin/post/update" && request.method === "POST") return adminUpdatePost(request, env);
-
-      // Specialist GPT Admin API routes.
-      // These use X-Specialist-Admin-Key and keep each GPT knowledge base separated by gpt_key.
       if (pathname === "/api/admin/specialist/check" && (request.method === "GET" || request.method === "POST")) {
         return specialistAdminCheck(request, env);
       }
-
       if (pathname === "/api/admin/specialist/fulltext/import" && request.method === "POST") {
         return specialistAdminImportFullText(request, env);
       }
-
       if (pathname === "/api/admin/specialist/fulltext/list" && request.method === "GET") {
         return specialistAdminListFullText(request, env);
       }
-
       if (pathname === "/api/admin/specialist/fulltext/delete" && request.method === "POST") {
         return specialistAdminDeleteFullText(request, env);
       }
-
       if (pathname === "/api/admin/research/import-linkedin-csv" && request.method === "POST") {
         return adminImportLinkedInCsv(request, env);
       }
-
       if (pathname === "/api/admin/research/fulltext/import" && request.method === "POST") {
         return adminImportResearchFullText(request, env);
       }
-
       if (pathname === "/api/admin/research/fulltext/list" && request.method === "GET") {
         return adminListResearchFullText(request, env);
       }
-
       if (pathname === "/api/admin/research/fulltext/delete" && request.method === "POST") {
         return adminDeleteResearchFullText(request, env);
       }
-
       if (pathname === "/api/admin/thinking-logic/import" && request.method === "POST") {
         return adminImportThinkingLogic(request, env);
       }
-
       if (pathname === "/api/admin/thinking-logic/delete" && request.method === "POST") {
         return adminDeleteThinkingLogic(request, env);
       }
-
       if (pathname === "/api/admin/research/reindex" && request.method === "POST") {
         return adminReindexResearchPapers(request, env);
       }
-
       if (pathname === "/api/admin/research/create" && request.method === "POST") {
         return adminCreateResearchPaper(request, env);
       }
-
       if (pathname === "/api/admin/study/create" && request.method === "POST") {
         return adminCreateStudyPost(request, env);
       }
-
       if (pathname === "/api/admin/methodology/save" && request.method === "POST") {
         return adminSaveMethodologyPage(request, env);
       }
-
       if (pathname === "/api/admin/blog/create" && request.method === "POST") {
         return adminCreateBlogPost(request, env);
       }
-
       if (pathname === "/admin") {
         return redirect(new URL("/admin.html", request.url).toString());
       }
-
       if (pathname === "/admin-gpt") {
         return redirect(new URL("/admin-gpt.html", request.url).toString());
       }
-
       if (pathname === "/admin-specialist-gpts" || pathname === "/specialist-admin") {
         return redirect(new URL("/admin-specialist-gpts.html", request.url).toString());
       }
-
       if (pathname === "/research") {
         return redirect(new URL("/research.html", request.url).toString());
       }
-
       if (pathname === "/study") {
         return redirect(new URL("/study.html", request.url).toString());
       }
-
-      // Public Specialist GPT shortcuts should open the real static specialist-gpts.html asset.
-      // Do not intercept /specialist-gpts.html here, because that file exists separately in ASSETS.
       if (pathname === "/research-gpts" || pathname === "/specialist-gpts") {
         return redirect(new URL("/specialist-gpts.html", request.url).toString());
       }
-
       const specialistGptKeyFromRoute = getSpecialistGptKeyFromPathname(pathname);
       if (specialistGptKeyFromRoute) {
         return redirect(new URL(`/visium-gpt.html?gpt=${encodeURIComponent(specialistGptKeyFromRoute)}`, request.url).toString());
       }
-
       if (pathname === "/visium-gpt" || pathname === "/visium-gpt.html") {
         return specialistGptChatPage(request);
       }
-
       if (pathname === "/community") {
         return redirect(new URL("/community.html", request.url).toString());
       }
-
       if (pathname === "/career") {
         return redirect(new URL("/career.html", request.url).toString());
       }
-
       if (pathname.startsWith("/api/")) {
         return json({
           ok: false,
           error: `API route not found: ${pathname}`
         }, 404);
       }
-
       if (env.ASSETS) return env.ASSETS.fetch(request);
-
       return new Response("Not found", { status: 404 });
     } catch (error) {
       if (pathname.startsWith("/api/")) {
@@ -204,20 +143,10 @@ export default {
           error: error?.message || "Worker server error"
         }, 500);
       }
-
       return new Response(error?.message || "Worker server error", { status: 500 });
     }
   }
 };
-
-function fetchAsset(env, request, assetPath) {
-  if (!env.ASSETS) {
-    return new Response("ASSETS binding is missing. Check wrangler.toml [assets] binding = \"ASSETS\".", { status: 500 });
-  }
-
-  return env.ASSETS.fetch(new Request(new URL(assetPath, request.url)));
-}
-
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
@@ -225,7 +154,7 @@ function corsHeaders() {
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Admin-Key, X-Specialist-Admin-Key"
   };
 }
-
+__name(corsHeaders, "corsHeaders");
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
@@ -238,125 +167,75 @@ function json(data, status = 200, headers = {}) {
     }
   });
 }
-
+__name(json, "json");
 function normalizeChatInputNoise(value) {
   let text = String(value || "").normalize("NFKC");
   if (!text) return "";
-
-  // Remove invisible characters and normalize common mobile/IME spacing noise.
-  text = text
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/[ \t]{2,}/g, " ");
-
-  // Common mobile/IME typo: Korean polite ending is split into final syllable + jamo.
-  // Example: "이 논문 요약해주세ㅇ ㅛ" -> "이 논문 요약해주세요".
-  // Keep this conservative so scientific symbols and gene names are not damaged.
-  text = text
-    .replace(/해\s*주\s*세\s*ㅇ\s*ㅛ/g, "해주세요")
-    .replace(/해\s*주\s*세\s*요/g, "해주세요")
-    .replace(/주\s*세\s*ㅇ\s*ㅛ/g, "주세요")
-    .replace(/주\s*세\s*요/g, "주세요")
-    .replace(/하\s*세\s*ㅇ\s*ㅛ/g, "하세요")
-    .replace(/세\s*ㅇ\s*ㅛ/g, "세요")
-    .replace(/줘\s*ㅇ\s*ㅛ/g, "줘요")
-    .replace(/([가-힣])\s*ㅇ\s*ㅛ(?=$|[\s?.!,。！？])/g, "$1요");
-
-  // A few high-frequency request words often arrive with accidental spaces.
-  // These are examples only. The language-agnostic fallback below handles other languages.
-  // Keep this conservative so scientific terms, gene symbols, and paper titles are not damaged.
-  text = text
-    .replace(/\bsummari\s*([sz])\s*e\b/gi, "summari$1e")
-    .replace(/\bsum\s*mar\s*y\b/gi, "summary")
-    .replace(/\bhigh\s*light(s)?\b/gi, "highlight$1")
-    .replace(/\bplea\s*se\b/gi, "please")
-    .replace(/\barti\s*cle\b/gi, "article")
-    .replace(/\bpape\s*r\b/gi, "paper")
-    .replace(/\br[ée]\s*sum[ée]\b/gi, "résumé")
-    .replace(/\br[ée]\s*sumer\b/gi, "résumer")
-    .replace(/\bresu\s*men\b/gi, "resumen")
-    .replace(/\bresu\s*mir\b/gi, "resumir")
-    .replace(/\bzusammen\s*fassung\b/gi, "zusammenfassung")
-    .replace(/\bri\s*assunto\b/gi, "riassunto");
-
+  text = text.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/[ \t]{2,}/g, " ");
+  text = text.replace(/해\s*주\s*세\s*ㅇ\s*ㅛ/g, "\uD574\uC8FC\uC138\uC694").replace(/해\s*주\s*세\s*요/g, "\uD574\uC8FC\uC138\uC694").replace(/주\s*세\s*ㅇ\s*ㅛ/g, "\uC8FC\uC138\uC694").replace(/주\s*세\s*요/g, "\uC8FC\uC138\uC694").replace(/하\s*세\s*ㅇ\s*ㅛ/g, "\uD558\uC138\uC694").replace(/세\s*ㅇ\s*ㅛ/g, "\uC138\uC694").replace(/줘\s*ㅇ\s*ㅛ/g, "\uC918\uC694").replace(/([가-힣])\s*ㅇ\s*ㅛ(?=$|[\s?.!,。！？])/g, "$1\uC694");
+  text = text.replace(/\bsummari\s*([sz])\s*e\b/gi, "summari$1e").replace(/\bsum\s*mar\s*y\b/gi, "summary").replace(/\bhigh\s*light(s)?\b/gi, "highlight$1").replace(/\bplea\s*se\b/gi, "please").replace(/\barti\s*cle\b/gi, "article").replace(/\bpape\s*r\b/gi, "paper").replace(/\br[ée]\s*sum[ée]\b/gi, "r\xE9sum\xE9").replace(/\br[ée]\s*sumer\b/gi, "r\xE9sumer").replace(/\bresu\s*men\b/gi, "resumen").replace(/\bresu\s*mir\b/gi, "resumir").replace(/\bzusammen\s*fassung\b/gi, "zusammenfassung").replace(/\bri\s*assunto\b/gi, "riassunto");
   return text.replace(/[ \t]{2,}/g, " ").trim();
 }
-
+__name(normalizeChatInputNoise, "normalizeChatInputNoise");
 function makeLanguageAgnosticIntentKey(value) {
-  return String(value || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/[\s\p{P}\p{S}_]+/gu, "");
+  return String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/[\s\p{P}\p{S}_]+/gu, "");
 }
-
+__name(makeLanguageAgnosticIntentKey, "makeLanguageAgnosticIntentKey");
 function hasAnyLanguageAgnosticIntentTerm(value, terms) {
   const key = makeLanguageAgnosticIntentKey(value);
   if (!key) return false;
-
-  return (terms || []).some(term => {
+  return (terms || []).some((term) => {
     const termKey = makeLanguageAgnosticIntentKey(term);
     return termKey && key.includes(termKey);
   });
 }
-
+__name(hasAnyLanguageAgnosticIntentTerm, "hasAnyLanguageAgnosticIntentTerm");
 function isSafeUniversalShortFollowUpShape(value) {
   const text = normalizeChatInputNoise(value);
   if (!text) return false;
-
-  // Language-agnostic fallback:
-  // If a user sends a very short message after a paper/topic was discussed, it is often a
-  // continuation such as "summarize", "shorter", "again", "translate", "explain", etc.
-  // We avoid code-like or admin-like strings so this does not hijack programming requests.
   if (text.length > 80) return false;
   if (/```|[{}`;$<>]|=>|<-|==|!=|\/api\/|SELECT\s+|INSERT\s+|UPDATE\s+|DELETE\s+/i.test(text)) return false;
   if (/^(hi|hello|hey|thanks|thank you|test|테스트|안녕|안녕하세요)$/i.test(text.trim())) return false;
-
   const nonSpaceChars = text.replace(/\s+/g, "");
   if (nonSpaceChars.length < 2) return false;
-
-  // Works for any script because it relies on length/shape, not a language-specific dictionary.
   return text.split(/\s+/).filter(Boolean).length <= 10;
 }
-
-
-// ======================================
-// Cancelable GPT request support
-// ======================================
-const USER_CANCELED_MESSAGE = "USER_CANCELED: Request canceled by user.";
-
-class UserCanceledError extends Error {
+__name(isSafeUniversalShortFollowUpShape, "isSafeUniversalShortFollowUpShape");
+var USER_CANCELED_MESSAGE = "USER_CANCELED: Request canceled by user.";
+var UserCanceledError = class extends Error {
+  static {
+    __name(this, "UserCanceledError");
+  }
   constructor(message = "Request canceled by user.") {
     super(message);
     this.name = "UserCanceledError";
     this.canceled = true;
   }
-}
-
+};
 function isUserCanceledError(error) {
   return Boolean(error && (error.canceled || error.name === "UserCanceledError"));
 }
-
+__name(isUserCanceledError, "isUserCanceledError");
 function isUserCanceledText(value) {
   return /^USER_CANCELED:/i.test(String(value || ""));
 }
-
+__name(isUserCanceledText, "isUserCanceledText");
 function normalizeGptCancelId(value) {
   const id = String(value || "").trim();
   return /^[A-Za-z0-9_-]{8,120}$/.test(id) ? id : "";
 }
-
+__name(normalizeGptCancelId, "normalizeGptCancelId");
 async function getGuestGptIdentityKey(request, env) {
-  const todayKey = getTodayKey(new Date());
+  const todayKey = getTodayKey(/* @__PURE__ */ new Date());
   const visitorIp = getVisitorIp(request);
   const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
   return `guest:${todayKey}:${ipHash}`;
 }
-
+__name(getGuestGptIdentityKey, "getGuestGptIdentityKey");
 async function getGptCancelOwnerKey(request, env, user = null) {
   return user?.id ? `user:${user.id}` : await getGuestGptIdentityKey(request, env);
 }
-
+__name(getGptCancelOwnerKey, "getGptCancelOwnerKey");
 async function ensureGptCancellationTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS gpt_request_cancellations (
@@ -369,21 +248,16 @@ async function ensureGptCancellationTable(env) {
       finished_at TEXT
     )
   `).run();
-
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_gpt_request_cancellations_owner
     ON gpt_request_cancellations(owner_key, created_at)
   `).run();
 }
-
+__name(ensureGptCancellationTable, "ensureGptCancellationTable");
 async function registerGptCancellableRequest({ env, cancelId, ownerKey, gptKey }) {
   const id = normalizeGptCancelId(cancelId);
   if (!id || !ownerKey) return;
-
   await ensureGptCancellationTable(env);
-
-  // If the user hits Cancel before the chat route finishes registering the request,
-  // preserve the already-canceled state instead of resetting it back to running.
   await env.DB.prepare(`
     INSERT INTO gpt_request_cancellations (
       cancel_id,
@@ -406,11 +280,10 @@ async function registerGptCancellableRequest({ env, cancelId, ownerKey, gptKey }
       finished_at = NULL
   `).bind(id, ownerKey, normalizeGptKey(gptKey)).run();
 }
-
+__name(registerGptCancellableRequest, "registerGptCancellableRequest");
 async function markGptCancellableRequestFinished({ env, cancelId, ownerKey }) {
   const id = normalizeGptCancelId(cancelId);
   if (!id || !ownerKey) return;
-
   await ensureGptCancellationTable(env);
   await env.DB.prepare(`
     UPDATE gpt_request_cancellations
@@ -419,11 +292,10 @@ async function markGptCancellableRequestFinished({ env, cancelId, ownerKey }) {
     WHERE cancel_id = ? AND owner_key = ?
   `).bind(id, ownerKey).run();
 }
-
+__name(markGptCancellableRequestFinished, "markGptCancellableRequestFinished");
 async function isGptRequestCanceled({ env, cancelId, ownerKey }) {
   const id = normalizeGptCancelId(cancelId);
   if (!id || !ownerKey) return false;
-
   await ensureGptCancellationTable(env);
   const row = await env.DB.prepare(`
     SELECT status
@@ -431,34 +303,28 @@ async function isGptRequestCanceled({ env, cancelId, ownerKey }) {
     WHERE cancel_id = ? AND owner_key = ?
     LIMIT 1
   `).bind(id, ownerKey).first();
-
   return String(row?.status || "").toLowerCase() === "canceled";
 }
-
+__name(isGptRequestCanceled, "isGptRequestCanceled");
 function makeGptCancelRuntime({ request, env, cancelId, ownerKey }) {
   const normalizedCancelId = normalizeGptCancelId(cancelId);
   let cachedCanceled = false;
-
   async function isCanceled() {
     if (cachedCanceled) return true;
-
     if (request?.signal?.aborted) {
       cachedCanceled = true;
       return true;
     }
-
     if (normalizedCancelId && ownerKey) {
       try {
         cachedCanceled = await isGptRequestCanceled({ env, cancelId: normalizedCancelId, ownerKey });
       } catch {
-        // A cancellation check failure should not break a valid chat request.
         cachedCanceled = false;
       }
     }
-
     return cachedCanceled;
   }
-
+  __name(isCanceled, "isCanceled");
   return {
     cancelId: normalizedCancelId,
     ownerKey,
@@ -471,7 +337,7 @@ function makeGptCancelRuntime({ request, env, cancelId, ownerKey }) {
     }
   };
 }
-
+__name(makeGptCancelRuntime, "makeGptCancelRuntime");
 async function isGptRuntimeCanceledNoThrow(cancelRuntime) {
   if (!cancelRuntime?.isCanceled) return false;
   try {
@@ -480,13 +346,12 @@ async function isGptRuntimeCanceledNoThrow(cancelRuntime) {
     return isUserCanceledError(error);
   }
 }
-
-function createLinkedAbortController(cancelRuntime, timeoutMs = 70000) {
+__name(isGptRuntimeCanceledNoThrow, "isGptRuntimeCanceledNoThrow");
+function createLinkedAbortController(cancelRuntime, timeoutMs = 7e4) {
   const controller = new AbortController();
   let stopped = false;
   let pollTimer = null;
-
-  const abortAsCanceled = () => {
+  const abortAsCanceled = /* @__PURE__ */ __name(() => {
     if (!controller.signal.aborted) {
       try {
         controller.abort(new UserCanceledError());
@@ -494,14 +359,11 @@ function createLinkedAbortController(cancelRuntime, timeoutMs = 70000) {
         controller.abort();
       }
     }
-  };
-
-  const abortAsTimeout = () => {
+  }, "abortAsCanceled");
+  const abortAsTimeout = /* @__PURE__ */ __name(() => {
     if (!controller.signal.aborted) controller.abort();
-  };
-
+  }, "abortAsTimeout");
   const timeout = setTimeout(abortAsTimeout, timeoutMs);
-
   const clientSignal = cancelRuntime?.signal || null;
   if (clientSignal) {
     if (clientSignal.aborted) {
@@ -510,24 +372,19 @@ function createLinkedAbortController(cancelRuntime, timeoutMs = 70000) {
       clientSignal.addEventListener("abort", abortAsCanceled, { once: true });
     }
   }
-
-  const poll = async () => {
+  const poll = /* @__PURE__ */ __name(async () => {
     if (stopped || controller.signal.aborted) return;
-
     if (await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
       abortAsCanceled();
       return;
     }
-
     if (!stopped && !controller.signal.aborted) {
       pollTimer = setTimeout(poll, 800);
     }
-  };
-
+  }, "poll");
   if (cancelRuntime?.isCanceled) {
     pollTimer = setTimeout(poll, 800);
   }
-
   return {
     signal: controller.signal,
     cleanup() {
@@ -538,20 +395,17 @@ function createLinkedAbortController(cancelRuntime, timeoutMs = 70000) {
     }
   };
 }
-
+__name(createLinkedAbortController, "createLinkedAbortController");
 async function cancelGptRequest(request, env) {
   const user = await getSession(request, env).catch(() => null);
   const body = await request.json().catch(() => ({}));
   const cancelId = normalizeGptCancelId(body.cancelId || body.requestId || body.chatRequestId);
   const gptKey = getGptKeyFromRequestData(body);
-
   if (!cancelId) {
     return json({ ok: false, error: "cancelId is required." }, 400);
   }
-
   const ownerKey = await getGptCancelOwnerKey(request, env, user);
   await ensureGptCancellationTable(env);
-
   await env.DB.prepare(`
     INSERT INTO gpt_request_cancellations (
       cancel_id,
@@ -569,10 +423,9 @@ async function cancelGptRequest(request, env) {
       status = 'canceled',
       canceled_at = CURRENT_TIMESTAMP
   `).bind(cancelId, ownerKey, normalizeGptKey(gptKey)).run();
-
   return json({ ok: true, canceled: true, cancelId });
 }
-
+__name(cancelGptRequest, "cancelGptRequest");
 function canceledChatJson() {
   return json({
     ok: false,
@@ -580,32 +433,13 @@ function canceledChatJson() {
     error: "Canceled by user. No quota was charged for the canceled generation."
   });
 }
-
-
-// ======================================
-// Specialist GPT data isolation
-// ======================================
-const DEFAULT_GPT_KEY = "paper_talk";
-
-// Practical tool-list routing rule:
-// If the user asks for tools, software, packages, pipelines, methods, workflows,
-// or analysis options, answer with a practical tool list first.
-// For scRNA-seq + scATAC-seq integration, always include LIGER/iNMF,
-// Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, and MOFA+ when relevant.
-
-
-// Monthly GPT quota is shared across all GPT modes for each signed-in user.
-// Paper_Talk Vision GPT + Neuroscience GPT + any future Specialist GPTs = 50 total / month.
-const SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT = 50;
-const GUEST_GPT_DAILY_LIMIT = 3;
-
-// Private access key for Neuroscience GPT.
-// Users reach it from the Specialist GPT page with password "engram".
-// For stronger security, set NEURO_GPT_PASSWORD as a Cloudflare secret.
-const DEFAULT_NEURO_GPT_PASSWORD = "engram";
-const NEURO_GPT_ACCESS_COOKIE = "pt_neuro_gpt_access";
-
-const ALLOWED_GPT_KEYS = new Set([
+__name(canceledChatJson, "canceledChatJson");
+var DEFAULT_GPT_KEY = "paper_talk";
+var SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT = 50;
+var GUEST_GPT_DAILY_LIMIT = 3;
+var DEFAULT_NEURO_GPT_PASSWORD = "engram";
+var NEURO_GPT_ACCESS_COOKIE = "pt_neuro_gpt_access";
+var ALLOWED_GPT_KEYS = /* @__PURE__ */ new Set([
   "paper_talk",
   "neuroscience",
   "mitochondria",
@@ -613,14 +447,8 @@ const ALLOWED_GPT_KEYS = new Set([
   "spatial_biology",
   "cancer_genomics"
 ]);
-
 function normalizeGptKey(value) {
-  const raw = String(value || DEFAULT_GPT_KEY)
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/-/g, "_");
-
+  const raw = String(value || DEFAULT_GPT_KEY).trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
   const aliases = {
     paper: "paper_talk",
     paper_talk: "paper_talk",
@@ -639,14 +467,12 @@ function normalizeGptKey(value) {
     cancer: "cancer_genomics",
     cancer_genomics: "cancer_genomics"
   };
-
   const key = aliases[raw] || raw;
   return ALLOWED_GPT_KEYS.has(key) ? key : DEFAULT_GPT_KEY;
 }
-
+__name(normalizeGptKey, "normalizeGptKey");
 function getGptProfile(gptKey) {
   const key = normalizeGptKey(gptKey);
-
   const profiles = {
     paper_talk: {
       key,
@@ -679,24 +505,16 @@ function getGptProfile(gptKey) {
       knowledgeLabel: "curated cancer genomics knowledge"
     }
   };
-
   return profiles[key] || profiles.paper_talk;
 }
-
+__name(getGptProfile, "getGptProfile");
 function getGptKeyFromRequestData(data) {
   return normalizeGptKey(
-    data?.gptKey ||
-    data?.gpt ||
-    data?.domain ||
-    data?.category ||
-    data?.specialist ||
-    DEFAULT_GPT_KEY
+    data?.gptKey || data?.gpt || data?.domain || data?.category || data?.specialist || DEFAULT_GPT_KEY
   );
 }
-
+__name(getGptKeyFromRequestData, "getGptKeyFromRequestData");
 async function ensureSpecialistGptTables(env) {
-  // These ALTER statements are intentionally safe to run repeatedly.
-  // Existing rows without gpt_key are treated as Paper_Talk Vision GPT data.
   const statements = [
     "ALTER TABLE research_knowledge ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'",
     "ALTER TABLE paper_fulltext_chunks ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'",
@@ -704,296 +522,100 @@ async function ensureSpecialistGptTables(env) {
     "ALTER TABLE gpt_messages ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'",
     "ALTER TABLE gpt_supporting_papers ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'"
   ];
-
   for (const sql of statements) {
     try {
       await env.DB.prepare(sql).run();
     } catch {
-      // Column/table may already exist or optional table may not exist yet.
     }
   }
-
   const indexStatements = [
     "CREATE INDEX IF NOT EXISTS idx_research_knowledge_gpt_key ON research_knowledge(gpt_key)",
     "CREATE INDEX IF NOT EXISTS idx_fulltext_chunks_gpt_key ON paper_fulltext_chunks(gpt_key)",
     "CREATE INDEX IF NOT EXISTS idx_gpt_threads_user_gpt_key ON gpt_threads(user_id, gpt_key)",
     "CREATE INDEX IF NOT EXISTS idx_gpt_messages_thread_gpt_key ON gpt_messages(thread_id, gpt_key)"
   ];
-
   for (const sql of indexStatements) {
     try {
       await env.DB.prepare(sql).run();
-    } catch {}
+    } catch {
+    }
   }
 }
-
+__name(ensureSpecialistGptTables, "ensureSpecialistGptTables");
 async function readJsonResponseSafely(response, label = "HTTP request") {
   const contentType = response.headers.get("Content-Type") || "";
   const rawText = await response.text();
-
   let data = null;
   try {
     data = JSON.parse(rawText);
   } catch {
-    const preview = rawText
-      .replace(/\s+/g, " ")
-      .slice(0, 700);
-
+    const preview = rawText.replace(/\s+/g, " ").slice(0, 700);
     throw new Error(
       `${label} returned non-JSON response. HTTP ${response.status}. Content-Type: ${contentType || "unknown"}. Preview: ${preview}`
     );
   }
-
   if (!response.ok) {
     throw new Error(
       `${label} failed. HTTP ${response.status}. ${data?.error?.message || JSON.stringify(data).slice(0, 700)}`
     );
   }
-
   return data;
 }
-
-
+__name(readJsonResponseSafely, "readJsonResponseSafely");
 function extractOpenAIText(data) {
   if (!data) return "";
-
   if (typeof data.output_text === "string" && data.output_text.trim()) {
     return data.output_text.trim();
   }
-
   const choiceMessage = data?.choices?.[0]?.message;
-
   if (typeof choiceMessage?.content === "string" && choiceMessage.content.trim()) {
     return choiceMessage.content.trim();
   }
-
   if (Array.isArray(choiceMessage?.content)) {
-    const text = choiceMessage.content
-      .map(part => {
-        if (!part) return "";
-        if (typeof part === "string") return part;
-        if (typeof part.text === "string") return part.text;
-        if (typeof part?.text?.value === "string") return part.text.value;
-        if (typeof part.content === "string") return part.content;
-        return "";
-      })
-      .join("\n")
-      .trim();
-
+    const text = choiceMessage.content.map((part) => {
+      if (!part) return "";
+      if (typeof part === "string") return part;
+      if (typeof part.text === "string") return part.text;
+      if (typeof part?.text?.value === "string") return part.text.value;
+      if (typeof part.content === "string") return part.content;
+      return "";
+    }).join("\n").trim();
     if (text) return text;
   }
-
   if (Array.isArray(data.output)) {
-    const text = data.output
-      .flatMap(item => Array.isArray(item?.content) ? item.content : [])
-      .map(part => {
-        if (!part) return "";
-        if (typeof part.text === "string") return part.text;
-        if (typeof part?.text?.value === "string") return part.text.value;
-        if (typeof part.content === "string") return part.content;
-        return "";
-      })
-      .join("\n")
-      .trim();
-
+    const text = data.output.flatMap((item) => Array.isArray(item?.content) ? item.content : []).map((part) => {
+      if (!part) return "";
+      if (typeof part.text === "string") return part.text;
+      if (typeof part?.text?.value === "string") return part.text.value;
+      if (typeof part.content === "string") return part.content;
+      return "";
+    }).join("\n").trim();
     if (text) return text;
   }
-
   return "";
 }
-
+__name(extractOpenAIText, "extractOpenAIText");
 function getOpenAIErrorMessage(data, fallback = "OpenAI API returned no answer.") {
   const text = extractOpenAIText(data);
   if (text) return text;
-
   if (data?.error?.message) return data.error.message;
-
   const finishReason = data?.choices?.[0]?.finish_reason;
   if (finishReason === "length") {
     return "The model stopped because the token limit was reached. Please try again with a narrower question.";
   }
-
   if (finishReason) return `OpenAI finish_reason: ${finishReason}`;
-
   return fallback;
 }
-
-
-function extractWorkersAIText(result) {
-  if (!result) return "";
-
-  if (typeof result.response === "string" && result.response.trim()) {
-    return result.response.trim();
-  }
-
-  if (typeof result.output_text === "string" && result.output_text.trim()) {
-    return result.output_text.trim();
-  }
-
-  if (Array.isArray(result.output)) {
-    const text = result.output
-      .flatMap(item => Array.isArray(item?.content) ? item.content : [])
-      .map(part => {
-        if (!part) return "";
-        if (typeof part === "string") return part;
-        if (typeof part.text === "string") return part.text;
-        if (typeof part?.text?.value === "string") return part.text.value;
-        if (typeof part.content === "string") return part.content;
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n")
-      .trim();
-
-    if (text) return text;
-  }
-
-  const choiceContent = result?.choices?.[0]?.message?.content;
-  if (typeof choiceContent === "string" && choiceContent.trim()) {
-    return choiceContent.trim();
-  }
-
-  return "";
-}
-
-async function fetchChatCompletionWithWorkersAI(env, options = {}) {
-  if (!env.AI) {
-    return new Response(JSON.stringify({
-      error: {
-        message: "Cloudflare Workers AI binding is missing.",
-        type: "workers_ai_binding_error",
-        code: "missing_ai_binding"
-      }
-    }), {
-      status: 500,
-      headers: { "Content-Type": "application/json; charset=utf-8" }
-    });
-  }
-
-  if (options?.signal?.aborted) {
-    throw new DOMException("The operation was aborted.", "AbortError");
-  }
-
-  let payload = {};
-  try {
-    payload = typeof options.body === "string"
-      ? JSON.parse(options.body)
-      : (options.body || {});
-  } catch {
-    return new Response(JSON.stringify({
-      error: {
-        message: "Invalid JSON request body for Workers AI.",
-        type: "invalid_request_error",
-        code: "invalid_json"
-      }
-    }), {
-      status: 400,
-      headers: { "Content-Type": "application/json; charset=utf-8" }
-    });
-  }
-
-  const model = String(
-    env.CLOUDFLARE_AI_MODEL || "@cf/openai/gpt-oss-120b"
-  ).trim();
-
-  const messages = Array.isArray(payload.messages) && payload.messages.length
-    ? payload.messages
-    : [{
-        role: "user",
-        content: String(payload.prompt || payload.input || "").trim()
-      }];
-
-  const requestedMaxTokens = Number(
-    payload.max_tokens ?? payload.max_completion_tokens ?? 2048
-  );
-
-  const maxTokens = Number.isFinite(requestedMaxTokens)
-    ? Math.min(Math.max(Math.floor(requestedMaxTokens), 1), 8192)
-    : 2048;
-
-  const requestedTemperature = Number(payload.temperature);
-  const temperature = Number.isFinite(requestedTemperature)
-    ? Math.min(Math.max(requestedTemperature, 0), 5)
-    : 0.1;
-
-  const input = {
-    messages,
-    temperature,
-    max_tokens: maxTokens
-  };
-
-  if (payload.response_format && typeof payload.response_format === "object") {
-    input.response_format = payload.response_format;
-  }
-
-  try {
-    const result = await env.AI.run(model, input);
-
-    if (options?.signal?.aborted) {
-      throw new DOMException("The operation was aborted.", "AbortError");
-    }
-
-    const content = extractWorkersAIText(result);
-
-    if (!content) {
-      return new Response(JSON.stringify({
-        error: {
-          message: "Cloudflare Workers AI returned no answer.",
-          type: "workers_ai_empty_response",
-          code: "empty_response"
-        }
-      }), {
-        status: 502,
-        headers: { "Content-Type": "application/json; charset=utf-8" }
-      });
-    }
-
-    return new Response(JSON.stringify({
-      id: `cf-${crypto.randomUUID()}`,
-      object: "chat.completion",
-      created: Math.floor(Date.now() / 1000),
-      model,
-      choices: [{
-        index: 0,
-        message: {
-          role: "assistant",
-          content
-        },
-        finish_reason: "stop"
-      }],
-      usage: result?.usage || null
-    }), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store"
-      }
-    });
-  } catch (error) {
-    if (error?.name === "AbortError") throw error;
-
-    return new Response(JSON.stringify({
-      error: {
-        message: error?.message || "Cloudflare Workers AI request failed.",
-        type: "workers_ai_error",
-        code: error?.code || "workers_ai_request_failed"
-      }
-    }), {
-      status: Number(error?.status) || 500,
-      headers: { "Content-Type": "application/json; charset=utf-8" }
-    });
-  }
-}
-
+__name(getOpenAIErrorMessage, "getOpenAIErrorMessage");
 async function testOpenAI(env) {
-  if (!env.AI) {
-    return json({ ok: false, error: "Cloudflare Workers AI binding is missing." }, 500);
+  if (!env.OPENAI_API_KEY) {
+    return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
   }
-
   try {
-    const response = await fetchChatCompletionWithWorkersAI(env, {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -1005,22 +627,21 @@ async function testOpenAI(env) {
         max_completion_tokens: 30
       })
     });
-
     const data = await readJsonResponseSafely(response, "OpenAI test request");
     return json({
       ok: true,
-      model: env.CLOUDFLARE_AI_MODEL || "@cf/openai/gpt-oss-120b",
+      model: "gpt-4o",
       answer: extractOpenAIText(data) || "No answer returned."
     });
   } catch (error) {
     return json({
       ok: false,
-      model: env.CLOUDFLARE_AI_MODEL || "@cf/openai/gpt-oss-120b",
+      model: "gpt-4o",
       error: error?.message || "Unknown OpenAI test error"
     }, 500);
   }
 }
-
+__name(testOpenAI, "testOpenAI");
 function redirect(location, headers = {}) {
   return new Response(null, {
     status: 302,
@@ -1030,15 +651,8 @@ function redirect(location, headers = {}) {
     }
   });
 }
-
-
-// ======================================
-// Built-in public Specialist GPT pages
-// ======================================
-// These pages intentionally live inside the Worker. If specialist-gpts.html or
-// visium-gpt.html is missing from the ASSETS binding, clicking a Specialist GPT
-// should still show a safe UI instead of a raw Worker source file.
-const SPECIALIST_GPT_ROUTE_ALIASES = {
+__name(redirect, "redirect");
+var SPECIALIST_GPT_ROUTE_ALIASES = {
   "/neuroscience-gpt": "neuroscience",
   "/mitochondria-gpt": "mitochondria",
   "/single-cell-gpt": "single_cell",
@@ -1048,12 +662,11 @@ const SPECIALIST_GPT_ROUTE_ALIASES = {
   "/cancer-genomics-gpt": "cancer_genomics",
   "/cancer-gpt": "cancer_genomics"
 };
-
 function getSpecialistGptKeyFromPathname(pathname) {
   const cleanPath = String(pathname || "").replace(/\/+$/, "") || "/";
   return SPECIALIST_GPT_ROUTE_ALIASES[cleanPath] || "";
 }
-
+__name(getSpecialistGptKeyFromPathname, "getSpecialistGptKeyFromPathname");
 function html(data, status = 200, headers = {}) {
   return new Response(String(data || ""), {
     status,
@@ -1066,420 +679,7 @@ function html(data, status = 200, headers = {}) {
     }
   });
 }
-
-function specialistGptsLandingPage(request) {
-  return html(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="robots" content="noindex, nofollow">
-
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-WWSD3F58L6"></script>
-<script>
-window.dataLayer = window.dataLayer || [];
-function gtag(){dataLayer.push(arguments);}
-gtag('js', new Date());
-gtag('config', 'G-WWSD3F58L6');
-</script>
-
-<title>Specialist GPTs - Paper_Talk</title>
-<link rel="stylesheet" href="/style.css">
-
-<style>
-.auth-box {
-  text-align: right;
-  margin-bottom: 20px;
-}
-
-.auth-box #userText,
-.auth-box #guestInfo {
-  margin-right: 8px;
-}
-
-.specialist-intro {
-  max-width: 820px;
-  line-height: 1.7;
-}
-
-.gpt-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(260px, 1fr));
-  gap: 22px;
-  margin-top: 24px;
-}
-
-.gpt-card {
-  min-height: 190px;
-  background: white;
-  border: 1px solid #b9c7ff;
-  border-radius: 24px;
-  padding: 28px;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.04);
-}
-
-.gpt-card h2 {
-  margin-top: 0;
-  margin-bottom: 12px;
-  color: #1428a0;
-  font-size: 24px;
-}
-
-.gpt-card p {
-  line-height: 1.6;
-  margin-bottom: 0;
-}
-
-.tag {
-  display: inline-block;
-  margin-bottom: 14px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: #fef3c7;
-  color: #92400e;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.clickable-card {
-  cursor: pointer;
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
-}
-
-.clickable-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 22px 48px rgba(0,0,0,0.08);
-}
-
-.coming-card {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  background: #f8fafc;
-}
-
-.coming-card h2 {
-  margin: 0;
-  color: #64748b;
-}
-
-.password-overlay {
-  position: fixed;
-  inset: 0;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: rgba(15, 23, 42, 0.45);
-  z-index: 9999;
-  padding: 20px;
-}
-
-.password-modal {
-  width: min(460px, 100%);
-  background: #ffffff;
-  border-radius: 24px;
-  border: 1px solid #b9c7ff;
-  padding: 28px;
-  box-shadow: 0 24px 70px rgba(0,0,0,0.22);
-}
-
-.password-modal h2 {
-  margin: 0 0 10px;
-  color: #1428a0;
-}
-
-.password-modal input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 13px 14px;
-  border: 1px solid #b9c7ff;
-  border-radius: 14px;
-  font-size: 16px;
-  margin-bottom: 12px;
-}
-
-.password-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.password-actions button {
-  border: none;
-  border-radius: 999px;
-  padding: 12px 18px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.password-submit {
-  background: #1428a0;
-  color: #ffffff;
-}
-
-.password-cancel {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-.password-error {
-  margin-top: 12px;
-  color: #dc2626;
-  font-weight: 700;
-  min-height: 20px;
-}
-
-@media (max-width: 1100px) {
-  .gpt-grid {
-    grid-template-columns: repeat(2, minmax(260px, 1fr));
-  }
-}
-
-@media (max-width: 720px) {
-  .gpt-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .gpt-card {
-    padding: 22px;
-  }
-}
-</style>
-</head>
-
-<body>
-<header class="header">
- <nav class="nav">
-  <a href="/" class="logo">Paper_Talk</a>
-  <a href="/">Home</a>
-  <a href="/research.html">Research Paper</a>
-  <a href="/study.html">Study Materials</a>
-  <a href="/visium-gpt.html">Paper_Talk Vision GPT</a>
-  <a href="/specialist-gpts.html">Specialist GPTs</a>
-  <a href="/community.html">Community</a>
-  <a href="/career.html">Career</a>
-</nav>
-</header>
-
-<main class="container">
-
-  <div id="topLoginArea" class="auth-box" style="display:none;">
-    <span id="guestInfo">Sign in for free to use Specialist GPTs. </span>
-    <a id="loginBtn" class="btn" href="/auth/google">Sign in with Google</a>
-  </div>
-
-  <div id="topLogoutArea" class="auth-box" style="display:none;">
-    <span id="userText"></span>
-    <a id="logoutBtn" class="btn danger-btn" href="/auth/logout">Logout</a>
-    <button id="deleteAccountBtn" class="btn danger-btn" type="button" onclick="deleteAccount()">Delete Account</button>
-  </div>
-
-  <h1>Specialist GPTs</h1>
-
-  <p class="specialist-intro">
-    Private specialist GPT workspaces built on curated scientific knowledge.
-    Each GPT is designed around a specific research theme so researchers can ask focused scientific questions,
-    explore literature-based directions, and generate testable ideas.
-  </p>
-
-  <section>
-    <div class="gpt-grid">
-
-      <article
-        class="gpt-card clickable-card"
-        onclick="openPrivateNeuroGpt()"
-      >
-        <span class="tag">Private</span>
-        <h2>&#129504; Neuro-GPT</h2>
-        <p>from Sungmo Park</p>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-      <article class="gpt-card coming-card">
-        <h2>&#128640; Coming Soon</h2>
-      </article>
-
-    </div>
-  </section>
-
-</main>
-
-<div id="neuroPasswordOverlay" class="password-overlay">
-  <div class="password-modal">
-    <h2>Private Neuro-GPT</h2>
-    <p>Please enter the password to access Neuro-GPT.</p>
-
-    <input
-      id="neuroPasswordInput"
-      type="password"
-      placeholder="Enter password"
-      autocomplete="off"
-    >
-
-    <div class="password-actions">
-      <button class="password-submit" type="button" onclick="submitNeuroPassword()">Enter</button>
-      <button class="password-cancel" type="button" onclick="closeNeuroPassword()">Cancel</button>
-    </div>
-
-    <div id="neuroPasswordError" class="password-error"></div>
-  </div>
-</div>
-
-<script>
-function openPrivateNeuroGpt() {
-  const overlay = document.getElementById("neuroPasswordOverlay");
-  const input = document.getElementById("neuroPasswordInput");
-  const error = document.getElementById("neuroPasswordError");
-
-  error.textContent = "";
-  input.value = "";
-  overlay.style.display = "flex";
-
-  setTimeout(function() { input.focus(); }, 50);
-}
-
-function closeNeuroPassword() {
-  document.getElementById("neuroPasswordOverlay").style.display = "none";
-}
-
-async function submitNeuroPassword() {
-  const input = document.getElementById("neuroPasswordInput");
-  const error = document.getElementById("neuroPasswordError");
-  const password = input.value.trim();
-
-  error.textContent = "";
-
-  if (!password) {
-    error.textContent = "Please enter the password.";
-    input.focus();
-    return;
-  }
-
-  try {
-    const res = await fetch("/api/neuro-gpt/access", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ password: password })
-    });
-
-    const data = await res.json().catch(function() { return {}; });
-
-    if (res.ok && data && data.ok && data.authenticated) {
-      location.href = "/visium-gpt.html?gpt=neuroscience";
-      return;
-    }
-
-    error.textContent = data.error || "Incorrect password.";
-    input.value = "";
-    input.focus();
-  } catch {
-    error.textContent = "Password check failed. Please try again.";
-    input.focus();
-  }
-}
-
-document.addEventListener("keydown", function(event) {
-  const overlay = document.getElementById("neuroPasswordOverlay");
-  const isOpen = overlay && overlay.style.display === "flex";
-
-  if (!isOpen) return;
-
-  if (event.key === "Enter") {
-    submitNeuroPassword();
-  }
-
-  if (event.key === "Escape") {
-    closeNeuroPassword();
-  }
-});
-
-async function initAuthBox() {
-  const topLoginArea = document.getElementById("topLoginArea");
-  const topLogoutArea = document.getElementById("topLogoutArea");
-  const userText = document.getElementById("userText");
-
-  try {
-    const res = await fetch("/api/me", { cache: "no-store", credentials: "include" });
-    const data = await res.json();
-
-    if (data && data.ok && data.user) {
-      topLoginArea.style.display = "none";
-      topLogoutArea.style.display = "block";
-      userText.textContent = "Signed in as " + (data.user.name || data.user.email || "Paper_Talk user");
-    } else {
-      topLoginArea.style.display = "block";
-      topLogoutArea.style.display = "none";
-    }
-  } catch {
-    topLoginArea.style.display = "block";
-    topLogoutArea.style.display = "none";
-  }
-}
-
-async function deleteAccount() {
-  if (!confirm("Delete your Paper_Talk account? This will remove your account and GPT chat history.")) {
-    return;
-  }
-
-  try {
-    const res = await fetch("/api/delete-account", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" }
-    });
-
-    const data = await res.json().catch(function() { return {}; });
-
-    if (!res.ok || !data.ok) {
-      alert(data.error || "Account deletion failed.");
-      return;
-    }
-
-    localStorage.removeItem("pt_guest_gpt_usage");
-    localStorage.removeItem("paperTalkAdminKey");
-    localStorage.removeItem("paperTalkAdminKeyExpires");
-
-    alert("Your account has been deleted.");
-    location.href = "/";
-  } catch {
-    alert("Account deletion failed. Please try again.");
-  }
-}
-
-document.addEventListener("DOMContentLoaded", initAuthBox);
-</script>
-
-</body>
-</html>
-`);
-}
-
-
+__name(html, "html");
 function specialistGptChatPage(request) {
   const url = new URL(request.url);
   const routeKey = getSpecialistGptKeyFromPathname(url.pathname);
@@ -1491,7 +691,6 @@ function specialistGptChatPage(request) {
     knowledgeLabel: profile.knowledgeLabel,
     isNeuroPrivate: gptKey === "neuroscience"
   }).replace(/</g, "\\u003c");
-
   return html(`<!doctype html>
 <html lang="ko">
 <head>
@@ -1543,25 +742,25 @@ function specialistGptChatPage(request) {
       <div class="brand"><span class="dot"></span><span>Paper_Talk</span></div>
       <p class="side-title">Specialist GPTs</p>
       <nav class="gpt-list" id="gptList"></nav>
-      <div class="quota" id="quotaBox">Quota 확인 중...</div>
-      <div class="auth"><a class="btn secondary" href="/specialist-gpts">GPT 목록</a><a class="btn" href="/auth/google">Google 로그인</a></div>
-      <p class="small">정적 HTML 파일이 없거나 잘못 올라가도 이 내장 페이지가 우선 표시됩니다.</p>
+      <div class="quota" id="quotaBox">Quota \uD655\uC778 \uC911...</div>
+      <div class="auth"><a class="btn secondary" href="/specialist-gpts">GPT \uBAA9\uB85D</a><a class="btn" href="/auth/google">Google \uB85C\uADF8\uC778</a></div>
+      <p class="small">\uC815\uC801 HTML \uD30C\uC77C\uC774 \uC5C6\uAC70\uB098 \uC798\uBABB \uC62C\uB77C\uAC00\uB3C4 \uC774 \uB0B4\uC7A5 \uD398\uC774\uC9C0\uAC00 \uC6B0\uC120 \uD45C\uC2DC\uB429\uB2C8\uB2E4.</p>
     </aside>
     <main>
       <div class="topbar">
         <div><h1 id="pageTitle">${profile.title}</h1><p class="subtitle" id="pageSubtitle">${profile.knowledgeLabel}</p></div>
-        <button class="secondary" id="newChatBtn" type="button">새 대화</button>
+        <button class="secondary" id="newChatBtn" type="button">\uC0C8 \uB300\uD654</button>
       </div>
       <section class="password-panel" id="passwordPanel">
         <strong>Neuroscience GPT private access</strong>
-        <div>비밀번호를 입력하면 24시간 동안 접속할 수 있습니다.</div>
-        <div class="password-row"><input id="neuroPassword" type="password" placeholder="Password"><button type="button" id="passwordBtn">인증</button></div>
+        <div>\uBE44\uBC00\uBC88\uD638\uB97C \uC785\uB825\uD558\uBA74 24\uC2DC\uAC04 \uB3D9\uC548 \uC811\uC18D\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.</div>
+        <div class="password-row"><input id="neuroPassword" type="password" placeholder="Password"><button type="button" id="passwordBtn">\uC778\uC99D</button></div>
         <div class="small" id="passwordStatus"></div>
       </section>
       <section class="messages" id="messages" aria-live="polite"></section>
       <section class="composer">
         <form id="chatForm">
-          <textarea id="messageInput" placeholder="질문을 입력하세요. 예: EGFR-mutant lung cancer에서 resistance mechanism 정리해줘" required></textarea>
+          <textarea id="messageInput" placeholder="\uC9C8\uBB38\uC744 \uC785\uB825\uD558\uC138\uC694. \uC608: EGFR-mutant lung cancer\uC5D0\uC11C resistance mechanism \uC815\uB9AC\uD574\uC918" required></textarea>
           <button id="sendBtn" type="submit">Send</button>
           <button id="cancelBtn" class="danger" type="button" style="display:none">Cancel</button>
         </form>
@@ -1622,28 +821,28 @@ function specialistGptChatPage(request) {
     async function loadMe() {
       var data = await fetchJson('/api/me');
       if (!data.ok) {
-        el('quotaBox').textContent = data.error || 'Quota 정보를 불러오지 못했습니다.';
+        el('quotaBox').textContent = data.error || 'Quota \uC815\uBCF4\uB97C \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.';
         return;
       }
       var q = data.quota || {};
       var who = data.user ? (data.user.name || data.user.email || 'Signed-in user') : 'Guest';
-      el('quotaBox').innerHTML = '<strong>' + escapeHtml(who) + '</strong><br>사용량: ' + (q.used || 0) + ' / ' + (q.limit || '-') + '<br>남은 횟수: ' + (q.remaining == null ? '-' : q.remaining);
+      el('quotaBox').innerHTML = '<strong>' + escapeHtml(who) + '</strong><br>\uC0AC\uC6A9\uB7C9: ' + (q.used || 0) + ' / ' + (q.limit || '-') + '<br>\uB0A8\uC740 \uD69F\uC218: ' + (q.remaining == null ? '-' : q.remaining);
     }
 
     async function submitPassword() {
       var password = el('neuroPassword').value.trim();
       if (!password) return;
-      el('passwordStatus').textContent = '확인 중...';
+      el('passwordStatus').textContent = '\uD655\uC778 \uC911...';
       var data = await fetchJson('/api/neuro-gpt/access', {
         method:'POST',
         headers:{ 'Content-Type':'application/json' },
         body:JSON.stringify({ password: password })
       });
       if (data.ok) {
-        el('passwordStatus').textContent = '인증되었습니다. 이제 질문할 수 있습니다.';
+        el('passwordStatus').textContent = '\uC778\uC99D\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC774\uC81C \uC9C8\uBB38\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.';
         setTimeout(function() { el('passwordPanel').classList.remove('show'); }, 700);
       } else {
-        el('passwordStatus').textContent = data.error || '인증 실패';
+        el('passwordStatus').textContent = data.error || '\uC778\uC99D \uC2E4\uD328';
       }
     }
 
@@ -1660,7 +859,7 @@ function specialistGptChatPage(request) {
       if (!message) return;
       input.value = '';
       addMessage('user', message);
-      var placeholder = addMessage('assistant', '생각 중...');
+      var placeholder = addMessage('assistant', '\uC0DD\uAC01 \uC911...');
       state.pendingCancelId = makeCancelId();
       setSending(true);
       try {
@@ -1701,7 +900,7 @@ function specialistGptChatPage(request) {
     function newChat() {
       state.threadId = '';
       messages.innerHTML = '';
-      addMessage('assistant', INITIAL.title + '입니다. 질문을 입력해 주세요.');
+      addMessage('assistant', INITIAL.title + '\uC785\uB2C8\uB2E4. \uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uC8FC\uC138\uC694.');
     }
 
     el('chatForm').addEventListener('submit', sendMessage);
@@ -1714,14 +913,13 @@ function specialistGptChatPage(request) {
     loadMe();
     if (INITIAL.isNeuroPrivate) showPasswordPanel();
     newChat();
-  </script>
+  <\/script>
 </body>
 </html>`);
 }
-
+__name(specialistGptChatPage, "specialistGptChatPage");
 function isBlockedAI(request) {
   const ua = request.headers.get("User-Agent") || "";
-
   const blocked = [
     "GPTBot",
     "ChatGPT-User",
@@ -1740,60 +938,49 @@ function isBlockedAI(request) {
     "omgili",
     "YouBot"
   ];
-
-  return blocked.some(bot => ua.toLowerCase().includes(bot.toLowerCase()));
+  return blocked.some((bot) => ua.toLowerCase().includes(bot.toLowerCase()));
 }
-
+__name(isBlockedAI, "isBlockedAI");
 function getCookie(request, name) {
   const cookie = request.headers.get("Cookie") || "";
-  const parts = cookie.split(";").map(v => v.trim());
-
+  const parts = cookie.split(";").map((v) => v.trim());
   for (const part of parts) {
     if (part.startsWith(name + "=")) {
       return decodeURIComponent(part.slice(name.length + 1));
     }
   }
-
   return "";
 }
-
+__name(getCookie, "getCookie");
 function getNeuroGptPassword(env) {
   return String(env.NEURO_GPT_PASSWORD || DEFAULT_NEURO_GPT_PASSWORD || "").trim();
 }
-
+__name(getNeuroGptPassword, "getNeuroGptPassword");
 function createNeuroGptAccessCookie() {
   return `${NEURO_GPT_ACCESS_COOKIE}=ok; Path=/; Secure; SameSite=Lax; Max-Age=86400`;
 }
-
+__name(createNeuroGptAccessCookie, "createNeuroGptAccessCookie");
 function clearNeuroGptAccessCookie() {
   return `${NEURO_GPT_ACCESS_COOKIE}=; Path=/; Secure; SameSite=Lax; Max-Age=0`;
 }
-
+__name(clearNeuroGptAccessCookie, "clearNeuroGptAccessCookie");
 function hasNeuroGptAccess(request, env) {
   const expected = getNeuroGptPassword(env);
   if (!expected) return false;
-
   const url = new URL(request.url);
   const headerKey = String(request.headers.get("X-Neuro-GPT-Key") || "").trim();
   const queryKey = String(url.searchParams.get("neuroKey") || "").trim();
   const cookieValue = getCookie(request, NEURO_GPT_ACCESS_COOKIE);
-
-  return (
-    cookieValue === "ok" ||
-    headerKey === expected ||
-    queryKey === expected
-  );
+  return cookieValue === "ok" || headerKey === expected || queryKey === expected;
 }
-
+__name(hasNeuroGptAccess, "hasNeuroGptAccess");
 async function neuroGptAccessCheck(request, env) {
   const data = await request.json().catch(() => ({}));
   const password = String(data.password || data.key || "").trim();
   const expected = getNeuroGptPassword(env);
-
   if (!expected) {
     return json({ ok: false, error: "NEURO_GPT_PASSWORD is not configured." }, 500);
   }
-
   if (password !== expected) {
     return json(
       { ok: false, authenticated: false, error: "Incorrect Neuro-GPT password." },
@@ -1801,32 +988,28 @@ async function neuroGptAccessCheck(request, env) {
       { "Set-Cookie": clearNeuroGptAccessCookie() }
     );
   }
-
   return json(
     { ok: true, authenticated: true },
     200,
     { "Set-Cookie": createNeuroGptAccessCookie() }
   );
 }
-
+__name(neuroGptAccessCheck, "neuroGptAccessCheck");
 function requireNeuroGptAccessIfNeeded(request, env, gptKey) {
   const key = normalizeGptKey(gptKey);
-
   if (key !== "neuroscience") {
     return null;
   }
-
   if (hasNeuroGptAccess(request, env)) {
     return null;
   }
-
   return json({
     ok: false,
     private: true,
     error: "Neuro-GPT is private. Please enter the Neuro-GPT password first."
   }, 401);
 }
-
+__name(requireNeuroGptAccessIfNeeded, "requireNeuroGptAccessIfNeeded");
 async function sign(value, secret) {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -1835,16 +1018,14 @@ async function sign(value, secret) {
     false,
     ["sign"]
   );
-
   const sig = await crypto.subtle.sign(
     "HMAC",
     key,
     new TextEncoder().encode(value)
   );
-
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
-
+__name(sign, "sign");
 async function createSessionCookie(user, env) {
   const payload = btoa(JSON.stringify({
     id: user.id,
@@ -1853,37 +1034,30 @@ async function createSessionCookie(user, env) {
     picture: user.picture || "",
     createdAt: Date.now()
   }));
-
   const signature = await sign(payload, env.SESSION_SECRET);
   const value = `${payload}.${signature}`;
-
   return `pt_session=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`;
 }
-
+__name(createSessionCookie, "createSessionCookie");
 async function getSession(request, env) {
   const cookie = getCookie(request, "pt_session");
   if (!cookie || !cookie.includes(".")) return null;
-
   const [payload, signature] = cookie.split(".");
   const expected = await sign(payload, env.SESSION_SECRET);
-
   if (signature !== expected) return null;
-
   try {
     return JSON.parse(atob(payload));
   } catch {
     return null;
   }
 }
-
+__name(getSession, "getSession");
 async function googleLogin(request, env) {
   if (!env.GOOGLE_CLIENT_ID) {
     return json({ ok: false, error: "GOOGLE_CLIENT_ID is missing." }, 500);
   }
-
   const origin = new URL(request.url).origin;
   const redirectUri = `${origin}/auth/google/callback`;
-
   const params = new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: redirectUri,
@@ -1892,26 +1066,21 @@ async function googleLogin(request, env) {
     access_type: "online",
     prompt: "select_account"
   });
-
   return redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params.toString());
 }
-
+__name(googleLogin, "googleLogin");
 async function googleCallback(request, env) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
-
   if (!code) return new Response("Missing code", { status: 400 });
-
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
     return json({
       ok: false,
       error: "GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing."
     }, 500);
   }
-
   const origin = new URL(request.url).origin;
   const redirectUri = `${origin}/auth/google/callback`;
-
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: {
@@ -1925,9 +1094,7 @@ async function googleCallback(request, env) {
       grant_type: "authorization_code"
     })
   });
-
   const token = await tokenRes.json();
-
   if (!token.access_token) {
     return json({
       ok: false,
@@ -1935,22 +1102,18 @@ async function googleCallback(request, env) {
       token
     }, 400);
   }
-
   const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
     headers: {
       Authorization: `Bearer ${token.access_token}`
     }
   });
-
   const googleUser = await userRes.json();
-
   const user = {
     id: googleUser.id,
     name: googleUser.name || googleUser.email,
     email: googleUser.email,
     picture: googleUser.picture || ""
   };
-
   await env.DB.prepare(`
     INSERT INTO users (id, name, email, created_at)
     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
@@ -1958,26 +1121,22 @@ async function googleCallback(request, env) {
       name = excluded.name,
       email = excluded.email
   `).bind(user.id, user.name, user.email).run();
-
   const cookie = await createSessionCookie(user, env);
-
   return redirect("/", {
     "Set-Cookie": cookie
   });
 }
-
+__name(googleCallback, "googleCallback");
 function logout() {
   return redirect("/", {
     "Set-Cookie": "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
   });
 }
-
+__name(logout, "logout");
 async function apiMe(request, env) {
   const user = await getSession(request, env);
-
   if (!user) {
     const guestQuota = await getGuestGptQuota(request, env);
-
     return json({
       ok: true,
       user: null,
@@ -1992,9 +1151,7 @@ async function apiMe(request, env) {
       message: "You can try Paper_Talk Vision GPT 3 times per day without signing in."
     });
   }
-
   const quota = await getMonthlyGptQuota(user.id, env, user);
-
   return json({
     ok: true,
     user,
@@ -2008,17 +1165,14 @@ async function apiMe(request, env) {
     }
   });
 }
-
+__name(apiMe, "apiMe");
 async function deleteAccount(request, env) {
   const user = await getSession(request, env);
-
   if (!user || !user.id) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
-
   const userId = String(user.id || "");
   let userEmail = String(user.email || "").trim();
-
   try {
     const row = await env.DB.prepare(`
       SELECT email
@@ -2026,111 +1180,85 @@ async function deleteAccount(request, env) {
       WHERE id = ?
       LIMIT 1
     `).bind(userId).first();
-
     if (row && row.email) {
       userEmail = String(row.email || "").trim();
     }
   } catch {
-    // Continue with the email stored in the signed session.
   }
-
   async function safeDelete(sql, bindings = []) {
     try {
       let statement = env.DB.prepare(sql);
       if (bindings.length) statement = statement.bind(...bindings);
       await statement.run();
     } catch {
-      // Some older deployments may not have every optional table/column yet.
-      // Account deletion should still clear the main user record and session.
     }
   }
-
-  // Remove the user's GPT chat data first, then the thread rows.
+  __name(safeDelete, "safeDelete");
   await safeDelete(`
     DELETE FROM gpt_messages
     WHERE user_id = ?
   `, [userId]);
-
   await safeDelete(`
     DELETE FROM gpt_threads
     WHERE user_id = ?
   `, [userId]);
-
-  // Remove quota/cancel/active-user records tied to this account.
   await safeDelete(`
     DELETE FROM gpt_monthly_usage
     WHERE user_id = ?
   `, [userId]);
-
   await safeDelete(`
     DELETE FROM gpt_request_cancellations
     WHERE owner_key = ?
   `, [`user:${userId}`]);
-
   await safeDelete(`
     DELETE FROM active_users
     WHERE user_id = ?
   `, [userId]);
-
   if (userEmail) {
     await safeDelete(`
       DELETE FROM active_users
       WHERE email = ?
     `, [userEmail]);
-
-    // Remove user-submitted posts. Admin-created posts use blank/admin emails and are not affected.
     await safeDelete(`
       DELETE FROM posts
       WHERE author_email = ?
     `, [userEmail]);
   }
-
-  // Finally remove the user account row.
   await safeDelete(`
     DELETE FROM users
     WHERE id = ?
   `, [userId]);
-
   const headers = new Headers({
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
     ...corsHeaders()
   });
-
   headers.append("Set-Cookie", "pt_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
   headers.append("Set-Cookie", "pt_neuro_gpt_access=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
-
   return new Response(JSON.stringify({ ok: true, deleted: true }, null, 2), {
     status: 200,
     headers
   });
 }
-
+__name(deleteAccount, "deleteAccount");
 async function listPosts(request, env) {
   const url = new URL(request.url);
   const section = url.searchParams.get("section") || "research";
   const type = url.searchParams.get("type") || "";
-
   const user = await getSession(request, env);
   const isLoggedIn = !!user;
-
   let page = Math.max(Number(url.searchParams.get("page") || 1), 1);
   const limit = 10;
-
   if (!isLoggedIn && (section === "research" || section === "study")) {
     page = 1;
   }
-
   const offset = (page - 1) * limit;
-
   if (section === "research" && isBlockedAI(request)) {
     return json({ ok: false, error: "Access denied." }, 403);
   }
-
   let where = "WHERE section = ? AND status = 'published'";
   const params = [section];
-
   if (type) {
     if (section === "study" && type === "study") {
       where += " AND type IN ('study', 'study_post', 'methodology_page', 'blog')";
@@ -2139,19 +1267,13 @@ async function listPosts(request, env) {
       params.push(type);
     }
   }
-
   const count = await env.DB.prepare(`
     SELECT COUNT(*) AS total
     FROM posts
     ${where}
   `).bind(...params).first();
-
   const realTotal = count ? count.total : 0;
-  const visibleTotal =
-    !isLoggedIn && (section === "research" || section === "study")
-      ? Math.min(realTotal, 10)
-      : realTotal;
-
+  const visibleTotal = !isLoggedIn && (section === "research" || section === "study") ? Math.min(realTotal, 10) : realTotal;
   const posts = await env.DB.prepare(`
     SELECT *
     FROM posts
@@ -2159,7 +1281,6 @@ async function listPosts(request, env) {
     ORDER BY datetime(created_at) DESC
     LIMIT ? OFFSET ?
   `).bind(...params, limit, offset).all();
-
   return json({
     ok: true,
     posts: posts.results,
@@ -2170,30 +1291,25 @@ async function listPosts(request, env) {
     isLoggedIn
   });
 }
-
+__name(listPosts, "listPosts");
 async function createPost(request, env) {
   const user = await getSession(request, env);
-
   if (!user) {
     return json({
       ok: false,
       error: "Please sign in with Google before writing a post."
     }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
-
   const section = String(data.section || "").trim();
   const type = String(data.type || "").trim();
   const title = String(data.title || "").trim();
-
   if (!section || !type || !title) {
     return json({
       ok: false,
       error: "section, type, and title are required."
     }, 400);
   }
-
   await env.DB.prepare(`
     INSERT INTO posts (
       id,
@@ -2219,50 +1335,42 @@ async function createPost(request, env) {
     user.email,
     data.linkedinUrl || ""
   ).run();
-
   return json({
     ok: true,
     message: "Submitted. Your post will be published after admin approval."
   });
 }
-
+__name(createPost, "createPost");
 async function myPosts(request, env) {
   const user = await getSession(request, env);
-
   if (!user) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
-
   const posts = await env.DB.prepare(`
     SELECT *
     FROM posts
     WHERE author_email = ?
     ORDER BY datetime(created_at) DESC
   `).bind(user.email).all();
-
   return json({
     ok: true,
     posts: posts.results
   });
 }
-
+__name(myPosts, "myPosts");
 async function updateMyPost(request, env) {
   const user = await getSession(request, env);
-
   if (!user) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
-
   if (!data.id || !title) {
     return json({
       ok: false,
       error: "Post ID and title are required."
     }, 400);
   }
-
   await env.DB.prepare(`
     UPDATE posts
     SET title = ?,
@@ -2280,73 +1388,56 @@ async function updateMyPost(request, env) {
     data.id,
     user.email
   ).run();
-
   return json({
     ok: true,
     message: "Updated. Your post needs admin approval again."
   });
 }
-
+__name(updateMyPost, "updateMyPost");
 async function deleteMyPost(request, env) {
   const user = await getSession(request, env);
-
   if (!user) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
-
   if (!data.id) {
     return json({ ok: false, error: "Post ID is required." }, 400);
   }
-
   await env.DB.prepare(`
     DELETE FROM posts
     WHERE id = ?
       AND author_email = ?
   `).bind(data.id, user.email).run();
-
   return json({ ok: true });
 }
-
+__name(deleteMyPost, "deleteMyPost");
 function getAdminKeyFromRequest(request) {
   const url = new URL(request.url);
   return String(request.headers.get("X-Admin-Key") || url.searchParams.get("key") || "").trim();
 }
-
+__name(getAdminKeyFromRequest, "getAdminKeyFromRequest");
 function isAdmin(request, env) {
   const key = getAdminKeyFromRequest(request);
   const expectedKey = String(env.ADMIN_KEY || "").trim();
-
   return Boolean(key && expectedKey && key === expectedKey);
 }
-
-
+__name(isAdmin, "isAdmin");
 function getSpecialistAdminKeyFromRequest(request) {
   const url = new URL(request.url);
   return String(
-    request.headers.get("X-Specialist-Admin-Key") ||
-    request.headers.get("X-Admin-Key") ||
-    url.searchParams.get("specialistKey") ||
-    url.searchParams.get("key") ||
-    ""
+    request.headers.get("X-Specialist-Admin-Key") || request.headers.get("X-Admin-Key") || url.searchParams.get("specialistKey") || url.searchParams.get("key") || ""
   ).trim();
 }
-
+__name(getSpecialistAdminKeyFromRequest, "getSpecialistAdminKeyFromRequest");
 function isSpecialistAdmin(request, env) {
   const key = getSpecialistAdminKeyFromRequest(request);
   const expectedSpecialistKey = String(env.SPECIALIST_ADMIN_KEY || "").trim();
   const fallbackAdminKey = String(env.ADMIN_KEY || "").trim();
-
   return Boolean(
-    key &&
-    (
-      (expectedSpecialistKey && key === expectedSpecialistKey) ||
-      (!expectedSpecialistKey && fallbackAdminKey && key === fallbackAdminKey)
-    )
+    key && (expectedSpecialistKey && key === expectedSpecialistKey || !expectedSpecialistKey && fallbackAdminKey && key === fallbackAdminKey)
   );
 }
-
+__name(isSpecialistAdmin, "isSpecialistAdmin");
 async function specialistAdminCheck(request, env) {
   if (!String(env.SPECIALIST_ADMIN_KEY || env.ADMIN_KEY || "").trim()) {
     return json({
@@ -2354,63 +1445,52 @@ async function specialistAdminCheck(request, env) {
       error: "SPECIALIST_ADMIN_KEY or ADMIN_KEY is not configured in Worker secrets."
     }, 500);
   }
-
   if (!isSpecialistAdmin(request, env)) {
     return json({
       ok: false,
       error: "Unauthorized"
     }, 401);
   }
-
   return json({
     ok: true,
     authenticated: true,
     message: "Specialist admin key is valid."
   });
 }
-
+__name(specialistAdminCheck, "specialistAdminCheck");
 function createSpecialistForwardRequest(request, env) {
   const headers = new Headers(request.headers);
   const specialistKey = getSpecialistAdminKeyFromRequest(request);
-
-  // Forward to existing admin full-text handlers, which already isolate data by gptKey.
-  // If SPECIALIST_ADMIN_KEY is configured, specialist routes accept that key.
-  // Existing handlers expect X-Admin-Key, so we pass through ADMIN_KEY internally when available.
   headers.set("X-Admin-Key", String(env.ADMIN_KEY || specialistKey || "").trim());
-
   return new Request(request.url, {
     method: request.method,
     headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+    body: request.method === "GET" || request.method === "HEAD" ? void 0 : request.body,
     redirect: request.redirect
   });
 }
-
+__name(createSpecialistForwardRequest, "createSpecialistForwardRequest");
 async function specialistAdminImportFullText(request, env) {
   if (!isSpecialistAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   return adminImportResearchFullText(createSpecialistForwardRequest(request, env), env);
 }
-
+__name(specialistAdminImportFullText, "specialistAdminImportFullText");
 async function specialistAdminListFullText(request, env) {
   if (!isSpecialistAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   return adminListResearchFullText(createSpecialistForwardRequest(request, env), env);
 }
-
+__name(specialistAdminListFullText, "specialistAdminListFullText");
 async function specialistAdminDeleteFullText(request, env) {
   if (!isSpecialistAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   return adminDeleteResearchFullText(createSpecialistForwardRequest(request, env), env);
 }
-
-
+__name(specialistAdminDeleteFullText, "specialistAdminDeleteFullText");
 async function adminCheck(request, env) {
   if (!String(env.ADMIN_KEY || "").trim()) {
     return json({
@@ -2418,30 +1498,26 @@ async function adminCheck(request, env) {
       error: "ADMIN_KEY is not configured in Worker secrets."
     }, 500);
   }
-
   if (!isAdmin(request, env)) {
     return json({
       ok: false,
       error: "Unauthorized"
     }, 401);
   }
-
   return json({
     ok: true,
     authenticated: true,
     message: "Admin key is valid."
   });
 }
-
+__name(adminCheck, "adminCheck");
 async function adminDebugVisitor(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const todayKey = getTodayKey();
   const visitorIp = getVisitorIp(request);
   const guestHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
-
   return json({
     ok: true,
     visitorIp,
@@ -2450,24 +1526,21 @@ async function adminDebugVisitor(request, env) {
     note: "Use this only for admin debugging. If visitorIp does not change, Cloudflare is still seeing the same IP even if your local IP/VPN appears changed."
   });
 }
-
+__name(adminDebugVisitor, "adminDebugVisitor");
 async function adminUserCount(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const result = await env.DB.prepare(`
     SELECT COUNT(*) AS total
     FROM users
   `).first();
-
   return json({
     ok: true,
     total: result ? result.total : 0
   });
 }
-
-
+__name(adminUserCount, "adminUserCount");
 async function ensureActiveUsersTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS active_users (
@@ -2480,27 +1553,19 @@ async function ensureActiveUsersTable(env) {
     )
   `).run();
 }
-
+__name(ensureActiveUsersTable, "ensureActiveUsersTable");
 async function publicActiveHeartbeat(request, env) {
   await ensureActiveUsersTable(env);
-
   let data = {};
   try {
     data = await request.json();
   } catch {
     data = {};
   }
-
   const forceGuest = Boolean(data.forceGuest || data.adminPage);
   const user = forceGuest ? null : await getSession(request, env);
-
   const visitorIp = getVisitorIp(request);
-
-  // Important:
-  // Active visitors are counted by IP hash only, so the same IP is counted once.
-  // This prevents one person/browser from being counted separately as guest + signed-in.
   const visitorKey = "ip:" + await sha256Hex(`${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:active-user`);
-
   await env.DB.prepare(`
     INSERT INTO active_users (
       visitor_key,
@@ -2520,25 +1585,22 @@ async function publicActiveHeartbeat(request, env) {
   `).bind(
     visitorKey,
     user ? user.id : "",
-    user ? (user.name || "") : "Guest",
-    user ? (user.email || "") : "",
+    user ? user.name || "" : "Guest",
+    user ? user.email || "" : "",
     user ? 1 : 0
   ).run();
-
   return json({
     ok: true,
     loggedIn: Boolean(user),
     countedBy: "ip"
   });
 }
-
+__name(publicActiveHeartbeat, "publicActiveHeartbeat");
 async function adminActiveUsers(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   await ensureActiveUsersTable(env);
-
   const rows = await env.DB.prepare(`
     SELECT
       visitor_key,
@@ -2551,38 +1613,30 @@ async function adminActiveUsers(request, env) {
     WHERE datetime(last_seen) >= datetime('now', '-5 minutes')
     ORDER BY datetime(last_seen) DESC
   `).all();
-
   const active = rows.results || [];
-  const signedIn = active.filter(row => Number(row.is_logged_in || 0) === 1);
-  const guests = active.filter(row => Number(row.is_logged_in || 0) !== 1);
-
+  const signedIn = active.filter((row) => Number(row.is_logged_in || 0) === 1);
+  const guests = active.filter((row) => Number(row.is_logged_in || 0) !== 1);
   return json({
     ok: true,
     totalActive: active.length,
     signedInActive: signedIn.length,
     guestActive: guests.length,
-    users: signedIn.map(row => ({
+    users: signedIn.map((row) => ({
       name: row.name || "",
       email: row.email || "",
       last_seen: row.last_seen || ""
     }))
   });
 }
-
-
-function getTodayKey(date = new Date()) {
+__name(adminActiveUsers, "adminActiveUsers");
+function getTodayKey(date = /* @__PURE__ */ new Date()) {
   return date.toISOString().slice(0, 10);
 }
-
+__name(getTodayKey, "getTodayKey");
 function getVisitorIp(request) {
-  return (
-    request.headers.get("CF-Connecting-IP") ||
-    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
-    request.headers.get("X-Real-IP") ||
-    "unknown"
-  );
+  return request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || request.headers.get("X-Real-IP") || "unknown";
 }
-
+__name(getVisitorIp, "getVisitorIp");
 async function ensureDailyVisitsTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS daily_visits (
@@ -2591,7 +1645,6 @@ async function ensureDailyVisitsTable(env) {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
-
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS daily_visit_ips (
       visit_date TEXT NOT NULL,
@@ -2601,14 +1654,12 @@ async function ensureDailyVisitsTable(env) {
     )
   `).run();
 }
-
+__name(ensureDailyVisitsTable, "ensureDailyVisitsTable");
 async function publicTodayVisitCount(request, env) {
   const todayKey = getTodayKey();
   const visitorIp = getVisitorIp(request);
   const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}`);
-
   await ensureDailyVisitsTable(env);
-
   const insertIpResult = await env.DB.prepare(`
     INSERT OR IGNORE INTO daily_visit_ips (
       visit_date,
@@ -2617,10 +1668,7 @@ async function publicTodayVisitCount(request, env) {
     )
     VALUES (?, ?, CURRENT_TIMESTAMP)
   `).bind(todayKey, ipHash).run();
-
-  const isNewVisitor =
-    Number(insertIpResult?.meta?.changes || 0) > 0;
-
+  const isNewVisitor = Number(insertIpResult?.meta?.changes || 0) > 0;
   if (isNewVisitor) {
     await env.DB.prepare(`
       INSERT INTO daily_visits (
@@ -2643,13 +1691,11 @@ async function publicTodayVisitCount(request, env) {
       VALUES (?, 0, CURRENT_TIMESTAMP)
     `).bind(todayKey).run();
   }
-
   const result = await env.DB.prepare(`
     SELECT count
     FROM daily_visits
     WHERE visit_date = ?
   `).bind(todayKey).first();
-
   return json({
     ok: true,
     date: todayKey,
@@ -2657,25 +1703,21 @@ async function publicTodayVisitCount(request, env) {
     counted: isNewVisitor
   });
 }
-
+__name(publicTodayVisitCount, "publicTodayVisitCount");
 async function adminListPosts(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const url = new URL(request.url);
   const section = url.searchParams.get("section") || "";
   const type = url.searchParams.get("type") || "";
   const status = url.searchParams.get("status") || "";
-
   let where = "WHERE 1=1";
   const params = [];
-
   if (section) {
     where += " AND section = ?";
     params.push(section);
   }
-
   if (type) {
     if (section === "study" && type === "study") {
       where += " AND type IN ('study', 'study_post', 'methodology_page', 'blog')";
@@ -2684,127 +1726,100 @@ async function adminListPosts(request, env) {
       params.push(type);
     }
   }
-
   if (status) {
     where += " AND status = ?";
     params.push(status);
   }
-
   const posts = await env.DB.prepare(`
     SELECT *
     FROM posts
     ${where}
     ORDER BY datetime(created_at) DESC
   `).bind(...params).all();
-
   return json({
     ok: true,
     posts: posts.results
   });
 }
-
+__name(adminListPosts, "adminListPosts");
 async function adminApprovePost(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
-
   if (!data.id) {
     return json({ ok: false, error: "Post ID is required." }, 400);
   }
-
   await env.DB.prepare(`
     UPDATE posts
     SET status = 'published'
     WHERE id = ?
   `).bind(data.id).run();
-
   const post = await env.DB.prepare(`
     SELECT *
     FROM posts
     WHERE id = ?
   `).bind(data.id).first();
-
   if (post && post.section === "research" && post.type === "paper") {
     await indexResearchPaperPost(post, env);
   }
-
   return json({ ok: true });
 }
-
+__name(adminApprovePost, "adminApprovePost");
 async function adminDeletePost(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
-
   if (!data.id) {
     return json({ ok: false, error: "Post ID is required." }, 400);
   }
-
-  // Delete chunked full-text evidence first.
   try {
     await ensurePaperFullTextTables(env);
     await ensureSpecialistGptTables(env);
-
     const fullTextRows = await env.DB.prepare(`
       SELECT vector_id, chunk_index, content_hash
       FROM paper_fulltext_chunks
       WHERE post_id = ?
     `).bind(data.id).all();
-
     await env.DB.prepare(`
       DELETE FROM paper_fulltext_chunks
       WHERE post_id = ?
     `).bind(data.id).run();
-
     if (env.VECTORIZE) {
-      const ids = (fullTextRows.results || [])
-        .map(row => row.vector_id || `${data.id}:fulltext:${String(row.content_hash || "").slice(0, 16)}:${row.chunk_index}`)
-        .filter(Boolean);
-
+      const ids = (fullTextRows.results || []).map((row) => row.vector_id || `${data.id}:fulltext:${String(row.content_hash || "").slice(0, 16)}:${row.chunk_index}`).filter(Boolean);
       if (ids.length) {
         try {
           await env.VECTORIZE.deleteByIds(ids);
-        } catch {}
+        } catch {
+        }
       }
     }
   } catch {
-    // Continue deleting the post and old research_knowledge row.
   }
-
   await env.DB.prepare(`
     DELETE FROM research_knowledge
     WHERE post_id = ?
   `).bind(data.id).run();
-
   if (env.VECTORIZE) {
     try {
       const ids = Array.from({ length: 24 }, (_, index) => `${data.id}:${index}`);
       await env.VECTORIZE.deleteByIds(ids);
     } catch {
-      // Ignore Vectorize delete errors so post deletion still works.
     }
   }
-
   await env.DB.prepare(`
     DELETE FROM posts
     WHERE id = ?
   `).bind(data.id).run();
-
   return json({ ok: true });
 }
-
-
+__name(adminDeletePost, "adminDeletePost");
 async function adminUpdatePost(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
-
   const id = String(data.id || "").trim();
   const section = String(data.section || "").trim();
   const type = String(data.type || "").trim();
@@ -2812,14 +1827,12 @@ async function adminUpdatePost(request, env) {
   const title = String(data.title || "").trim();
   const body = String(data.body || "");
   const link = String(data.link || "").trim();
-
   if (!id || !section || !type || !title) {
     return json({
       ok: false,
       error: "id, section, type, and title are required."
     }, 400);
   }
-
   await env.DB.prepare(`
     UPDATE posts
     SET section = ?,
@@ -2838,14 +1851,12 @@ async function adminUpdatePost(request, env) {
     status,
     id
   ).run();
-
   if (section === "research" && type === "paper" && status === "published") {
     const post = await env.DB.prepare(`
       SELECT *
       FROM posts
       WHERE id = ?
     `).bind(id).first();
-
     if (post) {
       await indexResearchPaperPost(post, env);
     }
@@ -2854,41 +1865,30 @@ async function adminUpdatePost(request, env) {
       DELETE FROM research_knowledge
       WHERE post_id = ?
     `).bind(id).run();
-
     if (env.VECTORIZE) {
       try {
         const ids = Array.from({ length: 24 }, (_, index) => `${id}:${index}`);
         await env.VECTORIZE.deleteByIds(ids);
       } catch {
-        // Ignore Vectorize cleanup errors.
       }
     }
   }
-
   return json({
     ok: true,
     message: "Post updated."
   });
 }
-
+__name(adminUpdatePost, "adminUpdatePost");
 async function adminCreateResearchPaper(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
-
   if (!title) {
     return json({ ok: false, error: "Title is required." }, 400);
   }
-
   const postId = crypto.randomUUID();
-
-  // v44:
-  // New Research Paper metadata is intentionally compact.
-  // Removed admin-only fields: figures, description, note.
-  // Full-text PDF/TXT evidence is stored separately in paper_fulltext_chunks.
   const researchData = {
     year: data.year || "",
     authors: data.authors || "",
@@ -2898,7 +1898,6 @@ async function adminCreateResearchPaper(request, env) {
     pdfLink: data.pdfLink || "",
     tags: data.tags || ""
   };
-
   await env.DB.prepare(`
     INSERT INTO posts (
       id,
@@ -2919,7 +1918,6 @@ async function adminCreateResearchPaper(request, env) {
     JSON.stringify(researchData),
     data.articleLink || ""
   ).run();
-
   await indexResearchPaperData({
     postId,
     title,
@@ -2927,15 +1925,13 @@ async function adminCreateResearchPaper(request, env) {
     pdfLink: data.pdfLink || "",
     researchData
   }, env);
-
   return json({
     ok: true,
     postId,
     message: "Research paper saved and added to Paper_Talk GPT knowledge base."
   });
 }
-
-
+__name(adminCreateResearchPaper, "adminCreateResearchPaper");
 async function ensurePaperFullTextTables(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS paper_fulltext_chunks (
@@ -2955,164 +1951,67 @@ async function ensurePaperFullTextTables(env) {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
-
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_paper_fulltext_chunks_post_id
     ON paper_fulltext_chunks(post_id)
   `).run();
-
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_paper_fulltext_chunks_hash
     ON paper_fulltext_chunks(content_hash)
   `).run();
-
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_paper_fulltext_chunks_title
     ON paper_fulltext_chunks(title)
   `).run();
-
   try {
     await env.DB.prepare(`
       ALTER TABLE paper_fulltext_chunks ADD COLUMN vector_id TEXT
     `).run();
   } catch {
-    // Column already exists.
   }
-
   try {
     await env.DB.prepare(`
       ALTER TABLE paper_fulltext_chunks ADD COLUMN gpt_key TEXT DEFAULT 'paper_talk'
     `).run();
   } catch {
-    // Column already exists.
   }
-
   try {
     await env.DB.prepare(`
       CREATE INDEX IF NOT EXISTS idx_paper_fulltext_chunks_gpt_key
       ON paper_fulltext_chunks(gpt_key)
     `).run();
-  } catch {}
+  } catch {
+  }
 }
-
+__name(ensurePaperFullTextTables, "ensurePaperFullTextTables");
 function chunkFullTextForStorage(text, chunkSize = 3500, overlap = 250) {
-  const clean = String(text || "")
-    .replace(/\r/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{4,}/g, "\n\n\n")
-    .trim();
-
+  const clean = String(text || "").replace(/\r/g, "\n").replace(/[ \t]+/g, " ").replace(/\n{4,}/g, "\n\n\n").trim();
   const chunks = [];
   let start = 0;
-
   while (start < clean.length) {
     const end = Math.min(start + chunkSize, clean.length);
     let chunk = clean.slice(start, end).trim();
-
-    // Try not to end in the middle of a sentence when possible.
     if (end < clean.length) {
       const lastStop = Math.max(
         chunk.lastIndexOf(". "),
         chunk.lastIndexOf("\n"),
         chunk.lastIndexOf("; ")
       );
-
       if (lastStop > Math.floor(chunk.length * 0.55)) {
         chunk = chunk.slice(0, lastStop + 1).trim();
       }
     }
-
     if (chunk.length >= 120) chunks.push(chunk);
-
     if (end >= clean.length) break;
     start = Math.max(end - overlap, start + 1);
   }
-
-  // Safety cap:
-  // 160 chunks x ~2.8k chars is enough for most biomedical full texts
-  // and prevents Cloudflare Worker / D1 / Vectorize burst failures.
   return chunks.slice(0, PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS);
 }
-
+__name(chunkFullTextForStorage, "chunkFullTextForStorage");
 async function upsertFullTextChunkVectors({ postId, title, sourceUrl, pdfLink, fileName, contentHash, chunks }, env) {
-  // v49 ultra-safe mode:
-  // Do not create embeddings during admin PDF batch upload. Large batches of PDFs can easily
-  // exceed Cloudflare CPU/subrequest limits and return HTML 500/503 pages. The text is still
-  // stored in D1 chunks and can be retrieved by title/keyword. Reindex/repair can be used later
-  // if you want to build vectors in a controlled small batch.
   return false;
 }
-
-async function findResearchKnowledgeMatchForFullText({ titleInput, sourceUrlInput, pdfLinkInput, env }) {
-  const normalizedSourceUrl = normalizeUrlForMatch(sourceUrlInput);
-  const normalizedPdfLink = normalizeUrlForMatch(pdfLinkInput);
-
-  // v49 ultra-safe mode:
-  // During large PDF batch import, do only cheap exact/LIKE matching. Avoid scanning 500
-  // research_knowledge rows and scoring every row for every PDF; that caused Worker 500/503
-  // HTML responses when importing dozens of PDFs.
-  if (sourceUrlInput || pdfLinkInput) {
-    const matchedByUrl = await env.DB.prepare(`
-      SELECT id, post_id, title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE status = 'indexed'
-        AND post_id NOT LIKE 'thinking_logic_%'
-        AND title NOT LIKE '[Thinking Logic]%'
-        AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
-        AND (
-          source_url = ?
-          OR pdf_link = ?
-          OR source_url = ?
-          OR pdf_link = ?
-        )
-      ORDER BY datetime(updated_at) DESC
-      LIMIT 1
-    `).bind(
-      sourceUrlInput,
-      pdfLinkInput,
-      normalizedSourceUrl,
-      normalizedPdfLink
-    ).first();
-
-    if (matchedByUrl) return matchedByUrl;
-  }
-
-  if (titleInput) {
-    const exact = await env.DB.prepare(`
-      SELECT id, post_id, title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE status = 'indexed'
-        AND post_id NOT LIKE 'thinking_logic_%'
-        AND title NOT LIKE '[Thinking Logic]%'
-        AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
-        AND lower(title) = lower(?)
-      ORDER BY datetime(updated_at) DESC
-      LIMIT 1
-    `).bind(titleInput).first();
-
-    if (exact) return exact;
-
-    const safeLikeTitle = titleInput.slice(0, 90).replace(/[%_]/g, ' ').trim();
-    if (safeLikeTitle.length >= 18) {
-      const like = await env.DB.prepare(`
-        SELECT id, post_id, title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-          AND post_id NOT LIKE 'thinking_logic_%'
-          AND title NOT LIKE '[Thinking Logic]%'
-          AND content NOT LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
-          AND title LIKE ?
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 1
-      `).bind(`%${safeLikeTitle}%`).first();
-
-      if (like) return like;
-    }
-  }
-
-  return null;
-}
-
+__name(upsertFullTextChunkVectors, "upsertFullTextChunkVectors");
 async function ensureMinimalResearchKnowledgeForFullText({ postId, title, sourceUrl, pdfLink, fileName, contentHash, gptKey = DEFAULT_GPT_KEY, env }) {
   gptKey = normalizeGptKey(gptKey);
   await ensureSpecialistGptTables(env);
@@ -3122,9 +2021,7 @@ async function ensureMinimalResearchKnowledgeForFullText({ postId, title, source
     WHERE post_id = ?
     LIMIT 1
   `).bind(postId).first();
-
   if (existing) return;
-
   const content = [
     "Paper_Talk DB Research Paper",
     "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
@@ -3135,7 +2032,6 @@ async function ensureMinimalResearchKnowledgeForFullText({ postId, title, source
     fileName ? `Full text file: ${fileName}` : "",
     contentHash ? `Full text content hash: ${contentHash}` : ""
   ].filter(Boolean).join("\n");
-
   await env.DB.prepare(`
     INSERT INTO research_knowledge (
       id,
@@ -3167,58 +2063,40 @@ async function ensureMinimalResearchKnowledgeForFullText({ postId, title, source
     gptKey
   ).run();
 }
-
+__name(ensureMinimalResearchKnowledgeForFullText, "ensureMinimalResearchKnowledgeForFullText");
 async function adminImportResearchFullText(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   await ensurePaperFullTextTables(env);
   await ensureSpecialistGptTables(env);
-
   const data = await request.json().catch(() => ({}));
   const gptKey = getGptKeyFromRequestData(data);
-
   const titleInput = String(data.title || "").trim();
   const sourceUrlInput = String(data.sourceUrl || data.articleLink || "").trim();
   const pdfLinkInput = String(data.pdfLink || "").trim();
   const fileName = String(data.fileName || "full-text-file").trim();
   const sourceType = String(data.sourceType || "full_text_pdf_or_txt").trim();
   const rawText = String(data.text || data.extractedText || "").trim();
-
   if (!titleInput && !sourceUrlInput && !pdfLinkInput) {
     return json({
       ok: false,
       error: "Please provide at least a paper title, article URL, or PDF link so I can connect the full text to the correct paper."
     }, 400);
   }
-
   if (!rawText || rawText.length < PAPER_TALK_MIN_FULLTEXT_CHARS) {
     return json({
       ok: false,
       error: "Full text is too short. If this PDF is scanned images, use a text-based PDF or OCR it first. Extracted characters: " + rawText.length
     }, 400);
   }
-
-  // v51 queue-safe mode:
-  // Do not run DB matching during high-volume PDF import. Each import should be a
-  // cheap write-only operation. This avoids Cloudflare 500/503 HTML errors caused
-  // by repeated D1 lookups while uploading many files. Matching/reindexing can be
-  // repaired later by metadata title.
   const matched = null;
-
   const finalTitle = titleInput || fileName.replace(/\.[^.]+$/, "");
   const finalSourceUrl = matched?.source_url || sourceUrlInput || "";
   const finalPdfLink = matched?.pdf_link || pdfLinkInput || "";
   const postId = matched?.post_id || `${gptKey}_fulltext_` + await sha256Hex(`${finalTitle}:${finalSourceUrl}:${fileName}`);
-
   const cleanedFullText = cleanUploadedFullText(rawText);
   const fullTextHash = await sha256Hex(cleanedFullText.replace(/\s+/g, " "));
-
-  // Important DB isolation fix:
-  // Duplicate checks must be scoped to the selected GPT DB. Otherwise a PDF
-  // already uploaded to Paper_Talk Vision GPT can incorrectly block a Neuro-GPT
-  // upload because both currently live in the same D1 database with gpt_key labels.
   const duplicateRow = await env.DB.prepare(`
     SELECT post_id, title, file_name, content_hash, COALESCE(gpt_key, 'paper_talk') AS gpt_key
     FROM paper_fulltext_chunks
@@ -3226,7 +2104,6 @@ async function adminImportResearchFullText(request, env) {
       AND COALESCE(gpt_key, 'paper_talk') = ?
     LIMIT 1
   `).bind(fullTextHash, gptKey).first();
-
   if (duplicateRow) {
     return json({
       ok: true,
@@ -3239,9 +2116,7 @@ async function adminImportResearchFullText(request, env) {
       message: "This exact PDF/TXT full text was already imported, so it was skipped."
     });
   }
-
   let chunks = chunkFullTextForStorage(cleanedFullText);
-
   if (!chunks.length) {
     const metadataChunk = [
       "Paper_Talk DB Research Paper",
@@ -3255,7 +2130,6 @@ async function adminImportResearchFullText(request, env) {
     ].filter(Boolean).join("\n");
     chunks = [metadataChunk];
   }
-
   await ensureMinimalResearchKnowledgeForFullText({
     postId,
     title: finalTitle,
@@ -3266,9 +2140,7 @@ async function adminImportResearchFullText(request, env) {
     gptKey,
     env
   });
-
   const vectorIds = chunks.map((_, index) => `${postId}:fulltext:${fullTextHash.slice(0, 16)}:${index}`);
-
   const insertStatements = chunks.map((chunk, i) => env.DB.prepare(`
     INSERT OR REPLACE INTO paper_fulltext_chunks (
       id,
@@ -3301,11 +2173,9 @@ async function adminImportResearchFullText(request, env) {
     chunk,
     chunk.length
   ));
-
   for (let i = 0; i < insertStatements.length; i += 24) {
     await env.DB.batch(insertStatements.slice(i, i + 24));
   }
-
   let vectorIndexed = false;
   try {
     vectorIndexed = await upsertFullTextChunkVectors({
@@ -3318,10 +2188,8 @@ async function adminImportResearchFullText(request, env) {
       chunks
     }, env);
   } catch (error) {
-    // D1 chunk storage should still succeed even if Vectorize temporarily fails.
     vectorIndexed = false;
   }
-
   return json({
     ok: true,
     matchedExistingPaper: Boolean(matched),
@@ -3333,27 +2201,20 @@ async function adminImportResearchFullText(request, env) {
     fullTextHash,
     duplicate: false,
     vectorIndexed,
-    message: vectorIndexed
-      ? "Full text PDF/TXT was stored as searchable chunks and indexed in Vectorize."
-      : "Full text PDF/TXT was stored as safe D1 chunks. Vectorize indexing is intentionally skipped during batch upload to prevent Worker 500/503 errors."
+    message: vectorIndexed ? "Full text PDF/TXT was stored as searchable chunks and indexed in Vectorize." : "Full text PDF/TXT was stored as safe D1 chunks. Vectorize indexing is intentionally skipped during batch upload to prevent Worker 500/503 errors."
   });
 }
-
-
+__name(adminImportResearchFullText, "adminImportResearchFullText");
 async function adminListResearchFullText(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   await ensurePaperFullTextTables(env);
   await ensureSpecialistGptTables(env);
-
   const url = new URL(request.url);
   const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
   const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || DEFAULT_GPT_KEY);
-
   let rows;
-
   if (q) {
     rows = await env.DB.prepare(`
       SELECT
@@ -3398,34 +2259,30 @@ async function adminListResearchFullText(request, env) {
       LIMIT 300
     `).bind(gptKey).all();
   }
-
   return json({
     ok: true,
     gptKey,
     files: rows.results || []
   });
 }
+__name(adminListResearchFullText, "adminListResearchFullText");
 async function adminDeleteResearchFullText(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   await ensurePaperFullTextTables(env);
   await ensureSpecialistGptTables(env);
-
   const data = await request.json().catch(() => ({}));
   const postId = String(data.postId || "").trim();
   const contentHash = String(data.contentHash || "").trim();
   const fileName = String(data.fileName || "").trim();
   const gptKey = getGptKeyFromRequestData(data);
-
   if (!postId || !contentHash) {
     return json({
       ok: false,
       error: "postId and contentHash are required."
     }, 400);
   }
-
   const chunkRows = await env.DB.prepare(`
     SELECT vector_id, chunk_index
     FROM paper_fulltext_chunks
@@ -3433,28 +2290,21 @@ async function adminDeleteResearchFullText(request, env) {
       AND content_hash = ?
       AND COALESCE(gpt_key, 'paper_talk') = ?
   `).bind(postId, contentHash, gptKey).all();
-
   await env.DB.prepare(`
     DELETE FROM paper_fulltext_chunks
     WHERE post_id = ?
       AND content_hash = ?
       AND COALESCE(gpt_key, 'paper_talk') = ?
   `).bind(postId, contentHash, gptKey).run();
-
   if (env.VECTORIZE) {
     try {
-      const ids = (chunkRows.results || [])
-        .map(row => row.vector_id || `${postId}:fulltext:${contentHash.slice(0, 16)}:${row.chunk_index}`)
-        .filter(Boolean);
-
+      const ids = (chunkRows.results || []).map((row) => row.vector_id || `${postId}:fulltext:${contentHash.slice(0, 16)}:${row.chunk_index}`).filter(Boolean);
       if (ids.length) {
         await env.VECTORIZE.deleteByIds(ids);
       }
     } catch {
-      // Ignore Vectorize cleanup errors so D1 deletion still succeeds.
     }
   }
-
   return json({
     ok: true,
     deleted: true,
@@ -3466,53 +2316,31 @@ async function adminDeleteResearchFullText(request, env) {
     message: "Stored full text PDF/TXT chunks were deleted."
   });
 }
-
-
-function normalizeTextForSearch(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/https?:\/\/\S+/g, " ")
-    .replace(/[^a-z0-9가-힣]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function normalizeUrlForMatch(value) {
-  return String(value || "")
-    .trim()
-    .replace(/%28/g, "(")
-    .replace(/%29/g, ")")
-    .replace(/\/$/, "");
-}
-
+__name(adminDeleteResearchFullText, "adminDeleteResearchFullText");
 function cleanUploadedFullText(text) {
-  const cleaned = String(text || "")
-    .replace(/\r/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{4,}/g, "\n\n\n")
-    .trim();
-
-  // Keep enough full text for retrieval while avoiding D1/Worker prompt and CPU failures.
-  // For very large PDFs, the first 350k characters usually preserves abstract, intro,
-  // methods, results, discussion, figure legends, and references.
+  const cleaned = String(text || "").replace(/\r/g, "\n").replace(/[ \t]+/g, " ").replace(/\n{4,}/g, "\n\n\n").trim();
   return cleaned.slice(0, PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS);
 }
-
+__name(cleanUploadedFullText, "cleanUploadedFullText");
 function makeFullTextPreferredExcerpt(content) {
   const text = cleanBibtexText(content || "");
   const marker = "Knowledge source: FULL_TEXT_PDF_UPLOAD";
   const idx = text.indexOf(marker);
-
   if (idx < 0) return "";
-
   const fullTextStart = text.indexOf("Uploaded full text:", idx);
   const start = fullTextStart >= 0 ? fullTextStart : idx;
   const section = text.slice(start);
-
   const usefulMarkers = [
-    "Abstract", "Introduction", "Results", "Discussion", "Conclusion", "Methods", "Materials and methods", "Figure", "Fig."
+    "Abstract",
+    "Introduction",
+    "Results",
+    "Discussion",
+    "Conclusion",
+    "Methods",
+    "Materials and methods",
+    "Figure",
+    "Fig."
   ];
-
   const lower = section.toLowerCase();
   for (const m of usefulMarkers) {
     const j = lower.indexOf(m.toLowerCase());
@@ -3520,80 +2348,48 @@ function makeFullTextPreferredExcerpt(content) {
       return section.slice(Math.max(0, j - 200), Math.min(section.length, j + 3200));
     }
   }
-
   return section.slice(0, 3200);
 }
-
-function mergeFullTextIntoKnowledge(existingContent, fullTextBlock) {
-  const base = String(existingContent || "").trim();
-  const marker = "Knowledge source: FULL_TEXT_PDF_UPLOAD";
-
-  if (base.includes(marker)) {
-    const before = base.split("Paper_Talk DB Research Paper\nKnowledge source: FULL_TEXT_PDF_UPLOAD")[0].trim();
-    return [before, fullTextBlock].filter(Boolean).join("\n\n---\n\n");
-  }
-
-  return [base, fullTextBlock].filter(Boolean).join("\n\n---\n\n");
-}
-
-
+__name(makeFullTextPreferredExcerpt, "makeFullTextPreferredExcerpt");
 async function adminImportLinkedInCsv(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
   const rawText = String(data.csvText || data.bibText || data.text || "").trim();
-
   if (!rawText) {
     return json({ ok: false, error: "CSV or BibTeX text is required." }, 400);
   }
-
-  // v22: same endpoint supports both LinkedIn CSV and BibTeX.
-  // BibTeX must be parsed by entry, not by line.
   if (looksLikeBibtex(rawText)) {
     return adminImportBibtexText(rawText, env);
   }
-
   return adminImportLinkedInCsvText(rawText, env);
 }
-
-
+__name(adminImportLinkedInCsv, "adminImportLinkedInCsv");
 async function adminImportThinkingLogic(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
   const title = String(data.title || data.fileName || "Scientific Thinking Logic").trim();
   const fileName = String(data.fileName || "").trim();
   const sourceType = String(data.sourceType || "thinking_logic_pdf_or_text").trim();
   const rawText = String(data.text || data.extractedText || "").trim();
-
   if (!rawText || rawText.length < 200) {
     return json({
       ok: false,
       error: "Thinking logic text is too short. If this was a PDF, make sure the browser finished extracting the PDF text before importing."
     }, 400);
   }
-
   const safeTitle = cleanBibtexText(title || fileName || "Scientific Thinking Logic").slice(0, 220);
-  const fingerprint = `${safeTitle}:${fileName}:${rawText.slice(0, 2000)}`;
+  const fingerprint = `${safeTitle}:${fileName}:${rawText.slice(0, 2e3)}`;
   const postId = "thinking_logic_" + await sha256Hex(fingerprint);
-
-  // Important change:
-  // Do NOT store the whole PDF as GPT context.
-  // First compress/distill the PDF into a short scientific reasoning framework.
-  // This keeps Paper_Talk's warm research-mentor answer style and prevents huge prompts / 503 errors.
   const distilledLogic = await distillThinkingLogicForPaperTalk({
     title: safeTitle,
     fileName,
     rawText,
     env
   });
-
-  // Keep multiple distilled thinking-logic imports so different books/frameworks can be combined.
-  // Only remove legacy thinking-logic rows that do not use the safe compact post_id pattern.
   await env.DB.prepare(`
     DELETE FROM research_knowledge
     WHERE post_id NOT LIKE 'thinking_logic_%'
@@ -3603,7 +2399,6 @@ async function adminImportThinkingLogic(request, env) {
         OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
       )
   `).run();
-
   const content = [
     "Paper_Talk Scientific Thinking Logic",
     "Knowledge role: THINKING_FRAMEWORK_ONLY",
@@ -3618,7 +2413,6 @@ async function adminImportThinkingLogic(request, env) {
     "Distilled scientific reasoning framework:",
     distilledLogic
   ].filter(Boolean).join("\n");
-
   await env.DB.prepare(`
     INSERT INTO research_knowledge (
       id,
@@ -3646,7 +2440,6 @@ async function adminImportThinkingLogic(request, env) {
     "",
     content
   ).run();
-
   await upsertResearchKnowledgeVectors({
     postId,
     title: `[Thinking Logic] ${safeTitle}`,
@@ -3654,7 +2447,6 @@ async function adminImportThinkingLogic(request, env) {
     pdfLink: "",
     content
   }, env);
-
   return json({
     ok: true,
     imported: 1,
@@ -3667,24 +2459,18 @@ async function adminImportThinkingLogic(request, env) {
     message: "Thinking logic file was distilled into a compact reasoning framework and indexed. It will guide GPT silently without changing the normal Paper_Talk answer style."
   });
 }
-
-function splitTextForThinkingDistillation(text, chunkSize = 18000, maxChunks = 12) {
+__name(adminImportThinkingLogic, "adminImportThinkingLogic");
+function splitTextForThinkingDistillation(text, chunkSize = 18e3, maxChunks = 12) {
   const value = String(text || "").replace(/\s+/g, " ").trim();
   const chunks = [];
-
   for (let i = 0; i < value.length && chunks.length < maxChunks; i += chunkSize) {
     chunks.push(value.slice(i, i + chunkSize));
   }
-
   return chunks;
 }
-
+__name(splitTextForThinkingDistillation, "splitTextForThinkingDistillation");
 function fallbackDistillThinkingLogic(rawText, title = "") {
-  const text = String(rawText || "")
-    .replace(/\r/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n");
-
+  const text = String(rawText || "").replace(/\r/g, "\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
   const importantPatterns = [
     /data science process/i,
     /data preparation/i,
@@ -3701,22 +2487,15 @@ function fallbackDistillThinkingLogic(rawText, title = "") {
     /workflow/i,
     /limitations?|advantages?|disadvantages?/i
   ];
-
-  const lines = text
-    .split(/\n+/)
-    .map(v => v.trim())
-    .filter(v => v.length >= 40 && v.length <= 600);
-
+  const lines = text.split(/\n+/).map((v) => v.trim()).filter((v) => v.length >= 40 && v.length <= 600);
   const selected = [];
   for (const line of lines) {
     if (selected.length >= 80) break;
-    if (importantPatterns.some(pattern => pattern.test(line))) {
+    if (importantPatterns.some((pattern) => pattern.test(line))) {
       selected.push(line);
     }
   }
-
-  const evidence = selected.length ? selected.join("\n") : text.slice(0, 22000);
-
+  const evidence = selected.length ? selected.join("\n") : text.slice(0, 22e3);
   return `
 SCIENTIFIC REASONING FRAMEWORK DISTILLED FROM: ${title || "uploaded thinking logic"}
 
@@ -3735,23 +2514,22 @@ Core principles:
 10. When suggesting research ideas, connect data type, biological question, method, feasibility, novelty, and validation.
 
 Relevant extracted notes:
-${evidence.slice(0, 18000)}
+${evidence.slice(0, 18e3)}
 `.trim();
 }
-
+__name(fallbackDistillThinkingLogic, "fallbackDistillThinkingLogic");
 async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
-  if (!env.AI) {
+  if (!env.OPENAI_API_KEY) {
     return "";
   }
-
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 90000);
-
+  const timeout = setTimeout(() => controller.abort(), 9e4);
   try {
-    const res = await fetchChatCompletionWithWorkersAI(env, {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       signal: controller.signal,
       headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -3770,7 +2548,6 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
         max_completion_tokens: maxTokens
       })
     });
-
     const raw = await res.text();
     let data = {};
     try {
@@ -3778,7 +2555,6 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
     } catch {
       return "";
     }
-
     if (!res.ok) return "";
     return extractOpenAIText(data);
   } catch {
@@ -3787,11 +2563,10 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
     clearTimeout(timeout);
   }
 }
-
+__name(callOpenAIThinkingDistiller, "callOpenAIThinkingDistiller");
 async function distillThinkingLogicForPaperTalk({ title, fileName, rawText, env }) {
-  const chunks = splitTextForThinkingDistillation(rawText, 18000, 12);
+  const chunks = splitTextForThinkingDistillation(rawText, 18e3, 12);
   const partials = [];
-
   for (let i = 0; i < chunks.length; i++) {
     const partial = await callOpenAIThinkingDistiller(`
 Uploaded thinking-logic source: ${title || fileName || "Scientific Thinking Logic"}
@@ -3816,16 +2591,13 @@ Return compact bullet-like rules.
 
 TEXT:
 ${chunks[i]}
-`, env, 1000);
-
+`, env, 1e3);
     if (partial) partials.push(partial);
     await sleep(80);
   }
-
   if (!partials.length) {
     return fallbackDistillThinkingLogic(rawText, title || fileName);
   }
-
   const finalDistilled = await callOpenAIThinkingDistiller(`
 Source title: ${title || fileName || "Scientific Thinking Logic"}
 
@@ -3841,11 +2613,9 @@ Critical constraints:
 - Separate "research evidence" from "reasoning framework".
 
 PARTIAL RULES:
-${partials.join("\n\n---\n\n").slice(0, 50000)}
+${partials.join("\n\n---\n\n").slice(0, 5e4)}
 `, env, 2200);
-
-  const result = finalDistilled || partials.join("\n\n").slice(0, 12000);
-
+  const result = finalDistilled || partials.join("\n\n").slice(0, 12e3);
   return `
 PAPER_TALK DISTILLED SCIENTIFIC THINKING LOGIC
 
@@ -3857,20 +2627,16 @@ Keep the existing Paper_Talk answer style: warm, calm, multilingual research men
 ${result}
 
 Final-answer behavior:
-- For research ideas, answer like: background → why this direction is promising → what Paper_Talk DB suggests → concrete research questions → validation cautions.
+- For research ideas, answer like: background \u2192 why this direction is promising \u2192 what Paper_Talk DB suggests \u2192 concrete research questions \u2192 validation cautions.
 - Use the framework only to improve judgment about data, methods, validation, and uncertainty.
 - Never output the framework itself as the answer.
-`.trim().slice(0, 14000);
+`.trim().slice(0, 14e3);
 }
-
-
+__name(distillThinkingLogicForPaperTalk, "distillThinkingLogicForPaperTalk");
 async function adminDeleteThinkingLogic(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
-  // Find all rows imported as Scientific Thinking Logic.
-  // These rows are reasoning frameworks only, stored in research_knowledge with post_id starting "thinking_logic_".
   const rows = await env.DB.prepare(`
     SELECT post_id
     FROM research_knowledge
@@ -3879,12 +2645,9 @@ async function adminDeleteThinkingLogic(request, env) {
        OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
        OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
   `).all();
-
-  const postIds = [...new Set((rows.results || [])
-    .map(row => String(row.post_id || "").trim())
-    .filter(Boolean)
+  const postIds = [...new Set(
+    (rows.results || []).map((row) => String(row.post_id || "").trim()).filter(Boolean)
   )];
-
   await env.DB.prepare(`
     DELETE FROM research_knowledge
     WHERE post_id LIKE 'thinking_logic_%'
@@ -3892,8 +2655,6 @@ async function adminDeleteThinkingLogic(request, env) {
        OR content LIKE '%Knowledge role: THINKING_FRAMEWORK_ONLY%'
        OR content LIKE '%Paper_Talk Scientific Thinking Logic%'
   `).run();
-
-  // Clean Vectorize chunks too. Each knowledge row can create up to 24 vector IDs: postId:0 ... postId:23.
   let vectorDeleted = 0;
   if (env.VECTORIZE && postIds.length) {
     for (const postId of postIds) {
@@ -3902,51 +2663,39 @@ async function adminDeleteThinkingLogic(request, env) {
         await env.VECTORIZE.deleteByIds(ids);
         vectorDeleted += ids.length;
       } catch {
-        // Ignore Vectorize cleanup errors so DB deletion still succeeds.
       }
     }
   }
-
   return json({
     ok: true,
     deleted: postIds.length,
     vectorDeleted,
-    message: postIds.length
-      ? `Deleted ${postIds.length} thinking logic file(s).`
-      : "No thinking logic files were found."
+    message: postIds.length ? `Deleted ${postIds.length} thinking logic file(s).` : "No thinking logic files were found."
   });
 }
-
+__name(adminDeleteThinkingLogic, "adminDeleteThinkingLogic");
 async function adminImportLinkedInCsvText(csvText, env) {
   const rows = parseCsv(csvText);
-
   if (!rows.length) {
     return json({ ok: false, error: "No CSV rows found." }, 400);
   }
-
   let imported = 0;
   let skipped = 0;
   const errors = [];
-
   for (const row of rows) {
     try {
       const normalized = normalizeLinkedInRow(row);
-
       if (!normalized.content || normalized.content.length < 20) {
         skipped++;
         continue;
       }
-
       const title = cleanBibtexText(normalized.title || makeTitleFromText(normalized.content)).trim();
-
       if (!title || isMetadataOnlyTitle(title)) {
         skipped++;
         continue;
       }
-
       const fingerprint = normalized.sourceUrl || `${title}:${normalized.content.slice(0, 300)}`;
       const postId = "linkedin_" + await sha256Hex(fingerprint);
-
       const content = [
         `Source: LinkedIn post by SEO YOUNG Lee`,
         normalized.date ? `Date: ${normalized.date}` : "",
@@ -3954,8 +2703,7 @@ async function adminImportLinkedInCsvText(csvText, env) {
         normalized.sourceUrl ? `LinkedIn URL: ${normalized.sourceUrl}` : "",
         "",
         normalized.content
-      ].filter(v => v !== "").join("\n");
-
+      ].filter((v) => v !== "").join("\n");
       await env.DB.prepare(`
         INSERT INTO research_knowledge (
           id,
@@ -3983,7 +2731,6 @@ async function adminImportLinkedInCsvText(csvText, env) {
         normalized.pdfLink || "",
         content
       ).run();
-
       await upsertResearchKnowledgeVectors({
         postId,
         title,
@@ -3991,14 +2738,12 @@ async function adminImportLinkedInCsvText(csvText, env) {
         pdfLink: normalized.pdfLink || "",
         content
       }, env);
-
       imported++;
     } catch (error) {
       skipped++;
       errors.push(error?.message || "Unknown CSV import error");
     }
   }
-
   return json({
     ok: true,
     imported,
@@ -4008,46 +2753,32 @@ async function adminImportLinkedInCsvText(csvText, env) {
     message: `Imported ${imported} LinkedIn CSV rows. Skipped: ${skipped}`
   });
 }
-
+__name(adminImportLinkedInCsvText, "adminImportLinkedInCsvText");
 async function adminImportBibtexText(bibText, env) {
   const entries = parseBibtexEntries(bibText);
-
   if (!entries.length) {
     return json({ ok: false, error: "No BibTeX entries found." }, 400);
   }
-
   let imported = 0;
   let skipped = 0;
   const errors = [];
-
   for (const entry of entries) {
     try {
       const title = cleanBibtexText(entry.fields.title || "").trim();
-
       if (!title || isMetadataOnlyTitle(title)) {
         skipped++;
         continue;
       }
-
       const authors = cleanBibtexText(entry.fields.author || "");
       const journal = cleanBibtexText(entry.fields.journal || entry.fields.booktitle || entry.fields.publisher || "");
       const year = cleanBibtexText(entry.fields.year || "");
       const abstract = cleanBibtexText(entry.fields.abstract || "");
       const keywords = cleanBibtexText(entry.fields.keywords || entry.fields.keyword || "");
       const doi = cleanDoi(entry.fields.doi || extractDoiFromTextOrUrl(entry.raw || ""));
-
-      const sourceUrl =
-        String(entry.fields.url || "").trim() ||
-        (doi ? `https://doi.org/${doi}` : "") ||
-        extractFirstUrl(entry.raw || "");
-
-      const pdfLink =
-        String(entry.fields.pdf || entry.fields.file || "").trim() ||
-        extractDoiOrPdfLink(entry.raw || "");
-
+      const sourceUrl = String(entry.fields.url || "").trim() || (doi ? `https://doi.org/${doi}` : "") || extractFirstUrl(entry.raw || "");
+      const pdfLink = String(entry.fields.pdf || entry.fields.file || "").trim() || extractDoiOrPdfLink(entry.raw || "");
       const fingerprint = doi || sourceUrl || `${title}:${authors}:${journal}:${year}`;
       const postId = "bibtex_" + await sha256Hex(fingerprint);
-
       const adminText = [
         title,
         authors,
@@ -4059,7 +2790,6 @@ async function adminImportBibtexText(bibText, env) {
         sourceUrl,
         pdfLink
       ].filter(Boolean).join("\n");
-
       const fetchedArticle = await fetchArticleKnowledgeText({
         title,
         sourceUrl,
@@ -4067,10 +2797,8 @@ async function adminImportBibtexText(bibText, env) {
         adminText,
         includeAdminFallback: false
       });
-
       const hasExternalEvidence = containsExternalArticleData(fetchedArticle);
       const hasAdminAbstract = abstract.length >= 80;
-
       const content = [
         `Paper_Talk DB Research Paper`,
         `Reindex checked version: v22`,
@@ -4078,28 +2806,23 @@ async function adminImportBibtexText(bibText, env) {
         `BibTeX parsed import: true`,
         `Title: ${title}`,
         doi ? `DOI: ${doi}` : "",
-        hasExternalEvidence
-          ? `External article learning status: found`
-          : hasAdminAbstract
-            ? `External article learning status: admin_abstract_found`
-            : `External article learning status: not_found`,
+        hasExternalEvidence ? `External article learning status: found` : hasAdminAbstract ? `External article learning status: admin_abstract_found` : `External article learning status: not_found`,
         authors ? `Authors: ${authors}` : "",
         journal ? `Journal: ${journal}` : "",
         year ? `Year: ${year}` : "",
         keywords ? `Keywords: ${keywords}` : "",
-        hasAdminAbstract ? `Paper_Talk admin-curated knowledge:\nAdmin-curated abstract:\n${abstract}` : "",
-        hasExternalEvidence ? `DOI / title / article-link learned text:\n${fetchedArticle}` : "",
-        !hasExternalEvidence && hasAdminAbstract
-          ? `DOI / title lookup note: No external abstract was found, so Paper_Talk uses the BibTeX/admin abstract as the primary evidence.`
-          : "",
-        !hasExternalEvidence && !hasAdminAbstract
-          ? `Clean title-only fallback: No external abstract was found from DOI/title APIs. This row can still be used as a bibliographic hit, but should not be treated as abstract/full-text evidence.`
-          : "",
+        hasAdminAbstract ? `Paper_Talk admin-curated knowledge:
+Admin-curated abstract:
+${abstract}` : "",
+        hasExternalEvidence ? `DOI / title / article-link learned text:
+${fetchedArticle}` : "",
+        !hasExternalEvidence && hasAdminAbstract ? `DOI / title lookup note: No external abstract was found, so Paper_Talk uses the BibTeX/admin abstract as the primary evidence.` : "",
+        !hasExternalEvidence && !hasAdminAbstract ? `Clean title-only fallback: No external abstract was found from DOI/title APIs. This row can still be used as a bibliographic hit, but should not be treated as abstract/full-text evidence.` : "",
         sourceUrl ? `Article link: ${sourceUrl}` : "",
         pdfLink ? `PDF link: ${pdfLink}` : "",
-        `Clean imported source text:\n${buildCleanBibtexSourceText(entry)}`
+        `Clean imported source text:
+${buildCleanBibtexSourceText(entry)}`
       ].filter(Boolean).join("\n\n");
-
       await env.DB.prepare(`
         INSERT INTO research_knowledge (
           id,
@@ -4127,7 +2850,6 @@ async function adminImportBibtexText(bibText, env) {
         pdfLink || "",
         content
       ).run();
-
       await upsertResearchKnowledgeVectors({
         postId,
         title,
@@ -4135,7 +2857,6 @@ async function adminImportBibtexText(bibText, env) {
         pdfLink: pdfLink || "",
         content
       }, env);
-
       imported++;
       await sleep(50);
     } catch (error) {
@@ -4143,7 +2864,6 @@ async function adminImportBibtexText(bibText, env) {
       errors.push(error?.message || "Unknown BibTeX import error");
     }
   }
-
   return json({
     ok: true,
     imported,
@@ -4153,100 +2873,80 @@ async function adminImportBibtexText(bibText, env) {
     message: `Imported ${imported} BibTeX papers. Skipped: ${skipped}`
   });
 }
-
+__name(adminImportBibtexText, "adminImportBibtexText");
 function looksLikeBibtex(text) {
   return /@(?:article|book|inproceedings|proceedings|misc|preprint|dataset|phdthesis|mastersthesis)\s*\{/i.test(String(text || ""));
 }
-
+__name(looksLikeBibtex, "looksLikeBibtex");
 function parseBibtexEntries(bibText) {
   const text = String(bibText || "").replace(/^\uFEFF/, "");
   const entries = [];
   let i = 0;
-
   while (i < text.length) {
     const relativeAt = text.slice(i).search(/@[A-Za-z]+\s*\{/);
     if (relativeAt < 0) break;
-
     const start = i + relativeAt;
     const open = text.indexOf("{", start);
     if (open < 0) break;
-
     let depth = 0;
     let inQuote = false;
     let escaped = false;
     let end = -1;
-
     for (let j = open; j < text.length; j++) {
       const ch = text[j];
-
       if (escaped) {
         escaped = false;
         continue;
       }
-
       if (ch === "\\") {
         escaped = true;
         continue;
       }
-
       if (ch === '"' && depth > 0) {
         inQuote = !inQuote;
       }
-
       if (!inQuote) {
         if (ch === "{") depth++;
         if (ch === "}") depth--;
-
         if (depth === 0) {
           end = j;
           break;
         }
       }
     }
-
     if (end < 0) break;
-
     const raw = text.slice(start, end + 1);
     const typeMatch = raw.match(/^@([A-Za-z]+)\s*\{/);
     const body = raw.slice(raw.indexOf("{") + 1, -1);
     const comma = body.indexOf(",");
     const key = comma >= 0 ? body.slice(0, comma).trim() : "";
     const fieldsText = comma >= 0 ? body.slice(comma + 1) : body;
-
     entries.push({
       raw,
       type: typeMatch ? typeMatch[1].toLowerCase() : "",
       key,
       fields: parseBibtexFields(fieldsText)
     });
-
     i = end + 1;
   }
-
   return entries;
 }
-
+__name(parseBibtexEntries, "parseBibtexEntries");
 function parseBibtexFields(fieldsText) {
   const fields = {};
   const text = String(fieldsText || "");
   let i = 0;
-
   while (i < text.length) {
     while (i < text.length && /[\s,]/.test(text[i])) i++;
-
     const nameMatch = text.slice(i).match(/^([A-Za-z][A-Za-z0-9_\-]*)\s*=/);
     if (!nameMatch) {
       i++;
       continue;
     }
-
     const name = nameMatch[1].toLowerCase();
     i += nameMatch[0].length;
-
     while (i < text.length && /\s/.test(text[i])) i++;
-
     let value = "";
-
     if (text[i] === "{") {
       const parsed = readBalancedBibtexValue(text, i, "{", "}");
       value = parsed.value;
@@ -4260,61 +2960,51 @@ function parseBibtexFields(fieldsText) {
       while (i < text.length && text[i] !== "," && text[i] !== "\n" && text[i] !== "\r") i++;
       value = text.slice(start, i).trim();
     }
-
     fields[name] = cleanBibtexText(value);
   }
-
   return fields;
 }
-
+__name(parseBibtexFields, "parseBibtexFields");
 function readBalancedBibtexValue(text, start, openChar, closeChar) {
   let i = start + 1;
   let depth = openChar === "{" ? 1 : 0;
   let escaped = false;
   let value = "";
-
   for (; i < text.length; i++) {
     const ch = text[i];
-
     if (escaped) {
       value += ch;
       escaped = false;
       continue;
     }
-
     if (ch === "\\") {
       escaped = true;
       continue;
     }
-
     if (openChar === "{") {
       if (ch === "{") {
         depth++;
         value += ch;
         continue;
       }
-
       if (ch === "}") {
         depth--;
         if (depth === 0) break;
         value += ch;
         continue;
       }
-
       value += ch;
       continue;
     }
-
     if (ch === closeChar) break;
     value += ch;
   }
-
   return {
     value,
     end: i
   };
 }
-
+__name(readBalancedBibtexValue, "readBalancedBibtexValue");
 function buildCleanBibtexSourceText(entry) {
   const f = entry?.fields || {};
   return [
@@ -4326,21 +3016,18 @@ function buildCleanBibtexSourceText(entry) {
     f.url ? `URL: ${String(f.url).trim()}` : "",
     f.abstract ? `Abstract: ${cleanBibtexText(f.abstract)}` : "",
     f.keywords || f.keyword ? `Keywords: ${cleanBibtexText(f.keywords || f.keyword)}` : ""
-  ].filter(Boolean).join("\n").slice(0, 8000);
+  ].filter(Boolean).join("\n").slice(0, 8e3);
 }
-
-
+__name(buildCleanBibtexSourceText, "buildCleanBibtexSourceText");
 function parseCsv(csvText) {
   const text = String(csvText || "").replace(/^\uFEFF/, "");
   const rows = [];
   let row = [];
   let value = "";
   let inQuotes = false;
-
   for (let i = 0; i < text.length; i++) {
     const char = text[i];
     const next = text[i + 1];
-
     if (char === '"') {
       if (inQuotes && next === '"') {
         value += '"';
@@ -4350,13 +3037,11 @@ function parseCsv(csvText) {
       }
       continue;
     }
-
     if (char === "," && !inQuotes) {
       row.push(value);
       value = "";
       continue;
     }
-
     if ((char === "\n" || char === "\r") && !inQuotes) {
       if (char === "\r" && next === "\n") i++;
       row.push(value);
@@ -4365,22 +3050,16 @@ function parseCsv(csvText) {
       value = "";
       continue;
     }
-
     value += char;
   }
-
   row.push(value);
   rows.push(row);
-
-  const nonEmptyRows = rows.filter(r =>
-    r.some(cell => String(cell || "").trim())
+  const nonEmptyRows = rows.filter(
+    (r) => r.some((cell) => String(cell || "").trim())
   );
-
   if (nonEmptyRows.length < 2) return [];
-
-  const headers = nonEmptyRows[0].map(h => String(h || "").trim());
-
-  return nonEmptyRows.slice(1).map(cells => {
+  const headers = nonEmptyRows[0].map((h) => String(h || "").trim());
+  return nonEmptyRows.slice(1).map((cells) => {
     const obj = {};
     headers.forEach((header, index) => {
       obj[header || `column_${index}`] = String(cells[index] || "").trim();
@@ -4388,28 +3067,24 @@ function parseCsv(csvText) {
     return obj;
   });
 }
-
+__name(parseCsv, "parseCsv");
 function normalizeLinkedInRow(row) {
   const keys = Object.keys(row || {});
   const lowerMap = {};
-
   for (const key of keys) {
     lowerMap[key.toLowerCase().replace(/[\s_\-]/g, "")] = key;
   }
-
   function pick(possibleNames) {
     for (const name of possibleNames) {
       const normalized = name.toLowerCase().replace(/[\s_\-]/g, "");
       const realKey = lowerMap[normalized];
-
       if (realKey && String(row[realKey] || "").trim()) {
         return String(row[realKey]).trim();
       }
     }
-
     return "";
   }
-
+  __name(pick, "pick");
   const commentary = pick([
     "ShareCommentary",
     "Share Commentary",
@@ -4422,14 +3097,12 @@ function normalizeLinkedInRow(row) {
     "Body",
     "Description"
   ]);
-
   const title = pick([
     "Title",
     "Article Title",
     "Post Title",
     "Headline"
   ]);
-
   const date = pick([
     "Date",
     "Created Date",
@@ -4437,7 +3110,6 @@ function normalizeLinkedInRow(row) {
     "Created At",
     "Time"
   ]);
-
   const sourceUrl = pick([
     "ShareLink",
     "Share Link",
@@ -4448,16 +3120,9 @@ function normalizeLinkedInRow(row) {
     "Link",
     "Permalink"
   ]) || extractFirstUrl(commentary);
-
   const pdfLink = extractDoiOrPdfLink(commentary + "\n" + sourceUrl);
-
-  const allText = keys
-    .map(key => String(row[key] || "").trim())
-    .filter(Boolean)
-    .join("\n");
-
+  const allText = keys.map((key) => String(row[key] || "").trim()).filter(Boolean).join("\n");
   const content = commentary || allText;
-
   return {
     title: title || makeTitleFromText(content),
     date,
@@ -4466,70 +3131,47 @@ function normalizeLinkedInRow(row) {
     content
   };
 }
-
+__name(normalizeLinkedInRow, "normalizeLinkedInRow");
 function makeTitleFromText(text) {
-  const cleaned = String(text || "")
-    .replace(/https?:\/\/\S+/g, "")
-    .split(/\n+/)
-    .map(v => v.trim())
-    .filter(Boolean)[0] || "LinkedIn research post";
-
+  const cleaned = String(text || "").replace(/https?:\/\/\S+/g, "").split(/\n+/).map((v) => v.trim()).filter(Boolean)[0] || "LinkedIn research post";
   return cleaned.length > 120 ? cleaned.slice(0, 117) + "..." : cleaned;
 }
-
+__name(makeTitleFromText, "makeTitleFromText");
 function extractFirstUrl(text) {
   const match = String(text || "").match(/https?:\/\/[^\s)"'>]+/);
   return match ? match[0] : "";
 }
-
+__name(extractFirstUrl, "extractFirstUrl");
 function extractDoiOrPdfLink(text) {
   const value = String(text || "");
-
   const doiUrl = value.match(/https?:\/\/(dx\.)?doi\.org\/[^\s)"'>]+/i);
   if (doiUrl) return doiUrl[0];
-
   const doi = value.match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/i);
   if (doi) return `https://doi.org/${doi[0]}`;
-
   const pdf = value.match(/https?:\/\/[^\s)"'>]+\.pdf\b[^\s)"'>]*/i);
   if (pdf) return pdf[0];
-
   return "";
 }
-
+__name(extractDoiOrPdfLink, "extractDoiOrPdfLink");
 async function sha256Hex(value) {
   const buffer = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(String(value || ""))
   );
-
-  return Array.from(new Uint8Array(buffer))
-    .map(byte => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return Array.from(new Uint8Array(buffer)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-
+__name(sha256Hex, "sha256Hex");
 async function adminReindexResearchPapers(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const url = new URL(request.url);
   const batchLimit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 50);
   const reindexMarker = "Reindex checked version: v22";
-
   let indexed = 0;
   let legacyIndexed = 0;
   let failed = 0;
   const errors = [];
-
-  // v17:
-  // Reindex in small batches. A single Cloudflare Worker invocation has a limited
-  // number of subrequests. DOI/title learning may call Crossref, Europe PMC,
-  // Semantic Scholar, or OpenAlex, so processing hundreds of papers in one click
-  // causes "Too many subrequests".
-  //
-  // Repeated clicks continue because already-processed rows contain the v17 marker.
-
   const posts = await env.DB.prepare(`
     SELECT p.*
     FROM posts p
@@ -4545,7 +3187,6 @@ async function adminReindexResearchPapers(request, env) {
     ORDER BY datetime(p.created_at) ASC
     LIMIT ?
   `).bind(`%${reindexMarker}%`, batchLimit).all();
-
   for (const post of posts.results || []) {
     try {
       await indexResearchPaperPost(post, env);
@@ -4561,7 +3202,6 @@ async function adminReindexResearchPapers(request, env) {
       });
     }
   }
-
   const legacyRows = await env.DB.prepare(`
     SELECT id, post_id, title, source_url, pdf_link, content
     FROM research_knowledge
@@ -4577,7 +3217,6 @@ async function adminReindexResearchPapers(request, env) {
     ORDER BY datetime(updated_at) ASC
     LIMIT ?
   `).bind(`%${reindexMarker}%`, batchLimit).all();
-
   for (const row of legacyRows.results || []) {
     try {
       const didUpdate = await reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env);
@@ -4594,7 +3233,6 @@ async function adminReindexResearchPapers(request, env) {
       });
     }
   }
-
   const remainingPosts = await env.DB.prepare(`
     SELECT COUNT(*) AS total
     FROM posts p
@@ -4608,7 +3246,6 @@ async function adminReindexResearchPapers(request, env) {
         OR rk.content NOT LIKE ?
       )
   `).bind(`%${reindexMarker}%`).first();
-
   const remainingLegacy = await env.DB.prepare(`
     SELECT COUNT(*) AS total
     FROM research_knowledge
@@ -4622,11 +3259,7 @@ async function adminReindexResearchPapers(request, env) {
         OR content LIKE '%Imported source: LinkedIn/BibTeX%'
       )
   `).bind(`%${reindexMarker}%`).first();
-
-  const remaining =
-    Number(remainingPosts?.total || 0) +
-    Number(remainingLegacy?.total || 0);
-
+  const remaining = Number(remainingPosts?.total || 0) + Number(remainingLegacy?.total || 0);
   return json({
     ok: true,
     batchLimit,
@@ -4637,61 +3270,38 @@ async function adminReindexResearchPapers(request, env) {
     remainingPosts: Number(remainingPosts?.total || 0),
     remainingLegacy: Number(remainingLegacy?.total || 0),
     errors: errors.slice(0, 20),
-    message: remaining > 0
-      ? `Batch reindex complete. Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX rows. Remaining: ${remaining}. Frontend can auto-continue until Remaining becomes 0. Failed: ${failed}`
-      : `Reindex complete. Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX rows. Failed: ${failed}`
+    message: remaining > 0 ? `Batch reindex complete. Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX rows. Remaining: ${remaining}. Frontend can auto-continue until Remaining becomes 0. Failed: ${failed}` : `Reindex complete. Reindexed ${indexed} research papers and ${legacyIndexed} LinkedIn/BibTeX rows. Failed: ${failed}`
   });
 }
-
-
+__name(adminReindexResearchPapers, "adminReindexResearchPapers");
 async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
   const rowId = String(row?.id || "").trim();
   const postId = String(row?.post_id || rowId || crypto.randomUUID()).trim();
-
   const rawTitle = String(row?.title || "");
   const rawContent = String(row?.content || "");
-
-  const extractedTitle =
-    extractTitleFromKnowledgeContent(rawContent) ||
-    extractTitleFromKnowledgeContent(rawTitle) ||
-    rawTitle;
-
+  const extractedTitle = extractTitleFromKnowledgeContent(rawContent) || extractTitleFromKnowledgeContent(rawTitle) || rawTitle;
   const safeTitle = cleanBibtexText(extractedTitle || "").trim();
-
   if (!safeTitle || isMetadataOnlyTitle(safeTitle)) {
     return false;
   }
-
-  // v15 important fix:
-  // Never feed a previously reindexed content blob back into the next reindex.
-  // Older versions kept nesting "Original imported content" inside itself.
   const cleanLegacySource = buildCleanLegacySourceText({
     title: safeTitle,
     content: rawContent,
     sourceUrl: row?.source_url || "",
     pdfLink: row?.pdf_link || ""
   });
-
   const sourceUrl = String(
-    row?.source_url ||
-    extractFirstUrl(cleanLegacySource) ||
-    extractFirstUrl(rawContent) ||
-    ""
+    row?.source_url || extractFirstUrl(cleanLegacySource) || extractFirstUrl(rawContent) || ""
   ).trim();
-
   const pdfLink = String(
-    row?.pdf_link ||
-    extractDoiOrPdfLink(cleanLegacySource + "\n" + rawContent + "\n" + sourceUrl) ||
-    ""
+    row?.pdf_link || extractDoiOrPdfLink(cleanLegacySource + "\n" + rawContent + "\n" + sourceUrl) || ""
   ).trim();
-
   const adminText = [
     `Legacy LinkedIn/BibTeX title-only Paper_Talk row`,
     `Title: ${safeTitle}`,
     sourceUrl ? `Source URL: ${sourceUrl}` : "",
     pdfLink ? `PDF/DOI Link: ${pdfLink}` : ""
   ].filter(Boolean).join("\n");
-
   const fetchedArticle = await fetchArticleKnowledgeText({
     title: safeTitle,
     sourceUrl,
@@ -4699,10 +3309,8 @@ async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
     adminText,
     includeAdminFallback: false
   });
-
   const hasExternalEvidence = containsExternalArticleData(fetchedArticle);
   const doi = extractDoiFromTextOrUrl([safeTitle, sourceUrl, pdfLink, cleanLegacySource, fetchedArticle].join("\n"));
-
   const learnedContent = [
     `Paper_Talk DB Research Paper`,
     `Reindex checked version: v22`,
@@ -4716,7 +3324,6 @@ async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
     sourceUrl ? `Article link: ${sourceUrl}` : "",
     pdfLink ? `PDF link: ${pdfLink}` : ""
   ].filter(Boolean).join("\n\n");
-
   if (rowId) {
     await env.DB.prepare(`
       UPDATE research_knowledge
@@ -4756,7 +3363,6 @@ async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
       learnedContent
     ).run();
   }
-
   await upsertResearchKnowledgeVectors({
     postId,
     title: safeTitle,
@@ -4764,22 +3370,18 @@ async function reindexLegacyLinkedInOrBibtexKnowledgeRow(row, env) {
     pdfLink,
     content: learnedContent
   }, env);
-
   return true;
 }
-
+__name(reindexLegacyLinkedInOrBibtexKnowledgeRow, "reindexLegacyLinkedInOrBibtexKnowledgeRow");
 async function adminCreateStudyPost(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
-
   if (!title) {
     return json({ ok: false, error: "Title is required." }, 400);
   }
-
   const studyData = {
     category: data.category || "",
     tags: data.tags || "",
@@ -4787,7 +3389,6 @@ async function adminCreateStudyPost(request, env) {
     note: data.note || "",
     link: data.link || ""
   };
-
   await env.DB.prepare(`
     INSERT INTO posts (
       id,
@@ -4808,25 +3409,21 @@ async function adminCreateStudyPost(request, env) {
     JSON.stringify(studyData),
     data.link || ""
   ).run();
-
   return json({
     ok: true,
     message: "Study material saved."
   });
 }
-
+__name(adminCreateStudyPost, "adminCreateStudyPost");
 async function adminSaveMethodologyPage(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
-
   if (!title) {
     return json({ ok: false, error: "Title is required." }, 400);
   }
-
   const methodologyData = {
     category: data.category || "",
     tags: data.tags || "",
@@ -4834,7 +3431,6 @@ async function adminSaveMethodologyPage(request, env) {
     note: data.note || "",
     link: data.link || ""
   };
-
   await env.DB.prepare(`
     INSERT INTO posts (
       id,
@@ -4855,25 +3451,21 @@ async function adminSaveMethodologyPage(request, env) {
     JSON.stringify(methodologyData),
     data.link || ""
   ).run();
-
   return json({
     ok: true,
     message: "Methodology post saved."
   });
 }
-
+__name(adminSaveMethodologyPage, "adminSaveMethodologyPage");
 async function adminCreateBlogPost(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const data = await request.json().catch(() => ({}));
   const title = String(data.title || "").trim();
-
   if (!title) {
     return json({ ok: false, error: "Title is required." }, 400);
   }
-
   const blogData = {
     websiteName: data.websiteName || "",
     author: data.author || "",
@@ -4881,7 +3473,6 @@ async function adminCreateBlogPost(request, env) {
     tags: data.tags || "",
     note: data.note || ""
   };
-
   await env.DB.prepare(`
     INSERT INTO posts (
       id,
@@ -4902,26 +3493,19 @@ async function adminCreateBlogPost(request, env) {
     JSON.stringify(blogData),
     data.sourceUrl || ""
   ).run();
-
   return json({
     ok: true,
     message: "Blog post saved."
   });
 }
-
-/* =========================
-   Paper_Talk GPT Functions
-========================= */
-
+__name(adminCreateBlogPost, "adminCreateBlogPost");
 async function indexResearchPaperPost(post, env) {
   let researchData = {};
-
   try {
     researchData = JSON.parse(post.body || "{}");
   } catch {
     researchData = {};
   }
-
   return indexResearchPaperData({
     postId: post.id,
     title: post.title,
@@ -4930,12 +3514,11 @@ async function indexResearchPaperPost(post, env) {
     researchData
   }, env);
 }
-
+__name(indexResearchPaperPost, "indexResearchPaperPost");
 async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, researchData }, env) {
   const safeTitle = String(title || "").trim();
   const safeSourceUrl = String(sourceUrl || "").trim();
   const safePdfLink = String(pdfLink || "").trim();
-
   const adminAbstract = String(researchData?.abstract || "").trim();
   const adminDescription = String(researchData?.description || "").trim();
   const adminNote = String(researchData?.note || "").trim();
@@ -4944,13 +3527,8 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
   const adminYear = String(researchData?.year || "").trim();
   const adminCategory = String(researchData?.category || "").trim();
   const adminTags = String(researchData?.tags || "").trim();
-
   const hasAdminAbstract = adminAbstract.length >= 80;
-  const hasAdminCuratedText =
-    hasAdminAbstract ||
-    adminDescription.length >= 80 ||
-    adminNote.length >= 80;
-
+  const hasAdminCuratedText = hasAdminAbstract || adminDescription.length >= 80 || adminNote.length >= 80;
   const adminText = [
     safeTitle,
     adminYear,
@@ -4964,7 +3542,6 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
     safeSourceUrl,
     safePdfLink
   ].filter(Boolean).join("\n");
-
   const fetchedArticle = await fetchArticleKnowledgeText({
     title: safeTitle,
     sourceUrl: safeSourceUrl,
@@ -4972,9 +3549,7 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
     adminText,
     includeAdminFallback: false
   });
-
   const hasExternalEvidence = containsExternalArticleData(fetchedArticle);
-
   const doi = extractDoiFromTextOrUrl([
     safeTitle,
     safeSourceUrl,
@@ -4982,31 +3557,16 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
     adminText,
     fetchedArticle
   ].join("\n"));
-
-  // v20:
-  // Admin-entered abstract/description/note must be treated as trusted Paper_Talk DB knowledge.
-  // DOI/title lookup is useful, but it must not be required. If DOI lookup fails, the manually
-  // saved abstract is still indexed and used by GPT.
   const adminCuratedKnowledge = [
-    hasAdminAbstract ? `Admin-curated abstract:\n${adminAbstract}` : "",
-    !hasAdminAbstract && adminDescription ? `Admin-curated description:\n${adminDescription}` : "",
-    adminNote ? `Admin-curated note:\n${adminNote}` : ""
+    hasAdminAbstract ? `Admin-curated abstract:
+${adminAbstract}` : "",
+    !hasAdminAbstract && adminDescription ? `Admin-curated description:
+${adminDescription}` : "",
+    adminNote ? `Admin-curated note:
+${adminNote}` : ""
   ].filter(Boolean).join("\n\n");
-
-  const knowledgeSource = hasExternalEvidence && hasAdminCuratedText
-    ? "Admin Abstract + External DOI/Title Metadata"
-    : hasExternalEvidence
-      ? "External DOI/Title Metadata"
-      : hasAdminCuratedText
-        ? "Admin Abstract"
-        : "Basic Admin Metadata";
-
-  const learningStatus = hasExternalEvidence
-    ? "external_found"
-    : hasAdminCuratedText
-      ? "admin_abstract_found"
-      : "metadata_only";
-
+  const knowledgeSource = hasExternalEvidence && hasAdminCuratedText ? "Admin Abstract + External DOI/Title Metadata" : hasExternalEvidence ? "External DOI/Title Metadata" : hasAdminCuratedText ? "Admin Abstract" : "Basic Admin Metadata";
+  const learningStatus = hasExternalEvidence ? "external_found" : hasAdminCuratedText ? "admin_abstract_found" : "metadata_only";
   const content = [
     `Paper_Talk DB Research Paper`,
     `Reindex checked version: v22`,
@@ -5019,19 +3579,16 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
     adminJournal ? `Journal: ${adminJournal}` : "",
     adminCategory ? `Category: ${adminCategory}` : "",
     adminTags ? `Tags: ${adminTags}` : "",
-    adminCuratedKnowledge ? `Paper_Talk admin-curated knowledge:\n${adminCuratedKnowledge}` : "",
-    hasExternalEvidence ? `DOI / article-link learned text:\n${fetchedArticle}` : "",
-    !hasExternalEvidence && hasAdminCuratedText
-      ? `DOI / title lookup note: No external abstract was found, so Paper_Talk uses the admin-entered abstract/description/note as the primary evidence.`
-      : "",
-    !hasExternalEvidence && !hasAdminCuratedText
-      ? `Evidence note: No external abstract and no admin abstract were available. Use this row only as bibliographic metadata.`
-      : "",
+    adminCuratedKnowledge ? `Paper_Talk admin-curated knowledge:
+${adminCuratedKnowledge}` : "",
+    hasExternalEvidence ? `DOI / article-link learned text:
+${fetchedArticle}` : "",
+    !hasExternalEvidence && hasAdminCuratedText ? `DOI / title lookup note: No external abstract was found, so Paper_Talk uses the admin-entered abstract/description/note as the primary evidence.` : "",
+    !hasExternalEvidence && !hasAdminCuratedText ? `Evidence note: No external abstract and no admin abstract were available. Use this row only as bibliographic metadata.` : "",
     researchData?.figures ? `Figures: ${researchData.figures}` : "",
     safeSourceUrl ? `Article link: ${safeSourceUrl}` : "",
     safePdfLink ? `PDF link: ${safePdfLink}` : ""
   ].filter(Boolean).join("\n\n");
-
   await env.DB.prepare(`
     INSERT INTO research_knowledge (
       id,
@@ -5059,7 +3616,6 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
     safePdfLink,
     content
   ).run();
-
   await upsertResearchKnowledgeVectors({
     postId,
     title: safeTitle,
@@ -5067,32 +3623,22 @@ async function indexResearchPaperData({ postId, title, sourceUrl, pdfLink, resea
     pdfLink: safePdfLink,
     content
   }, env);
-
   return true;
 }
-
+__name(indexResearchPaperData, "indexResearchPaperData");
 async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink, adminText = "", includeAdminFallback = true }) {
   const normalizedTitle = cleanFetchedArticleText(title || "");
-
   const allText = [
     title || "",
     sourceUrl || "",
     pdfLink || "",
     adminText || ""
   ].join("\n");
-
   const doi = extractDoiFromTextOrUrl(allText);
-
-  const urls = [sourceUrl, pdfLink]
-    .map(v => String(v || "").trim())
-    .filter(Boolean)
-    .slice(0, 1);
-
+  const urls = [sourceUrl, pdfLink].map((v) => String(v || "").trim()).filter(Boolean).slice(0, 1);
   const collected = [];
-
   async function tryAdd(label, fn) {
     if (collected.length > 0) return true;
-
     try {
       const value = await fn();
       if (value && containsExternalArticleData(value)) {
@@ -5100,125 +3646,95 @@ async function fetchArticleKnowledgeText({ title, sourceUrl, pdfLink, adminText 
         return true;
       }
     } catch (error) {
-      // Do not store lookup errors in research_knowledge.
-      // Otherwise the DB becomes noisy and repeated reindexing embeds failure text.
     }
-
     await sleep(80);
     return false;
   }
-
-  // v17 subrequest-safe rule:
-  // Query external scholarly APIs sequentially and stop immediately after
-  // the first useful external metadata/abstract source is found.
-  // This prevents Cloudflare "Too many subrequests" during batch reindex.
-
+  __name(tryAdd, "tryAdd");
   if (doi) {
-    if (await tryAdd(`Crossref DOI lookup for ${doi}`, () =>
-      fetchCrossrefKnowledge({ doi, title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
-
-    if (await tryAdd(`PubMed DOI lookup for ${doi}`, () =>
-      fetchPubMedKnowledge({ doi, title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
-
-    if (await tryAdd(`Europe PMC DOI lookup for ${doi}`, () =>
-      fetchEuropePmcKnowledge({ doi, title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
-
-    if (await tryAdd(`Semantic Scholar DOI lookup for ${doi}`, () =>
-      fetchSemanticScholarKnowledge({ doi, title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
-
-    if (await tryAdd(`OpenAlex DOI lookup for ${doi}`, () =>
-      fetchOpenAlexKnowledge({ doi, title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+    if (await tryAdd(
+      `Crossref DOI lookup for ${doi}`,
+      () => fetchCrossrefKnowledge({ doi, title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
+    if (await tryAdd(
+      `PubMed DOI lookup for ${doi}`,
+      () => fetchPubMedKnowledge({ doi, title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
+    if (await tryAdd(
+      `Europe PMC DOI lookup for ${doi}`,
+      () => fetchEuropePmcKnowledge({ doi, title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
+    if (await tryAdd(
+      `Semantic Scholar DOI lookup for ${doi}`,
+      () => fetchSemanticScholarKnowledge({ doi, title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
+    if (await tryAdd(
+      `OpenAlex DOI lookup for ${doi}`,
+      () => fetchOpenAlexKnowledge({ doi, title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
   }
-
   if (normalizedTitle) {
-    if (await tryAdd(`Crossref title lookup for ${normalizedTitle}`, () =>
-      fetchCrossrefKnowledge({ doi: "", title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
-
-    if (await tryAdd(`PubMed title lookup for ${normalizedTitle}`, () =>
-      fetchPubMedKnowledge({ doi: "", title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
-
-    if (await tryAdd(`Europe PMC title lookup for ${normalizedTitle}`, () =>
-      fetchEuropePmcKnowledge({ doi: "", title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
-
-    if (await tryAdd(`Semantic Scholar title lookup for ${normalizedTitle}`, () =>
-      fetchSemanticScholarKnowledge({ doi: "", title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
-
-    if (await tryAdd(`OpenAlex title lookup for ${normalizedTitle}`, () =>
-      fetchOpenAlexKnowledge({ doi: "", title: normalizedTitle })
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+    if (await tryAdd(
+      `Crossref title lookup for ${normalizedTitle}`,
+      () => fetchCrossrefKnowledge({ doi: "", title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
+    if (await tryAdd(
+      `PubMed title lookup for ${normalizedTitle}`,
+      () => fetchPubMedKnowledge({ doi: "", title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
+    if (await tryAdd(
+      `Europe PMC title lookup for ${normalizedTitle}`,
+      () => fetchEuropePmcKnowledge({ doi: "", title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
+    if (await tryAdd(
+      `Semantic Scholar title lookup for ${normalizedTitle}`,
+      () => fetchSemanticScholarKnowledge({ doi: "", title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
+    if (await tryAdd(
+      `OpenAlex title lookup for ${normalizedTitle}`,
+      () => fetchOpenAlexKnowledge({ doi: "", title: normalizedTitle })
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
   }
-
   for (const url of urls) {
-    if (await tryAdd(`Direct article-link fetch for ${url}`, () =>
-      fetchReadableArticleText(url, normalizedTitle)
-    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52000);
+    if (await tryAdd(
+      `Direct article-link fetch for ${url}`,
+      () => fetchReadableArticleText(url, normalizedTitle)
+    )) return cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n")).slice(0, 52e3);
   }
-
   if (includeAdminFallback && adminText) {
-    collected.push(`Admin-provided research metadata, abstract, description, and note fallback:\n${adminText}`);
+    collected.push(`Admin-provided research metadata, abstract, description, and note fallback:
+${adminText}`);
   }
-
   const finalText = cleanFetchedArticleText(dedupeTextBlocks(collected).join("\n\n"));
-  return finalText.slice(0, 52000);
+  return finalText.slice(0, 52e3);
 }
-
+__name(fetchArticleKnowledgeText, "fetchArticleKnowledgeText");
 function dedupeTextBlocks(items) {
-  const seen = new Set();
+  const seen = /* @__PURE__ */ new Set();
   const output = [];
-
   for (const item of items || []) {
     const cleaned = cleanFetchedArticleText(item || "");
     if (!cleaned) continue;
-
     const key = cleaned.toLowerCase().slice(0, 500);
     if (seen.has(key)) continue;
     seen.add(key);
     output.push(cleaned);
   }
-
   return output;
 }
-
+__name(dedupeTextBlocks, "dedupeTextBlocks");
 function containsExternalArticleData(value) {
   const text = String(value || "");
   if (!text.trim()) return false;
-
-  // These labels are produced only by public scholarly APIs / direct article fetchers,
-  // not by the admin fallback. This prevents fallback-only content from being treated
-  // as learned abstract evidence.
-  return /Crossref metadata from DOI\/title search:/i.test(text) ||
-    /PubMed article data from DOI\/title search:/i.test(text) ||
-    /Europe PMC \/ PubMed-indexed article data:/i.test(text) ||
-    /Semantic Scholar article data from DOI\/title search:/i.test(text) ||
-    /OpenAlex article data from DOI\/title search:/i.test(text) ||
-    /Abstract section from source link:/i.test(text) ||
-    /Direct source-link page text:/i.test(text) ||
-    /PMC full text extracted sections:/i.test(text) ||
-    /Abstract:\s*.{80,}/i.test(text);
+  return /Crossref metadata from DOI\/title search:/i.test(text) || /PubMed article data from DOI\/title search:/i.test(text) || /Europe PMC \/ PubMed-indexed article data:/i.test(text) || /Semantic Scholar article data from DOI\/title search:/i.test(text) || /OpenAlex article data from DOI\/title search:/i.test(text) || /Abstract section from source link:/i.test(text) || /Direct source-link page text:/i.test(text) || /PMC full text extracted sections:/i.test(text) || /Abstract:\s*.{80,}/i.test(text);
 }
-
+__name(containsExternalArticleData, "containsExternalArticleData");
 function buildCleanLegacySourceText({ title, content, sourceUrl, pdfLink }) {
   const safeTitle = cleanBibtexText(title || "");
   const raw = String(content || "");
-
   const usefulLines = [];
   if (safeTitle) usefulLines.push(`Title: ${safeTitle}`);
-
-  // Keep explicit identifiers/links from the original import, but drop previous reindex output.
-  const lines = raw
-    .split(/\n+/)
-    .map(line => cleanBibtexText(line))
-    .filter(Boolean);
-
+  const lines = raw.split(/\n+/).map((line) => cleanBibtexText(line)).filter(Boolean);
   for (const line of lines) {
     if (/^(Paper_Talk DB Research Paper|Imported source:|DOI \/ title \/ article-link learned text:|Admin-provided research metadata|Legacy LinkedIn\/BibTeX|Original imported content|Original imported content fallback|Clean title-only fallback|External article learning status|Clean imported source text)/i.test(line)) {
       continue;
@@ -5237,152 +3753,121 @@ function buildCleanLegacySourceText({ title, content, sourceUrl, pdfLink }) {
       continue;
     }
   }
-
   if (sourceUrl) usefulLines.push(`Source URL: ${sourceUrl}`);
   if (pdfLink) usefulLines.push(`PDF/DOI Link: ${pdfLink}`);
-
-  return dedupeTextBlocks(usefulLines).join("\n").slice(0, 4000);
+  return dedupeTextBlocks(usefulLines).join("\n").slice(0, 4e3);
 }
-
-
+__name(buildCleanLegacySourceText, "buildCleanLegacySourceText");
 function normalizeTitleForMatching(value) {
   return normalizeSearchText(
-    String(value || "")
-      .replace(/^title\s*=\s*/i, "")
-      .replace(/[{}]/g, " ")
-      .replace(/\b(article|paper|preprint|protocol|review)\b/gi, " ")
+    String(value || "").replace(/^title\s*=\s*/i, "").replace(/[{}]/g, " ").replace(/\b(article|paper|preprint|protocol|review)\b/gi, " ")
   );
 }
-
+__name(normalizeTitleForMatching, "normalizeTitleForMatching");
 function titleTokenSet(value) {
-  const stop = new Set([
-    "the", "and", "for", "with", "from", "into", "using", "based", "study",
-    "analysis", "single", "cell", "cells", "rna", "seq", "sequencing"
+  const stop = /* @__PURE__ */ new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "into",
+    "using",
+    "based",
+    "study",
+    "analysis",
+    "single",
+    "cell",
+    "cells",
+    "rna",
+    "seq",
+    "sequencing"
   ]);
-
-  return normalizeTitleForMatching(value)
-    .split(/\s+/)
-    .map(v => v.trim())
-    .filter(v => v.length >= 3 && !stop.has(v));
+  return normalizeTitleForMatching(value).split(/\s+/).map((v) => v.trim()).filter((v) => v.length >= 3 && !stop.has(v));
 }
-
+__name(titleTokenSet, "titleTokenSet");
 function titleSimilarityScore(a, b) {
   const aNorm = normalizeTitleForMatching(a);
   const bNorm = normalizeTitleForMatching(b);
-
   if (!aNorm || !bNorm) return 0;
   if (aNorm === bNorm) return 1;
   if (aNorm.includes(bNorm) || bNorm.includes(aNorm)) return 0.92;
-
   const aTokens = new Set(titleTokenSet(aNorm));
   const bTokens = new Set(titleTokenSet(bNorm));
-
   if (!aTokens.size || !bTokens.size) return 0;
-
   let overlap = 0;
   for (const token of aTokens) {
     if (bTokens.has(token)) overlap++;
   }
-
   const precision = overlap / aTokens.size;
   const recall = overlap / bTokens.size;
-  const f1 = precision + recall ? (2 * precision * recall) / (precision + recall) : 0;
-
+  const f1 = precision + recall ? 2 * precision * recall / (precision + recall) : 0;
   return f1;
 }
-
+__name(titleSimilarityScore, "titleSimilarityScore");
 function bestCandidateByTitle(items, wantedTitle, getTitle) {
   const candidates = Array.isArray(items) ? items : [];
   let best = null;
   let bestScore = 0;
-
   for (const item of candidates) {
     const itemTitle = getTitle(item);
     const score = titleSimilarityScore(wantedTitle, itemTitle);
-
-    const hasAbstract =
-      Boolean(item?.abstract || item?.abstractText || item?.abstract_inverted_index);
-
+    const hasAbstract = Boolean(item?.abstract || item?.abstractText || item?.abstract_inverted_index);
     const adjustedScore = score + (hasAbstract ? 0.08 : 0);
-
     if (adjustedScore > bestScore) {
       best = item;
       bestScore = adjustedScore;
     }
   }
-
-  // Use a moderate threshold because many imported BibTeX/LinkedIn titles are slightly normalized.
   if (best && bestScore >= 0.38) return best;
-
-  // If no fuzzy match passes, prefer a result with an abstract, otherwise the first result.
-  return candidates.find(item => item?.abstract || item?.abstractText) || candidates[0] || null;
+  return candidates.find((item) => item?.abstract || item?.abstractText) || candidates[0] || null;
 }
-
+__name(bestCandidateByTitle, "bestCandidateByTitle");
 function getCrossrefItemTitle(item) {
   return Array.isArray(item?.title) ? item.title.join(" ") : String(item?.title || "");
 }
-
+__name(getCrossrefItemTitle, "getCrossrefItemTitle");
 function buildTitleSearchVariants(title) {
   const clean = cleanBibtexText(title || "");
   const normalized = normalizeTitleForMatching(clean);
-
-  const tokens = normalized
-    .split(/\s+/)
-    .filter(v => v.length >= 4);
-
+  const tokens = normalized.split(/\s+/).filter((v) => v.length >= 4);
   const variants = [
     clean,
     normalized,
     tokens.slice(0, 8).join(" "),
-    tokens.filter(v => !["single", "cell", "cells", "using", "based"].includes(v)).slice(0, 8).join(" ")
+    tokens.filter((v) => !["single", "cell", "cells", "using", "based"].includes(v)).slice(0, 8).join(" ")
   ];
-
-  return [...new Set(variants.map(v => cleanFetchedArticleText(v)).filter(v => v.length >= 6))].slice(0, 2);
+  return [...new Set(variants.map((v) => cleanFetchedArticleText(v)).filter((v) => v.length >= 6))].slice(0, 2);
 }
-
+__name(buildTitleSearchVariants, "buildTitleSearchVariants");
 async function fetchCrossrefKnowledge({ doi, title }) {
   const wantedTitle = cleanBibtexText(title || "");
   let item = null;
-
   if (doi) {
     const url = `https://api.crossref.org/works/${encodeURIComponent(doi)}`;
-    const data = await fetchJsonWithTimeout(url, 20000);
+    const data = await fetchJsonWithTimeout(url, 2e4);
     item = data?.message || null;
   } else if (wantedTitle) {
     const variants = buildTitleSearchVariants(wantedTitle);
-
     for (const variant of variants) {
-      const url =
-        `https://api.crossref.org/works?rows=10&query.title=${encodeURIComponent(variant)}&select=DOI,title,author,container-title,published-print,published-online,published,URL,abstract,type`;
-
-      const data = await fetchJsonWithTimeout(url, 20000);
+      const url = `https://api.crossref.org/works?rows=10&query.title=${encodeURIComponent(variant)}&select=DOI,title,author,container-title,published-print,published-online,published,URL,abstract,type`;
+      const data = await fetchJsonWithTimeout(url, 2e4);
       const items = data?.message?.items || [];
-
       item = bestCandidateByTitle(items, wantedTitle, getCrossrefItemTitle);
-
       if (item) break;
     }
   } else {
     return "";
   }
-
   if (!item) return "";
-
   const titleText = getCrossrefItemTitle(item);
   const abstract = item.abstract ? cleanCrossrefAbstract(item.abstract) : "";
   const container = Array.isArray(item["container-title"]) ? item["container-title"].join(" ") : "";
-  const published =
-    item.published?.["date-parts"]?.[0]?.join("-") ||
-    item["published-print"]?.["date-parts"]?.[0]?.join("-") ||
-    item["published-online"]?.["date-parts"]?.[0]?.join("-") ||
-    "";
-  const authors = Array.isArray(item.author)
-    ? item.author.slice(0, 20).map(a => [a.given, a.family].filter(Boolean).join(" ")).filter(Boolean).join(", ")
-    : "";
+  const published = item.published?.["date-parts"]?.[0]?.join("-") || item["published-print"]?.["date-parts"]?.[0]?.join("-") || item["published-online"]?.["date-parts"]?.[0]?.join("-") || "";
+  const authors = Array.isArray(item.author) ? item.author.slice(0, 20).map((a) => [a.given, a.family].filter(Boolean).join(" ")).filter(Boolean).join(", ") : "";
   const doiText = item.DOI || doi || "";
   const urlText = item.URL || "";
   const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, titleText).toFixed(2) : "1.00";
-
   const pieces = [
     "Crossref metadata from DOI/title search:",
     titleText ? `Title: ${titleText}` : "",
@@ -5394,95 +3879,59 @@ async function fetchCrossrefKnowledge({ doi, title }) {
     urlText ? `URL: ${urlText}` : "",
     abstract ? `Abstract: ${abstract}` : ""
   ].filter(Boolean);
-
   return pieces.join("\n");
 }
-
-
+__name(fetchCrossrefKnowledge, "fetchCrossrefKnowledge");
 async function fetchPubMedKnowledge({ doi, title }) {
   const wantedTitle = cleanBibtexText(title || "");
   const searchTerms = [];
-
   if (doi) {
     searchTerms.push(`${doi}[DOI]`);
   }
-
   for (const variant of buildTitleSearchVariants(wantedTitle)) {
     searchTerms.push(`"${variant.replace(/"/g, " ")}"[Title]`);
     searchTerms.push(variant.replace(/"/g, " "));
   }
-
   for (const term of searchTerms.filter(Boolean)) {
-    const searchUrl =
-      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=10&term=${encodeURIComponent(term)}`;
-
-    const searchData = await fetchJsonWithTimeout(searchUrl, 20000);
+    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=10&term=${encodeURIComponent(term)}`;
+    const searchData = await fetchJsonWithTimeout(searchUrl, 2e4);
     const ids = searchData?.esearchresult?.idlist || [];
     if (!ids.length) continue;
-
-    const summaryUrl =
-      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&retmode=json&id=${encodeURIComponent(ids.join(","))}`;
-
-    const summaryData = await fetchJsonWithTimeout(summaryUrl, 20000);
+    const summaryUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&retmode=json&id=${encodeURIComponent(ids.join(","))}`;
+    const summaryData = await fetchJsonWithTimeout(summaryUrl, 2e4);
     const resultMap = summaryData?.result || {};
-    const summaries = ids
-      .map(id => resultMap[id])
-      .filter(Boolean);
-
+    const summaries = ids.map((id) => resultMap[id]).filter(Boolean);
     const summary = bestCandidateByTitle(
       summaries,
       wantedTitle,
-      item => String(item?.title || "")
+      (item) => String(item?.title || "")
     );
-
     if (!summary) continue;
-
-    const pmid = String(summary.uid || summary.articleids?.find(x => x.idtype === "pubmed")?.value || "").trim();
+    const pmid = String(summary.uid || summary.articleids?.find((x) => x.idtype === "pubmed")?.value || "").trim();
     if (!pmid) continue;
-
-    const abstractUrl =
-      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&id=${encodeURIComponent(pmid)}`;
-
-    const xml = await fetchTextWithTimeout(abstractUrl, 20000);
-    const abstractParts = [...xml.matchAll(/<AbstractText[^>]*>([\s\S]*?)<\/AbstractText>/gi)]
-      .map(match => stripHtmlEntities(match[1]).replace(/<[^>]+>/g, " "))
-      .map(v => cleanFetchedArticleText(v))
-      .filter(Boolean);
-
-    const articleTitle =
-      cleanFetchedArticleText(
-        stripHtmlEntities(
-          (xml.match(/<ArticleTitle>([\s\S]*?)<\/ArticleTitle>/i) || [])[1] || summary.title || ""
-        ).replace(/<[^>]+>/g, " ")
-      );
-
-    const journal =
-      cleanFetchedArticleText(
-        stripHtmlEntities(
-          (xml.match(/<Title>([\s\S]*?)<\/Title>/i) || [])[1] || summary.fulljournalname || summary.source || ""
-        ).replace(/<[^>]+>/g, " ")
-      );
-
-    const year =
-      (xml.match(/<PubDate>[\s\S]*?<Year>(\d{4})<\/Year>[\s\S]*?<\/PubDate>/i) || [])[1] ||
-      String(summary.pubdate || "").match(/\d{4}/)?.[0] ||
-      "";
-
-    const doiText =
-      cleanDoi(
-        stripHtmlEntities(
-          (xml.match(/<ArticleId IdType="doi">([\s\S]*?)<\/ArticleId>/i) || [])[1] || doi || ""
-        )
-      );
-
-    const authors = Array.isArray(summary.authors)
-      ? summary.authors.slice(0, 20).map(a => a.name).filter(Boolean).join(", ")
-      : "";
-
+    const abstractUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&id=${encodeURIComponent(pmid)}`;
+    const xml = await fetchTextWithTimeout(abstractUrl, 2e4);
+    const abstractParts = [...xml.matchAll(/<AbstractText[^>]*>([\s\S]*?)<\/AbstractText>/gi)].map((match) => stripHtmlEntities(match[1]).replace(/<[^>]+>/g, " ")).map((v) => cleanFetchedArticleText(v)).filter(Boolean);
+    const articleTitle = cleanFetchedArticleText(
+      stripHtmlEntities(
+        (xml.match(/<ArticleTitle>([\s\S]*?)<\/ArticleTitle>/i) || [])[1] || summary.title || ""
+      ).replace(/<[^>]+>/g, " ")
+    );
+    const journal = cleanFetchedArticleText(
+      stripHtmlEntities(
+        (xml.match(/<Title>([\s\S]*?)<\/Title>/i) || [])[1] || summary.fulljournalname || summary.source || ""
+      ).replace(/<[^>]+>/g, " ")
+    );
+    const year = (xml.match(/<PubDate>[\s\S]*?<Year>(\d{4})<\/Year>[\s\S]*?<\/PubDate>/i) || [])[1] || String(summary.pubdate || "").match(/\d{4}/)?.[0] || "";
+    const doiText = cleanDoi(
+      stripHtmlEntities(
+        (xml.match(/<ArticleId IdType="doi">([\s\S]*?)<\/ArticleId>/i) || [])[1] || doi || ""
+      )
+    );
+    const authors = Array.isArray(summary.authors) ? summary.authors.slice(0, 20).map((a) => a.name).filter(Boolean).join(", ") : "";
     const titleForScore = articleTitle || summary.title || "";
     const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, titleForScore).toFixed(2) : "1.00";
     const abstract = abstractParts.join(" ");
-
     const pieces = [
       "PubMed article data from DOI/title search:",
       titleForScore ? `Title: ${titleForScore}` : "",
@@ -5494,43 +3943,28 @@ async function fetchPubMedKnowledge({ doi, title }) {
       doiText ? `DOI: ${doiText}` : "",
       abstract ? `Abstract: ${abstract}` : ""
     ].filter(Boolean);
-
     const text = pieces.join("\n");
     if (containsExternalArticleData(text)) return text;
   }
-
   return "";
 }
-
-
+__name(fetchPubMedKnowledge, "fetchPubMedKnowledge");
 async function fetchEuropePmcKnowledge({ doi, title }) {
   const wantedTitle = cleanBibtexText(title || "");
   const queries = [];
-
   if (doi) queries.push(`DOI:"${doi}"`);
-
   for (const variant of buildTitleSearchVariants(wantedTitle)) {
     queries.push(`TITLE:"${variant.replace(/"/g, " ")}"`);
     queries.push(variant.replace(/"/g, " "));
   }
-
   for (const query of queries.filter(Boolean)) {
-    const searchUrl =
-      `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&resultType=core&pageSize=10`;
-
-    const data = await fetchJsonWithTimeout(searchUrl, 20000);
+    const searchUrl = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&resultType=core&pageSize=10`;
+    const data = await fetchJsonWithTimeout(searchUrl, 2e4);
     const results = data?.resultList?.result || [];
-
-    const result = doi
-      ? (results.find(r => String(r?.doi || "").toLowerCase() === String(doi || "").toLowerCase()) || results[0])
-      : bestCandidateByTitle(results, wantedTitle, item => String(item?.title || ""));
-
+    const result = doi ? results.find((r) => String(r?.doi || "").toLowerCase() === String(doi || "").toLowerCase()) || results[0] : bestCandidateByTitle(results, wantedTitle, (item) => String(item?.title || ""));
     if (!result) continue;
-
     const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, result.title || "").toFixed(2) : "1.00";
-
     const pieces = [];
-
     pieces.push("Europe PMC / PubMed-indexed article data:");
     if (result.title) pieces.push(`Title: ${result.title}`);
     if (wantedTitle) pieces.push(`Title match score: ${matchScore}`);
@@ -5541,54 +3975,42 @@ async function fetchEuropePmcKnowledge({ doi, title }) {
     if (result.pmid) pieces.push(`PMID: ${result.pmid}`);
     if (result.pmcid) pieces.push(`PMCID: ${result.pmcid}`);
     if (result.abstractText) pieces.push(`Abstract: ${cleanFetchedArticleText(stripHtmlEntities(result.abstractText))}`);
-
     if (result.pmcid) {
       try {
         const fullText = await fetchPmcFullText(result.pmcid);
         if (fullText) pieces.push(`PMC full text extracted sections: ${fullText}`);
       } catch {
-        // Open access full text may be unavailable.
       }
     }
-
     return pieces.filter(Boolean).join("\n");
   }
-
   return "";
 }
-
-
+__name(fetchEuropePmcKnowledge, "fetchEuropePmcKnowledge");
 async function fetchSemanticScholarKnowledge({ doi, title }) {
   const wantedTitle = cleanBibtexText(title || "");
   let paper = null;
-
   if (doi) {
     const url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(doi)}?fields=title,abstract,year,authors,venue,url,externalIds`;
-    const data = await fetchJsonWithTimeout(url, 20000);
+    const data = await fetchJsonWithTimeout(url, 2e4);
     if (data && data.title) paper = data;
   }
-
   if (!paper && wantedTitle) {
     for (const variant of buildTitleSearchVariants(wantedTitle)) {
       const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(variant)}&limit=10&fields=title,abstract,year,authors,venue,url,externalIds`;
-      const data = await fetchJsonWithTimeout(url, 20000);
+      const data = await fetchJsonWithTimeout(url, 2e4);
       const items = data?.data || [];
-      paper = bestCandidateByTitle(items, wantedTitle, item => String(item?.title || ""));
+      paper = bestCandidateByTitle(items, wantedTitle, (item) => String(item?.title || ""));
       if (paper && (paper.abstract || titleSimilarityScore(wantedTitle, paper.title || "") >= 0.55)) break;
     }
   }
-
   if (!paper) return "";
-
-  const authors = Array.isArray(paper.authors)
-    ? paper.authors.slice(0, 20).map(a => a.name).filter(Boolean).join(", ")
-    : "";
+  const authors = Array.isArray(paper.authors) ? paper.authors.slice(0, 20).map((a) => a.name).filter(Boolean).join(", ") : "";
   const externalIds = paper.externalIds || {};
   const doiText = externalIds.DOI || doi || "";
   const pmid = externalIds.PubMed || "";
   const arxiv = externalIds.ArXiv || "";
   const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, paper.title || "").toFixed(2) : "1.00";
-
   const pieces = [
     "Semantic Scholar article data from DOI/title search:",
     paper.title ? `Title: ${paper.title}` : "",
@@ -5602,41 +4024,33 @@ async function fetchSemanticScholarKnowledge({ doi, title }) {
     paper.url ? `URL: ${paper.url}` : "",
     paper.abstract ? `Abstract: ${cleanFetchedArticleText(paper.abstract)}` : ""
   ].filter(Boolean);
-
   return pieces.join("\n");
 }
-
+__name(fetchSemanticScholarKnowledge, "fetchSemanticScholarKnowledge");
 async function fetchOpenAlexKnowledge({ doi, title }) {
   const wantedTitle = cleanBibtexText(title || "");
   let work = null;
-
   if (doi) {
     const clean = cleanDoi(doi);
     const url = `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(clean)}`;
-    const data = await fetchJsonWithTimeout(url, 20000);
+    const data = await fetchJsonWithTimeout(url, 2e4);
     if (data && data.display_name) work = data;
   }
-
   if (!work && wantedTitle) {
     for (const variant of buildTitleSearchVariants(wantedTitle)) {
       const url = `https://api.openalex.org/works?search=${encodeURIComponent(variant)}&per-page=10`;
-      const data = await fetchJsonWithTimeout(url, 20000);
+      const data = await fetchJsonWithTimeout(url, 2e4);
       const items = data?.results || [];
-      work = bestCandidateByTitle(items, wantedTitle, item => String(item?.display_name || item?.title || ""));
+      work = bestCandidateByTitle(items, wantedTitle, (item) => String(item?.display_name || item?.title || ""));
       if (work && (work.abstract_inverted_index || titleSimilarityScore(wantedTitle, work.display_name || "") >= 0.55)) break;
     }
   }
-
   if (!work) return "";
-
   const abstract = decodeOpenAlexAbstract(work.abstract_inverted_index);
-  const authors = Array.isArray(work.authorships)
-    ? work.authorships.slice(0, 20).map(a => a.author?.display_name).filter(Boolean).join(", ")
-    : "";
+  const authors = Array.isArray(work.authorships) ? work.authorships.slice(0, 20).map((a) => a.author?.display_name).filter(Boolean).join(", ") : "";
   const venue = work.primary_location?.source?.display_name || work.host_venue?.display_name || "";
-  const doiText = work.doi ? cleanDoi(work.doi) : (doi || "");
+  const doiText = work.doi ? cleanDoi(work.doi) : doi || "";
   const matchScore = wantedTitle ? titleSimilarityScore(wantedTitle, work.display_name || "").toFixed(2) : "1.00";
-
   const pieces = [
     "OpenAlex article data from DOI/title search:",
     work.display_name ? `Title: ${work.display_name}` : "",
@@ -5649,13 +4063,11 @@ async function fetchOpenAlexKnowledge({ doi, title }) {
     work.landing_page_url ? `URL: ${work.landing_page_url}` : "",
     abstract ? `Abstract: ${abstract}` : ""
   ].filter(Boolean);
-
   return pieces.join("\n");
 }
-
+__name(fetchOpenAlexKnowledge, "fetchOpenAlexKnowledge");
 function decodeOpenAlexAbstract(invertedIndex) {
   if (!invertedIndex || typeof invertedIndex !== "object") return "";
-
   const positions = [];
   for (const [word, indexes] of Object.entries(invertedIndex)) {
     if (!Array.isArray(indexes)) continue;
@@ -5663,17 +4075,14 @@ function decodeOpenAlexAbstract(invertedIndex) {
       positions.push([Number(index), word]);
     }
   }
-
   if (!positions.length) return "";
-
   positions.sort((a, b) => a[0] - b[0]);
-  return cleanFetchedArticleText(positions.map(item => item[1]).join(" "));
+  return cleanFetchedArticleText(positions.map((item) => item[1]).join(" "));
 }
-
+__name(decodeOpenAlexAbstract, "decodeOpenAlexAbstract");
 async function fetchPmcFullText(pmcid) {
   const cleanPmcid = String(pmcid || "").trim();
   if (!cleanPmcid) return "";
-
   const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/${encodeURIComponent(cleanPmcid)}/fullTextXML`;
   const response = await fetchWithTimeout(url, {
     method: "GET",
@@ -5682,28 +4091,21 @@ async function fetchPmcFullText(pmcid) {
       "Accept": "application/xml,text/xml,text/plain,*/*"
     },
     redirect: "follow"
-  }, 30000);
-
+  }, 3e4);
   if (!response.ok) return "";
-
   const xml = await response.text();
   if (!xml || xml.length < 300) return "";
-
   const extracted = extractUsefulTextFromJatsXml(xml);
-  return extracted.slice(0, 24000);
+  return extracted.slice(0, 24e3);
 }
-
+__name(fetchPmcFullText, "fetchPmcFullText");
 function extractUsefulTextFromJatsXml(xml) {
   const value = String(xml || "");
-
   const pieces = [];
-
   const titleMatch = value.match(/<article-title[^>]*>([\s\S]*?)<\/article-title>/i);
   if (titleMatch) pieces.push(`Title: ${xmlToPlainText(titleMatch[1])}`);
-
   const abstractMatch = value.match(/<abstract[^>]*>([\s\S]*?)<\/abstract>/i);
   if (abstractMatch) pieces.push(`Abstract: ${xmlToPlainText(abstractMatch[1])}`);
-
   const sectionNames = [
     "introduction",
     "background",
@@ -5714,61 +4116,47 @@ function extractUsefulTextFromJatsXml(xml) {
     "conclusion",
     "conclusions"
   ];
-
   for (const sectionName of sectionNames) {
     const section = extractJatsSection(value, sectionName);
     if (section) pieces.push(`${sectionName} section: ${section}`);
   }
-
   if (pieces.length <= 2) {
     const bodyMatch = value.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
     if (bodyMatch) {
-      pieces.push(`Body text: ${xmlToPlainText(bodyMatch[1]).slice(0, 20000)}`);
+      pieces.push(`Body text: ${xmlToPlainText(bodyMatch[1]).slice(0, 2e4)}`);
     }
   }
-
   return cleanFetchedArticleText(pieces.filter(Boolean).join("\n\n"));
 }
-
+__name(extractUsefulTextFromJatsXml, "extractUsefulTextFromJatsXml");
 function extractJatsSection(xml, wantedTitle) {
   const sections = [...String(xml || "").matchAll(/<sec[^>]*>([\s\S]*?)<\/sec>/gi)];
-
   for (const match of sections) {
     const block = match[1] || "";
     const titleMatch = block.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const sectionTitle = titleMatch ? normalizeSearchText(xmlToPlainText(titleMatch[1])) : "";
-
     if (!sectionTitle) continue;
-
     const wanted = normalizeSearchText(wantedTitle);
     if (sectionTitle === wanted || sectionTitle.includes(wanted) || wanted.includes(sectionTitle)) {
-      return xmlToPlainText(block).slice(0, 8000);
+      return xmlToPlainText(block).slice(0, 8e3);
     }
   }
-
   return "";
 }
-
+__name(extractJatsSection, "extractJatsSection");
 function xmlToPlainText(value) {
   return cleanFetchedArticleText(
     stripHtmlEntities(
-      String(value || "")
-        .replace(/<xref[\s\S]*?<\/xref>/gi, " ")
-        .replace(/<table-wrap[\s\S]*?<\/table-wrap>/gi, " ")
-        .replace(/<fig[\s\S]*?<\/fig>/gi, " ")
-        .replace(/<disp-formula[\s\S]*?<\/disp-formula>/gi, " ")
-        .replace(/<\/(p|sec|title|abstract|body|list-item)>/gi, "\n")
-        .replace(/<[^>]+>/g, " ")
+      String(value || "").replace(/<xref[\s\S]*?<\/xref>/gi, " ").replace(/<table-wrap[\s\S]*?<\/table-wrap>/gi, " ").replace(/<fig[\s\S]*?<\/fig>/gi, " ").replace(/<disp-formula[\s\S]*?<\/disp-formula>/gi, " ").replace(/<\/(p|sec|title|abstract|body|list-item)>/gi, "\n").replace(/<[^>]+>/g, " ")
     )
   );
 }
-
-
+__name(xmlToPlainText, "xmlToPlainText");
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-async function fetchJsonWithTimeout(url, timeoutMs = 12000) {
+__name(sleep, "sleep");
+async function fetchJsonWithTimeout(url, timeoutMs = 12e3) {
   const response = await fetchWithTimeout(url, {
     method: "GET",
     headers: {
@@ -5777,18 +4165,15 @@ async function fetchJsonWithTimeout(url, timeoutMs = 12000) {
     },
     redirect: "follow"
   }, timeoutMs);
-
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-
   return response.json();
 }
-
-async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+__name(fetchJsonWithTimeout, "fetchJsonWithTimeout");
+async function fetchWithTimeout(url, options = {}, timeoutMs = 3e4) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
     return await fetch(url, {
       ...options,
@@ -5798,11 +4183,10 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
     clearTimeout(timeout);
   }
 }
-
+__name(fetchWithTimeout, "fetchWithTimeout");
 async function fetchReadableArticleText(url, title = "") {
   const normalizedUrl = normalizeArticleUrl(url);
   if (!normalizedUrl) return "";
-
   const response = await fetchWithTimeout(normalizedUrl, {
     method: "GET",
     headers: {
@@ -5811,95 +4195,69 @@ async function fetchReadableArticleText(url, title = "") {
       "Accept-Language": "en-US,en;q=0.9"
     },
     redirect: "follow"
-  }, 30000);
-
+  }, 3e4);
   const contentType = response.headers.get("Content-Type") || "";
-
   if (!response.ok) {
     return `Direct source-link fetch status for ${normalizedUrl}: HTTP ${response.status}. The publisher page may block automated access. The system also tried DOI/Crossref/Europe PMC metadata.`;
   }
-
   if (contentType.includes("application/pdf")) {
     return `PDF detected at ${normalizedUrl}. The PDF link is stored for retrieval context. Native Cloudflare Worker PDF text extraction is limited without an external PDF parsing service, so the system will still learn from article metadata, HTML abstract, admin abstract, admin description, and any readable page text.`;
   }
-
   const raw = await response.text();
-  const limitedRaw = raw.slice(0, 700000);
-
+  const limitedRaw = raw.slice(0, 7e5);
   if (contentType.includes("application/json") || looksLikeJson(limitedRaw)) {
     return extractTextFromJson(limitedRaw, normalizedUrl);
   }
-
   return extractTextFromHtml(limitedRaw, normalizedUrl, title);
 }
-
+__name(fetchReadableArticleText, "fetchReadableArticleText");
 function normalizeArticleUrl(url) {
   const value = String(url || "").trim();
   if (!value) return "";
-
   if (/^10\.\d{4,9}\//i.test(value)) {
     return `https://doi.org/${value}`;
   }
-
   if (/^doi:/i.test(value)) {
     return `https://doi.org/${value.replace(/^doi:/i, "").trim()}`;
   }
-
   if (/^https?:\/\//i.test(value)) return value;
-
   return "";
 }
-
+__name(normalizeArticleUrl, "normalizeArticleUrl");
 function extractDoiFromTextOrUrl(value) {
   const text = String(value || "");
-
   const doiUrl = text.match(/https?:\/\/(?:dx\.)?doi\.org\/(10\.\d{4,9}\/[^\s)"'<>]+)/i);
   if (doiUrl) return cleanDoi(doiUrl[1]);
-
   const doiLabel = text.match(/(?:doi|DOI)\s*[:=]\s*(10\.\d{4,9}\/[^\s)"'<>]+)/i);
   if (doiLabel) return cleanDoi(doiLabel[1]);
-
   const doiParam = text.match(/[?&](?:doi|DOI)=([^&\s]+)/);
   if (doiParam) return cleanDoi(decodeURIComponent(doiParam[1]));
-
   const rawDoi = text.match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i);
   if (rawDoi) return cleanDoi(rawDoi[0]);
-
   return "";
 }
-
+__name(extractDoiFromTextOrUrl, "extractDoiFromTextOrUrl");
 function cleanDoi(value) {
-  return String(value || "")
-    .replace(/^doi:/i, "")
-    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
-    .replace(/[\s"'<>]+$/g, "")
-    .replace(/[.,;:)\]}]+$/g, "")
-    .trim();
+  return String(value || "").replace(/^doi:/i, "").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "").replace(/[\s"'<>]+$/g, "").replace(/[.,;:)\]}]+$/g, "").trim();
 }
-
+__name(cleanDoi, "cleanDoi");
 function cleanCrossrefAbstract(value) {
   return cleanFetchedArticleText(
     stripHtmlEntities(
-      String(value || "")
-        .replace(/<jats:[^>]+>/g, " ")
-        .replace(/<\/jats:[^>]+>/g, " ")
-        .replace(/<[^>]+>/g, " ")
+      String(value || "").replace(/<jats:[^>]+>/g, " ").replace(/<\/jats:[^>]+>/g, " ").replace(/<[^>]+>/g, " ")
     )
   );
 }
-
+__name(cleanCrossrefAbstract, "cleanCrossrefAbstract");
 function looksLikeJson(text) {
   const value = String(text || "").trim();
   return value.startsWith("{") || value.startsWith("[");
 }
-
+__name(looksLikeJson, "looksLikeJson");
 function extractTextFromJson(text, sourceUrl) {
   try {
-    const data = JSON.parse(text);
-    const pieces = [];
-
-    function walk(value, key = "") {
-      if (pieces.join(" ").length > 25000) return;
+    let walk = function(value, key = "") {
+      if (pieces.join(" ").length > 25e3) return;
       if (typeof value === "string") {
         const cleaned = cleanFetchedArticleText(value);
         if (cleaned.length >= 80 && /title|abstract|summary|description|article|paper|result|method|conclusion|background|objective/i.test(key + " " + cleaned)) {
@@ -5914,26 +4272,25 @@ function extractTextFromJson(text, sourceUrl) {
       if (value && typeof value === "object") {
         for (const [k, v] of Object.entries(value)) walk(v, k);
       }
-    }
-
+    };
+    __name(walk, "walk");
+    const data = JSON.parse(text);
+    const pieces = [];
     walk(data);
     return [`Direct source JSON URL: ${sourceUrl}`, ...pieces].join("\n");
   } catch {
-    return `Direct source URL: ${sourceUrl}\n${cleanFetchedArticleText(text).slice(0, 12000)}`;
+    return `Direct source URL: ${sourceUrl}
+${cleanFetchedArticleText(text).slice(0, 12e3)}`;
   }
 }
-
-function extractTextFromHtml(html, sourceUrl, fallbackTitle = "") {
+__name(extractTextFromJson, "extractTextFromJson");
+function extractTextFromHtml(html2, sourceUrl, fallbackTitle = "") {
   const pieces = [];
-
-  const jsonLdBlocks = [...String(html).matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)]
-    .map(match => stripHtmlEntities(match[1] || ""));
-
+  const jsonLdBlocks = [...String(html2).matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].map((match) => stripHtmlEntities(match[1] || ""));
   for (const block of jsonLdBlocks.slice(0, 5)) {
     const extracted = extractTextFromJson(block, sourceUrl);
     if (extracted) pieces.push(extracted);
   }
-
   const metaNames = [
     "citation_title",
     "dc.title",
@@ -5949,98 +4306,70 @@ function extractTextFromHtml(html, sourceUrl, fallbackTitle = "") {
     "og:description",
     "twitter:description"
   ];
-
   for (const name of metaNames) {
-    const values = extractMetaContent(html, name);
+    const values = extractMetaContent(html2, name);
     for (const value of values) {
       if (value) pieces.push(`${name}: ${value}`);
     }
   }
-
-  const abstract = extractSectionByHeading(html, ["abstract", "summary"]);
+  const abstract = extractSectionByHeading(html2, ["abstract", "summary"]);
   if (abstract) pieces.push(`Abstract section from source link: ${abstract}`);
-
-  const introduction = extractSectionByHeading(html, ["introduction", "background"]);
+  const introduction = extractSectionByHeading(html2, ["introduction", "background"]);
   if (introduction) pieces.push(`Introduction/background section from source link: ${introduction}`);
-
-  const results = extractSectionByHeading(html, ["results", "findings"]);
+  const results = extractSectionByHeading(html2, ["results", "findings"]);
   if (results) pieces.push(`Results/findings section from source link: ${results}`);
-
-  const discussion = extractSectionByHeading(html, ["discussion", "conclusion", "conclusions"]);
+  const discussion = extractSectionByHeading(html2, ["discussion", "conclusion", "conclusions"]);
   if (discussion) pieces.push(`Discussion/conclusion section from source link: ${discussion}`);
-
-  let readable = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<nav[\s\S]*?<\/nav>/gi, " ")
-    .replace(/<footer[\s\S]*?<\/footer>/gi, " ")
-    .replace(/<header[\s\S]*?<\/header>/gi, " ")
-    .replace(/<(p|div|section|article|h1|h2|h3|li|br)[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, " ");
-
+  let readable = html2.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<nav[\s\S]*?<\/nav>/gi, " ").replace(/<footer[\s\S]*?<\/footer>/gi, " ").replace(/<header[\s\S]*?<\/header>/gi, " ").replace(/<(p|div|section|article|h1|h2|h3|li|br)[^>]*>/gi, "\n").replace(/<[^>]+>/g, " ");
   readable = cleanFetchedArticleText(stripHtmlEntities(readable));
-
   const keywordWindow = extractKeywordWindow(readable, fallbackTitle);
   if (keywordWindow) pieces.push(`Relevant source-link page text: ${keywordWindow}`);
-  else if (readable.length > 500) pieces.push(`Direct source-link page text: ${readable.slice(0, 16000)}`);
-
+  else if (readable.length > 500) pieces.push(`Direct source-link page text: ${readable.slice(0, 16e3)}`);
   const unique = [...new Set(
-    pieces
-      .map(v => cleanFetchedArticleText(v))
-      .filter(v => v.length >= 40)
+    pieces.map((v) => cleanFetchedArticleText(v)).filter((v) => v.length >= 40)
   )];
-
   if (!unique.length) {
-    return `Direct source URL: ${sourceUrl}\nThe page was fetched, but readable article text could not be extracted. The publisher may require JavaScript, institutional access, or block automated access.`;
+    return `Direct source URL: ${sourceUrl}
+The page was fetched, but readable article text could not be extracted. The publisher may require JavaScript, institutional access, or block automated access.`;
   }
-
   return [`Direct source URL: ${sourceUrl}`, ...unique].join("\n\n");
 }
-
-function extractMetaContent(html, name) {
+__name(extractTextFromHtml, "extractTextFromHtml");
+function extractMetaContent(html2, name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const patterns = [
     new RegExp(`<meta[^>]+(?:name|property)=["']${escaped}["'][^>]+content=["']([^"']*)["'][^>]*>`, "gi"),
     new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+(?:name|property)=["']${escaped}["'][^>]*>`, "gi")
   ];
-
   const values = [];
   for (const pattern of patterns) {
-    for (const match of String(html).matchAll(pattern)) {
+    for (const match of String(html2).matchAll(pattern)) {
       const value = cleanFetchedArticleText(stripHtmlEntities(match[1] || ""));
       if (value) values.push(value);
     }
   }
   return values;
 }
-
-function extractSectionByHeading(html, headings) {
-  const text = String(html || "");
+__name(extractMetaContent, "extractMetaContent");
+function extractSectionByHeading(html2, headings) {
+  const text = String(html2 || "");
   for (const heading of headings) {
     const pattern = new RegExp(`<h[1-4][^>]*>\\s*${heading}\\s*<\\/h[1-4]>([\\s\\S]{0,12000}?)(?=<h[1-4][^>]*>|$)`, "i");
     const match = text.match(pattern);
     if (match) {
       return cleanFetchedArticleText(stripHtmlEntities(
-        match[1]
-          .replace(/<script[\s\S]*?<\/script>/gi, " ")
-          .replace(/<style[\s\S]*?<\/style>/gi, " ")
-          .replace(/<[^>]+>/g, " ")
-      )).slice(0, 8000);
+        match[1].replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ")
+      )).slice(0, 8e3);
     }
   }
   return "";
 }
-
+__name(extractSectionByHeading, "extractSectionByHeading");
 function extractKeywordWindow(text, title) {
   const clean = cleanFetchedArticleText(text);
-  const titleWords = normalizeSearchText(title)
-    .split(/\s+/)
-    .filter(v => v.length >= 5)
-    .slice(0, 6);
-
+  const titleWords = normalizeSearchText(title).split(/\s+/).filter((v) => v.length >= 5).slice(0, 6);
   const keywords = ["abstract", "introduction", "results", "discussion", "conclusion", ...titleWords];
   const lower = clean.toLowerCase();
-
   let bestIndex = -1;
   for (const keyword of keywords) {
     const index = lower.indexOf(keyword.toLowerCase());
@@ -6049,88 +4378,41 @@ function extractKeywordWindow(text, title) {
       break;
     }
   }
-
   if (bestIndex < 0) return "";
-
-  const start = Math.max(0, bestIndex - 2000);
-  const end = Math.min(clean.length, bestIndex + 16000);
+  const start = Math.max(0, bestIndex - 2e3);
+  const end = Math.min(clean.length, bestIndex + 16e3);
   return clean.slice(start, end);
 }
-
+__name(extractKeywordWindow, "extractKeywordWindow");
 function stripHtmlEntities(value) {
-  return String(value || "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#x27;/gi, "'")
-    .replace(/&#x2F;/gi, "/")
-    .replace(/&#(\d+);/g, (_, code) => {
-      try { return String.fromCharCode(Number(code)); } catch { return " "; }
-    });
+  return String(value || "").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&#x27;/gi, "'").replace(/&#x2F;/gi, "/").replace(/&#(\d+);/g, (_, code) => {
+    try {
+      return String.fromCharCode(Number(code));
+    } catch {
+      return " ";
+    }
+  });
 }
-
+__name(stripHtmlEntities, "stripHtmlEntities");
 function cleanFetchedArticleText(value) {
-  return String(value || "")
-    .replace(/\u0000/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/\s+([,.;:!?])/g, "$1")
-    .trim();
+  return String(value || "").replace(/\u0000/g, " ").replace(/\s+/g, " ").replace(/\s+([,.;:!?])/g, "$1").trim();
 }
-
+__name(cleanFetchedArticleText, "cleanFetchedArticleText");
 async function upsertResearchKnowledgeVectors({ postId, title, sourceUrl, pdfLink, content }, env) {
-  if (!env.AI || !env.VECTORIZE) {
-    return false;
-  }
-
-  const chunks = chunkTextForEmbedding(content, 1800).slice(0, 24);
-
-  if (chunks.length === 0) {
-    return false;
-  }
-
-  const vectors = [];
-
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const embedding = await createEmbedding(chunk, env);
-
-    vectors.push({
-      id: `${postId}:${i}`,
-      values: embedding,
-      metadata: {
-        post_id: postId,
-        chunk_index: i,
-        title,
-        source_url: sourceUrl || "",
-        pdf_link: pdfLink || "",
-        text: chunk
-      }
-    });
-  }
-
-  await env.VECTORIZE.upsert(vectors);
-  return true;
+  return false;
 }
-
+__name(upsertResearchKnowledgeVectors, "upsertResearchKnowledgeVectors");
 async function listGptThreads(request, env) {
   const url = new URL(request.url);
   const gptKeyForAccess = getGptKeyFromRequestData(Object.fromEntries(url.searchParams.entries()));
   const neuroAccessError = requireNeuroGptAccessIfNeeded(request, env, gptKeyForAccess);
   if (neuroAccessError) return neuroAccessError;
-
   const user = await getSession(request, env);
-
   if (!user) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
-
   await ensureSpecialistGptTables(env);
-
   const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || url.searchParams.get("domain"));
-
   const threads = await env.DB.prepare(`
     SELECT *
     FROM gpt_threads
@@ -6138,32 +4420,26 @@ async function listGptThreads(request, env) {
       AND COALESCE(gpt_key, 'paper_talk') = ?
     ORDER BY datetime(updated_at) DESC
   `).bind(user.id, gptKey).all();
-
   return json({
     ok: true,
     threads: threads.results || []
   });
 }
-
+__name(listGptThreads, "listGptThreads");
 async function createGptThread(request, env) {
   const bodyForAccess = await request.clone().json().catch(() => ({}));
   const gptKeyForAccess = getGptKeyFromRequestData(bodyForAccess);
   const neuroAccessError = requireNeuroGptAccessIfNeeded(request, env, gptKeyForAccess);
   if (neuroAccessError) return neuroAccessError;
-
   const user = await getSession(request, env);
-
   if (!user) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
-
   await ensureSpecialistGptTables(env);
-
   const data = await request.json().catch(() => ({}));
   const title = String(data.title || "New chat").trim() || "New chat";
   const gptKey = getGptKeyFromRequestData(data);
   const threadId = crypto.randomUUID();
-
   await env.DB.prepare(`
     INSERT INTO gpt_threads (
       id,
@@ -6175,7 +4451,6 @@ async function createGptThread(request, env) {
     )
     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `).bind(threadId, user.id, title, gptKey).run();
-
   return json({
     ok: true,
     thread: {
@@ -6186,28 +4461,22 @@ async function createGptThread(request, env) {
     }
   });
 }
-
+__name(createGptThread, "createGptThread");
 async function listGptMessages(request, env) {
   const url = new URL(request.url);
   const gptKeyForAccess = getGptKeyFromRequestData(Object.fromEntries(url.searchParams.entries()));
   const neuroAccessError = requireNeuroGptAccessIfNeeded(request, env, gptKeyForAccess);
   if (neuroAccessError) return neuroAccessError;
-
   const user = await getSession(request, env);
-
   if (!user) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
-
   await ensureSpecialistGptTables(env);
-
   const threadId = url.searchParams.get("threadId");
   const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || url.searchParams.get("domain"));
-
   if (!threadId) {
     return json({ ok: false, error: "threadId is required." }, 400);
   }
-
   const thread = await env.DB.prepare(`
     SELECT *
     FROM gpt_threads
@@ -6215,11 +4484,9 @@ async function listGptMessages(request, env) {
       AND user_id = ?
       AND COALESCE(gpt_key, 'paper_talk') = ?
   `).bind(threadId, user.id, gptKey).first();
-
   if (!thread) {
     return json({ ok: false, error: "Thread not found." }, 404);
   }
-
   const messages = await env.DB.prepare(`
     SELECT role, content, created_at
     FROM gpt_messages
@@ -6228,53 +4495,12 @@ async function listGptMessages(request, env) {
       AND COALESCE(gpt_key, 'paper_talk') = ?
     ORDER BY datetime(created_at) ASC
   `).bind(threadId, user.id, gptKey).all();
-
   return json({
     ok: true,
     messages: messages.results || []
   });
 }
-
-
-function getFriendlyKoreanAnswerStyleRules(mode = "general") {
-  return `
-Paper_Talk Vision GPT answer style rules:
-- 기본 답변 언어는 사용자가 쓴 언어를 따르세요. 한국어 질문에는 자연스러운 한국어로 답하세요.
-- 답변 스타일은 "연구실 선배가 차분하게 설명해주는 느낌"으로 작성하세요.
-- 너무 딱딱한 보고서체도 피하고, "음...", "저는요"처럼 너무 수다스러운 대화체도 피하세요.
-- 사용자가 원하는 스타일은 다음과 같습니다:
-  Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다.
-  최근 spatial transcriptomics 연구들을 보면 조직 내 세포 분포나 niche 구조를 정교하게 설명하는 연구는 상당히 많이 축적되어 있습니다. 반면, 세포가 특정 공간에서 어떤 방향으로 분화하거나 상태 전이를 겪는지까지 설명하는 연구는 상대적으로 적습니다.
-  그래서 Spatial + RNA velocity, 또는 Spatial + longitudinal sample 분석 같은 접근이 좋은 연구 주제가 될 수 있습니다.
-- 위 예시처럼 자연스러운 설명문 형태로 답하세요. 기본은 짧은 문단 중심입니다. 사용자가 표나 목록을 명시적으로 요청하지 않는 한, 논문 목록형 답변을 만들지 마세요.
-- 다음과 같은 섹션명은 절대 사용하지 마세요: "Direct answer", "Relevant papers", "Retrieved papers", "Paper-by-paper findings", "Agreements", "Contradictions", "Knowledge gaps", "Paper_Talk research interpretation", "Suggested next study or validation".
-- 논문 제목을 목록처럼 나열하지 마세요. Paper_Talk DB 논문은 설명을 뒷받침하는 근거로 자연스럽게 녹여 쓰세요.
-- 예: "Paper_Talk DB에 저장된 spatial 논문들을 보면 공간 구조 자체를 분석하는 연구는 많지만, 시간적 변화나 cell fate까지 연결하는 사례는 상대적으로 적습니다."처럼 쓰세요.
-- 질문 의도에 따라 형식을 자동으로 고르되, 사용자가 명시적으로 표/목록/비교표를 요청하지 않으면 논문 리스트를 만들지 마세요.
-- 전문용어가 나오면 바로 쉬운 말로 풀어주세요. 예: "RNA velocity는 세포가 현재 어떤 상태에 있는지보다 앞으로 어느 방향으로 변할지를 추정하려는 접근입니다."
-
-- 알고리즘/방법론 질문(예: pseudotime, clustering, trajectory, normalization, GNN, transformer 등)은 "무엇인지 → 대표 방법들 → 각각 언제 쓰는지 → 장단점 → 연구에서 어떻게 고를지" 순서로 설명하세요.
-- 방법론 질문에서 DB context가 없다는 말은 맨 앞에 쓰지 마세요. 사용자는 먼저 개념과 선택 기준을 알고 싶어합니다.
-- 자세히 설명하되, 너무 항목화하지 말고 문단 사이의 흐름이 자연스럽게 이어지게 하세요.
-- 연구 아이디어를 물으면 배경 → 왜 중요한지 → Paper_Talk DB에서 보이는 흐름 → 가능한 연구 질문 → 주의할 점 순서로 자연스럽게 설명하세요.
-- Paper_Talk DB context에 없는 논문 제목, 저자, 연도, 저널, 샘플 수, 데이터셋, 결과를 새로 만들지 마세요.
-- DB excerpt가 부족해도 답변 첫 문장을 DB 검색 실패로 시작하지 마세요. 먼저 사용자의 과학적 질문 자체에 친절하게 답하세요.
-- 사용자가 "근거 논문", "출처", "Paper_Talk DB", "어떤 논문 기반"처럼 명시적으로 물어본 경우에만 DB 검색 상태를 설명하세요.
-- 일반 개념 질문, 알고리즘 질문, 연구 아이디어 질문에서는 "현재 검색에서는...", "강하게 매칭되는 논문을 찾지 못했습니다", "관련 논문이 없습니다" 같은 문장으로 시작하지 마세요.
-- DB context가 없더라도, 안전한 범위에서 일반적인 과학/방법론 설명을 먼저 제공하세요. 단, 논문 제목·저자·연도·저널·샘플 수·데이터셋 등은 DB에 없으면 새로 만들지 마세요.
-- 마지막에 필요하면 아주 짧게 "원하시면 관련 Paper_Talk DB 논문도 따로 정리해드릴 수 있습니다" 정도로만 안내하세요.
-- 사용자가 연구 아이디어를 물으면 마지막에는 새로운 연구 질문이나 실제 프로젝트로 발전시킬 수 있는 방향을 차분하게 제안하세요.
-`;
-}
-
-function appendFriendlyStyleToSystemPrompt(systemPrompt, mode = "general") {
-  const base = String(systemPrompt || "");
-  const style = getFriendlyKoreanAnswerStyleRules(mode);
-  if (base.includes("Answer style rules for Paper_Talk Vision GPT")) return base;
-  return `${base}\n\n${style}`;
-}
-
-
+__name(listGptMessages, "listGptMessages");
 function getPaperTalkScientificThinkingLogic() {
   return `
 PAPER_TALK SCIENTIFIC THINKING LOGIC
@@ -6349,90 +4575,42 @@ Hard safety rules:
 - Use the user's language.
 `.trim();
 }
-
-
-async function getRecentUserMessagesForRetrieval(threadId, userId, env, limit = 8) {
-  if (!threadId || !userId) return [];
-
-  try {
-    const rows = await env.DB.prepare(`
-      SELECT role, content, created_at
-      FROM gpt_messages
-      WHERE thread_id = ?
-        AND user_id = ?
-        AND role = 'user'
-      ORDER BY datetime(created_at) DESC
-      LIMIT ?
-    `).bind(threadId, userId, limit).all();
-
-    return (rows.results || [])
-      .reverse()
-      .map(row => ({
-        role: row.role || 'user',
-        content: String(row.content || '').trim()
-      }))
-      .filter(row => row.content);
-  } catch {
-    return [];
-  }
-}
-
+__name(getPaperTalkScientificThinkingLogic, "getPaperTalkScientificThinkingLogic");
 function buildThreadRetrievalAnchor(recentMessages, currentMessage) {
-  const current = String(currentMessage || '').trim();
-
-  // If the current message already contains a paper URL/DOI/title, use that directly.
-  // No thread anchor is needed.
+  const current = String(currentMessage || "").trim();
   if (extractUrlsFromQuestion(current).length || extractDoiFromTextOrUrl(current)) {
-    return '';
+    return "";
   }
-
   const currentTitles = extractLikelyPaperTitlesFromQuestion(current);
-  if (currentTitles.length) return '';
-
-  const priorTexts = (recentMessages || [])
-    .map(m => String(m.content || '').trim())
-    .filter(Boolean)
-    .reverse();
-
-  let previousExplicitPaper = '';
-
+  if (currentTitles.length) return "";
+  const priorTexts = (recentMessages || []).map((m) => String(m.content || "").trim()).filter(Boolean).reverse();
+  let previousExplicitPaper = "";
   for (const text of priorTexts) {
     const urls = extractUrlsFromQuestion(text);
     const doi = extractDoiFromTextOrUrl(text);
     const titles = extractLikelyPaperTitlesFromQuestion(text);
-
     if (urls.length || doi || titles.length) {
       previousExplicitPaper = [
-        'Previous explicit paper reference from this thread:',
-        urls.join('\n'),
-        doi ? `DOI: ${doi}` : '',
-        titles.join('\n')
-      ].filter(Boolean).join('\n');
+        "Previous explicit paper reference from this thread:",
+        urls.join("\n"),
+        doi ? `DOI: ${doi}` : "",
+        titles.join("\n")
+      ].filter(Boolean).join("\n");
       break;
     }
   }
-
-  if (!previousExplicitPaper) return '';
-
-  // v39 automatic follow-up detection:
-  // Do not maintain a fragile list of phrases such as "key takeaway" or "전체 논문".
-  // Instead, if the user does not provide a new explicit URL/DOI/title and the message is
-  // short enough to be a follow-up/instruction, keep the previous explicit paper as context.
-  // Long standalone research questions still perform normal DB retrieval.
-  const compactCurrent = current.replace(/\s+/g, ' ');
+  if (!previousExplicitPaper) return "";
+  const compactCurrent = current.replace(/\s+/g, " ");
   const koreanChars = (compactCurrent.match(/[가-힣]/g) || []).length;
   const latinWords = (compactCurrent.match(/[A-Za-z][A-Za-z0-9_-]*/g) || []).length;
   const hasManyStandaloneTerms = latinWords >= 18 || koreanChars >= 180;
   const isShortInstructionLike = compactCurrent.length <= 280 && !hasManyStandaloneTerms;
-
   if (isShortInstructionLike) {
     return previousExplicitPaper;
   }
-
-  return '';
+  return "";
 }
-
-
+__name(buildThreadRetrievalAnchor, "buildThreadRetrievalAnchor");
 function scoreExplicitPaperForActiveLock(item, explicitText) {
   const source = normalizeSearchText(`${item?.source_url || ""} ${item?.pdf_link || ""}`);
   const title = normalizeSearchText(item?.title || "");
@@ -6442,7 +4620,6 @@ function scoreExplicitPaperForActiveLock(item, explicitText) {
   const doi = normalizeSearchText(extractDoiFromTextOrUrl(query) || "");
   const titles = extractLikelyPaperTitlesFromQuestion(query).map(normalizeSearchText).filter(Boolean);
   const tokens = getImportantSearchTokens(query).slice(0, 10).map(normalizeSearchText).filter(Boolean);
-
   let score = 0;
   for (const url of urls) {
     if (url && source.includes(url)) score += 240;
@@ -6463,8 +4640,8 @@ function scoreExplicitPaperForActiveLock(item, explicitText) {
     if (t && title.includes(t.slice(0, 80))) score += 180;
     else if (t && content.includes(t.slice(0, 80))) score += 80;
   }
-  const tokenHitsInTitle = tokens.filter(t => t.length >= 4 && title.includes(t)).length;
-  const tokenHitsInContent = tokens.filter(t => t.length >= 4 && content.includes(t)).length;
+  const tokenHitsInTitle = tokens.filter((t) => t.length >= 4 && title.includes(t)).length;
+  const tokenHitsInContent = tokens.filter((t) => t.length >= 4 && content.includes(t)).length;
   score += tokenHitsInTitle * 18 + Math.min(tokenHitsInContent * 4, 40);
   if (item?.from_explicit_url_or_identifier_search) score += 100;
   if (item?.from_explicit_title_search) score += 70;
@@ -6473,102 +4650,64 @@ function scoreExplicitPaperForActiveLock(item, explicitText) {
   if (item?.from_stored_url_live_fetch) score += 12;
   return score;
 }
-
+__name(scoreExplicitPaperForActiveLock, "scoreExplicitPaperForActiveLock");
 async function getStrictActivePaperContext({ message, recentMessages, env }) {
   const current = String(message || "").trim();
-  const currentHasExplicitPaper =
-    extractUrlsFromQuestion(current).length > 0 ||
-    Boolean(extractDoiFromTextOrUrl(current)) ||
-    extractLikelyPaperTitlesFromQuestion(current).length > 0;
-
+  const currentHasExplicitPaper = extractUrlsFromQuestion(current).length > 0 || Boolean(extractDoiFromTextOrUrl(current)) || extractLikelyPaperTitlesFromQuestion(current).length > 0;
   const anchor = buildThreadRetrievalAnchor(recentMessages || [], current);
   const explicitText = currentHasExplicitPaper ? current : anchor;
   if (!explicitText) return { activePaperContext: [], activePaperQuery: "", activePaperLocked: false };
-
   let matches = [];
-  try { matches = await findExplicitPaperMatchesFromQuestion(explicitText, env); } catch { matches = []; }
+  try {
+    matches = await findExplicitPaperMatchesFromQuestion(explicitText, env);
+  } catch {
+    matches = [];
+  }
   if (!matches.length) return { activePaperContext: [], activePaperQuery: explicitText, activePaperLocked: false };
-
-  const ranked = matches
-    .filter(item => !isThinkingLogicKnowledgeItem(item))
-    .map(item => ({ item, score: scoreExplicitPaperForActiveLock(item, explicitText) }))
-    .sort((a, b) => b.score - a.score);
-
+  const ranked = matches.filter((item) => !isThinkingLogicKnowledgeItem(item)).map((item) => ({ item, score: scoreExplicitPaperForActiveLock(item, explicitText) })).sort((a, b) => b.score - a.score);
   const best = ranked[0];
   if (!best || best.score < 60) return { activePaperContext: [], activePaperQuery: explicitText, activePaperLocked: false };
-
   let enriched = [best.item];
-  try { enriched = await enrichExplicitPaperMatchesWithStoredUrls([best.item], env); } catch { enriched = [best.item]; }
-
+  try {
+    enriched = await enrichExplicitPaperMatchesWithStoredUrls([best.item], env);
+  } catch {
+    enriched = [best.item];
+  }
   try {
     enriched = await enrichKnowledgeItemsWithFullTextChunks(enriched, explicitText, env);
   } catch {
-    // Keep stored metadata if full-text chunk retrieval fails.
   }
-
   const locked = mergeKnowledgeResults(enriched).slice(0, 3);
   return { activePaperContext: locked, activePaperQuery: explicitText, activePaperLocked: locked.length > 0 };
 }
-
-
+__name(getStrictActivePaperContext, "getStrictActivePaperContext");
 function isRelatedPaperDiscoveryRequest(message, autoIntent = {}) {
   const rawText = String(message || "").trim();
   const text = rawText.toLowerCase();
-
-  const explicitRelatedPaperText =
-    /(?:이\s*논문|이\s*연구|이\s*paper|this\s+paper|this\s+study|이거|이것|위\s*논문|앞\s*논문|방금\s*논문|active\s+paper).{0,80}(?:비슷|유사|관련|similar|related|comparable|follow[-\s]?up|후속|참고|citation|reference)/i.test(rawText) ||
-    /(?:비슷한|유사한|관련된?|comparable|similar|related|follow[-\s]?up).{0,30}(?:논문|paper|papers|study|studies|연구)/i.test(rawText) ||
-    /(?:논문|paper|papers|study|studies|연구).{0,30}(?:비슷|유사|관련|similar|related|comparable|follow[-\s]?up)/i.test(rawText);
-
-  const activePaperReferent =
-    /(?:이\s*논문|이\s*연구|이\s*paper|this\s+paper|this\s+study|이거랑|이것과|위\s*논문|앞\s*논문|방금\s*논문|active\s+paper)/i.test(rawText);
-
-  const independentNewTopicTrendRequest =
-    /(?:최근|최신|요즘|동향|트렌드|트렌디|핫한|emerging|latest|recent|trend|trends|state[-\s]?of[-\s]?the[-\s]?art|sota|field\s+overview|분야\s*흐름)/i.test(rawText) &&
-    !activePaperReferent &&
-    !explicitRelatedPaperText;
-
-  // v92: A new-topic trend/literature question must not inherit the previous active paper.
-  // Example: "최근 protein drug 동향은" should be answered as protein-drug trend,
-  // not as papers similar to the previously discussed spatial ROI paper.
+  const explicitRelatedPaperText = /(?:이\s*논문|이\s*연구|이\s*paper|this\s+paper|this\s+study|이거|이것|위\s*논문|앞\s*논문|방금\s*논문|active\s+paper).{0,80}(?:비슷|유사|관련|similar|related|comparable|follow[-\s]?up|후속|참고|citation|reference)/i.test(rawText) || /(?:비슷한|유사한|관련된?|comparable|similar|related|follow[-\s]?up).{0,30}(?:논문|paper|papers|study|studies|연구)/i.test(rawText) || /(?:논문|paper|papers|study|studies|연구).{0,30}(?:비슷|유사|관련|similar|related|comparable|follow[-\s]?up)/i.test(rawText);
+  const activePaperReferent = /(?:이\s*논문|이\s*연구|이\s*paper|this\s+paper|this\s+study|이거랑|이것과|위\s*논문|앞\s*논문|방금\s*논문|active\s+paper)/i.test(rawText);
+  const independentNewTopicTrendRequest = /(?:최근|최신|요즘|동향|트렌드|트렌디|핫한|emerging|latest|recent|trend|trends|state[-\s]?of[-\s]?the[-\s]?art|sota|field\s+overview|분야\s*흐름)/i.test(rawText) && !activePaperReferent && !explicitRelatedPaperText;
   if (independentNewTopicTrendRequest) return false;
-
   const semanticIntent = normalizePaperTalkIntentLabel(
     autoIntent?.paper_talk_intent || autoIntent?.question_type || ""
   );
   const answerStyle = String(autoIntent?.answer_style || "").toLowerCase();
   const interpretedIntent = String(autoIntent?.interpreted_intent || "").toLowerCase();
-
-  // Primary route: trust semantic related-paper output only when the current text
-  // explicitly points to related/similar papers or clearly refers to the active paper.
   if (toSemanticBoolean(autoIntent?.is_related_paper_request)) {
     return explicitRelatedPaperText || activePaperReferent;
   }
-
-  if (
-    semanticIntent === "LITERATURE_REVIEW" &&
-    (explicitRelatedPaperText || activePaperReferent) &&
-    /similar|related|comparable|follow[-\s]?up|recommend|reference|citation|비슷|유사|관련|후속|추천|참고/.test(
-      `${answerStyle} ${interpretedIntent}`
-    )
-  ) {
+  if (semanticIntent === "LITERATURE_REVIEW" && (explicitRelatedPaperText || activePaperReferent) && /similar|related|comparable|follow[-\s]?up|recommend|reference|citation|비슷|유사|관련|후속|추천|참고/.test(
+    `${answerStyle} ${interpretedIntent}`
+  )) {
     return true;
   }
-
-  // Safety fallback only when the planner is unavailable or returns incomplete JSON.
-  // Do not use this for code-first routing.
-  return explicitRelatedPaperText ||
-    /비슷한\s*논문|유사한\s*논문|관련\s*논문|다른\s*논문|같은\s*주제의\s*논문|similar\s+papers?|related\s+papers?|other\s+papers?|more\s+papers?|follow[-\s]?up\s+stud/i.test(text);
+  return explicitRelatedPaperText || /비슷한\s*논문|유사한\s*논문|관련\s*논문|다른\s*논문|같은\s*주제의\s*논문|similar\s+papers?|related\s+papers?|other\s+papers?|more\s+papers?|follow[-\s]?up\s+stud/i.test(text);
 }
-
+__name(isRelatedPaperDiscoveryRequest, "isRelatedPaperDiscoveryRequest");
 function buildRelatedPaperDiscoveryQuery(activePaperContext, message, autoIntent = {}) {
-  const active = Array.isArray(activePaperContext) && activePaperContext.length
-    ? activePaperContext[0]
-    : null;
-
+  const active = Array.isArray(activePaperContext) && activePaperContext.length ? activePaperContext[0] : null;
   const activeTitle = String(active?.title || "").trim();
   const activeContent = String(active?.content || "").replace(/\s+/g, " ").slice(0, 2500);
-
   return [
     "Find Paper_Talk DB papers related to the active paper. Use the active paper as a seed, but retrieve OTHER related papers if available.",
     activeTitle ? `Active paper title: ${activeTitle}` : "",
@@ -6578,58 +4717,36 @@ function buildRelatedPaperDiscoveryQuery(activePaperContext, message, autoIntent
     "Search concepts: disease, model system, method, gene/program, microenvironment, mechanism, validation, clinical implication."
   ].filter(Boolean).join("\n\n");
 }
-
+__name(buildRelatedPaperDiscoveryQuery, "buildRelatedPaperDiscoveryQuery");
 function cleanUserFacingPaperTitleForLanguage(title, language = "English") {
   let value = stripUserRequestTailFromPaperTitle(title || "");
   if (!value) return "";
-
-  // If the user asked for English, never expose the Korean follow-up instruction
-  // that may have been appended to the active-paper title by the chat state.
-  // Example bad state:
-  // "ecPICK: ... histopathology 논문이랑 비슷한 논문이나 ... 영어로"
   if (language === "English" && /[가-힣]/.test(value)) {
     value = value.split(/[가-힣]/)[0].trim();
   }
-
-  value = value
-    .replace(/\s+(?:please|pls)?\s*(?:give|recommend|show|list|find)\s+(?:me\s+)?(?:similar|related|follow[-\s]?up)[\s\S]*$/i, "")
-    .replace(/\s+(?:in\s+english|answer\s+in\s+english|english\s+only)[\s\S]*$/i, "")
-    .replace(/["“”'`]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
+  value = value.replace(/\s+(?:please|pls)?\s*(?:give|recommend|show|list|find)\s+(?:me\s+)?(?:similar|related|follow[-\s]?up)[\s\S]*$/i, "").replace(/\s+(?:in\s+english|answer\s+in\s+english|english\s+only)[\s\S]*$/i, "").replace(/["“”'`]+$/g, "").replace(/\s+/g, " ").trim();
   return value;
 }
-
+__name(cleanUserFacingPaperTitleForLanguage, "cleanUserFacingPaperTitleForLanguage");
 function getRelatedPaperUserFacingTopic(activePaperContext, userMessage, language = "English") {
-  const active = Array.isArray(activePaperContext) && activePaperContext.length
-    ? activePaperContext[0]
-    : null;
-
+  const active = Array.isArray(activePaperContext) && activePaperContext.length ? activePaperContext[0] : null;
   const title = cleanUserFacingPaperTitleForLanguage(active?.title || "", language);
   if (!isLowInformationPaperTitle(title)) return title;
-
   const extracted = cleanUserFacingPaperTitleForLanguage(
     extractLikelyPaperTitleForSafeLookup(String(userMessage || "")),
     language
   );
-
   return isLowInformationPaperTitle(extracted) ? "" : extracted;
 }
-
+__name(getRelatedPaperUserFacingTopic, "getRelatedPaperUserFacingTopic");
 function buildRelatedPaperWhyLine(item, activePaperContext, userMessage, isKo) {
   const hay = cleanBibtexText([
     item?.matched_chunk || "",
     item?.content || ""
   ].filter(Boolean).join(" ")).replace(/\s+/g, " ").trim();
-
-  const activeHay = cleanBibtexText((activePaperContext || [])
-    .map(p => `${p?.title || ""} ${p?.matched_chunk || ""} ${p?.content || ""}`)
-    .join(" ")).toLowerCase();
-
+  const activeHay = cleanBibtexText((activePaperContext || []).map((p) => `${p?.title || ""} ${p?.matched_chunk || ""} ${p?.content || ""}`).join(" ")).toLowerCase();
   const queryHay = String(userMessage || "").toLowerCase();
   const combined = `${activeHay} ${queryHay} ${hay.toLowerCase()}`;
-
   const tags = [];
   if (/multiplex|mibi|codex|imaging|image|phenotyp|phenotyping|cell phenotyp|histolog|imc|cycif|spatial proteomic/i.test(combined)) {
     tags.push(isKo ? "multiplexed imaging / cell phenotyping" : "multiplexed imaging and cell phenotyping");
@@ -6643,233 +4760,129 @@ function buildRelatedPaperWhyLine(item, activePaperContext, userMessage, isKo) {
   if (/single[-\s]?cell|cell state|cellular state|atlas|deep learning|machine learning|segmentation|classification|clustering/i.test(combined)) {
     tags.push(isKo ? "single-cell level state classification" : "single-cell-level state classification");
   }
-
   const uniqueTags = [...new Set(tags)].slice(0, 3);
   if (uniqueTags.length) {
-    return isKo
-      ? `활성 논문과 ${uniqueTags.join(", ")} 축이 겹칩니다.`
-      : `It overlaps with the active paper through ${uniqueTags.join(", ")}.`;
+    return isKo ? `\uD65C\uC131 \uB17C\uBB38\uACFC ${uniqueTags.join(", ")} \uCD95\uC774 \uACB9\uCE69\uB2C8\uB2E4.` : `It overlaps with the active paper through ${uniqueTags.join(", ")}.`;
   }
-
-  const excerpt = hay
-    .replace(/^(title|abstract|summary|content)\s*[:：]\s*/i, "")
-    .slice(0, 220)
-    .trim();
-
+  const excerpt = hay.replace(/^(title|abstract|summary|content)\s*[:：]\s*/i, "").slice(0, 220).trim();
   if (excerpt) {
-    return isKo
-      ? `검색된 excerpt에서 유사한 연구 맥락이 보입니다: ${excerpt}`
-      : `The retrieved excerpt suggests a related research context: ${excerpt}`;
+    return isKo ? `\uAC80\uC0C9\uB41C excerpt\uC5D0\uC11C \uC720\uC0AC\uD55C \uC5F0\uAD6C \uB9E5\uB77D\uC774 \uBCF4\uC785\uB2C8\uB2E4: ${excerpt}` : `The retrieved excerpt suggests a related research context: ${excerpt}`;
   }
-
-  return isKo
-    ? "활성 논문과 주제 또는 방법론이 가까운 Paper_Talk DB 논문입니다."
-    : "This is a Paper_Talk DB paper with a related topic or methodological angle.";
+  return isKo ? "\uD65C\uC131 \uB17C\uBB38\uACFC \uC8FC\uC81C \uB610\uB294 \uBC29\uBC95\uB860\uC774 \uAC00\uAE4C\uC6B4 Paper_Talk DB \uB17C\uBB38\uC785\uB2C8\uB2E4." : "This is a Paper_Talk DB paper with a related topic or methodological angle.";
 }
-
+__name(buildRelatedPaperWhyLine, "buildRelatedPaperWhyLine");
 function buildRelatedPaperAnswerFromContext({ context, activePaperContext = [], userMessage = "" }) {
   const language = detectUserLanguage(userMessage);
   const isKo = language === "Korean";
   const activeTitle = getRelatedPaperUserFacingTopic(activePaperContext, userMessage, language);
-
   const activeItems = Array.isArray(activePaperContext) ? activePaperContext : [];
   const candidates = selectTopSupportingPapersForAnswer(
-    (Array.isArray(context) ? context : [])
-      .filter(item => !activeItems.some(active => isSameKnowledgePaper(item, active))),
+    (Array.isArray(context) ? context : []).filter((item) => !activeItems.some((active) => isSameKnowledgePaper(item, active))),
     6,
     "LITERATURE_REVIEW"
   );
-
   if (!candidates.length) {
-    return isKo
-      ? [
-          activeTitle
-            ? `현재 Paper_Talk DB에서 "${activeTitle}"와 직접 비교할 만한 다른 유사 논문을 충분히 찾지 못했습니다.`
-            : "현재 Paper_Talk DB에서 이 논문과 직접 비교할 만한 다른 유사 논문을 충분히 찾지 못했습니다.",
-          "검색어를 multiplexed imaging, spatial tumor microenvironment, cell phenotyping, immune neighborhood처럼 조금 더 넓혀서 다시 찾으면 더 잘 잡힐 수 있습니다."
-        ].join("\n")
-      : [
-          activeTitle
-            ? `I could not find enough other directly comparable papers in the current Paper_Talk DB for "${activeTitle}."`
-            : "I could not find enough other directly comparable papers in the current Paper_Talk DB for this active paper.",
-          "Try broadening the query with terms such as multiplexed imaging, spatial tumor microenvironment, cell phenotyping, or immune neighborhood."
-        ].join("\n");
+    return isKo ? [
+      activeTitle ? `\uD604\uC7AC Paper_Talk DB\uC5D0\uC11C "${activeTitle}"\uC640 \uC9C1\uC811 \uBE44\uAD50\uD560 \uB9CC\uD55C \uB2E4\uB978 \uC720\uC0AC \uB17C\uBB38\uC744 \uCDA9\uBD84\uD788 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.` : "\uD604\uC7AC Paper_Talk DB\uC5D0\uC11C \uC774 \uB17C\uBB38\uACFC \uC9C1\uC811 \uBE44\uAD50\uD560 \uB9CC\uD55C \uB2E4\uB978 \uC720\uC0AC \uB17C\uBB38\uC744 \uCDA9\uBD84\uD788 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.",
+      "\uAC80\uC0C9\uC5B4\uB97C multiplexed imaging, spatial tumor microenvironment, cell phenotyping, immune neighborhood\uCC98\uB7FC \uC870\uAE08 \uB354 \uB113\uD600\uC11C \uB2E4\uC2DC \uCC3E\uC73C\uBA74 \uB354 \uC798 \uC7A1\uD790 \uC218 \uC788\uC2B5\uB2C8\uB2E4."
+    ].join("\n") : [
+      activeTitle ? `I could not find enough other directly comparable papers in the current Paper_Talk DB for "${activeTitle}."` : "I could not find enough other directly comparable papers in the current Paper_Talk DB for this active paper.",
+      "Try broadening the query with terms such as multiplexed imaging, spatial tumor microenvironment, cell phenotyping, or immune neighborhood."
+    ].join("\n");
   }
-
-  const intro = isKo
-    ? (activeTitle
-      ? `"${activeTitle}"와 비슷한 논문은 아래처럼 보면 좋습니다.`
-      : "이 논문과 비슷한 논문은 아래처럼 보면 좋습니다.")
-    : (activeTitle
-      ? `Here are papers that may be useful as related or follow-up references for "${activeTitle}."`
-      : "Here are papers that may be useful as related or follow-up references.");
-
+  const intro = isKo ? activeTitle ? `"${activeTitle}"\uC640 \uBE44\uC2B7\uD55C \uB17C\uBB38\uC740 \uC544\uB798\uCC98\uB7FC \uBCF4\uBA74 \uC88B\uC2B5\uB2C8\uB2E4.` : "\uC774 \uB17C\uBB38\uACFC \uBE44\uC2B7\uD55C \uB17C\uBB38\uC740 \uC544\uB798\uCC98\uB7FC \uBCF4\uBA74 \uC88B\uC2B5\uB2C8\uB2E4." : activeTitle ? `Here are papers that may be useful as related or follow-up references for "${activeTitle}."` : "Here are papers that may be useful as related or follow-up references.";
   const lines = candidates.map((item, index) => {
     const title = cleanBibtexText(item?.title || "Untitled Paper").trim() || "Untitled Paper";
     const why = buildRelatedPaperWhyLine(item, activePaperContext, userMessage, isKo);
-    return `${index + 1}. ${title}\n   ${isKo ? "왜 비슷한가" : "Why similar"}: ${why}`;
+    return `${index + 1}. ${title}
+   ${isKo ? "\uC65C \uBE44\uC2B7\uD55C\uAC00" : "Why similar"}: ${why}`;
   });
-
-  const closing = isKo
-    ? "정리하면, 이 주제는 단순한 image analysis라기보다 multiplexed single-cell phenotyping과 spatial neighborhood/TME 해석을 함께 보는 논문들로 묶어 읽는 것이 좋습니다."
-    : "In short, this topic is best read through papers that combine multiplexed single-cell phenotyping with spatial neighborhood or tumor-microenvironment interpretation.";
-
+  const closing = isKo ? "\uC815\uB9AC\uD558\uBA74, \uC774 \uC8FC\uC81C\uB294 \uB2E8\uC21C\uD55C image analysis\uB77C\uAE30\uBCF4\uB2E4 multiplexed single-cell phenotyping\uACFC spatial neighborhood/TME \uD574\uC11D\uC744 \uD568\uAED8 \uBCF4\uB294 \uB17C\uBB38\uB4E4\uB85C \uBB36\uC5B4 \uC77D\uB294 \uAC83\uC774 \uC88B\uC2B5\uB2C8\uB2E4." : "In short, this topic is best read through papers that combine multiplexed single-cell phenotyping with spatial neighborhood or tumor-microenvironment interpretation.";
   return [intro, "", ...lines, "", closing].join("\n");
 }
-
+__name(buildRelatedPaperAnswerFromContext, "buildRelatedPaperAnswerFromContext");
 function isSameKnowledgePaper(a, b) {
   const ap = String(a?.post_id || "").trim();
   const bp = String(b?.post_id || "").trim();
   if (ap && bp && ap === bp) return true;
-
   const at = normalizeSearchText(a?.title || "");
   const bt = normalizeSearchText(b?.title || "");
   if (at && bt && at === bt) return true;
-
   const au = normalizeSearchText(`${a?.source_url || ""} ${a?.pdf_link || ""}`);
   const bu = normalizeSearchText(`${b?.source_url || ""} ${b?.pdf_link || ""}`);
   if (au && bu && (au.includes(bu) || bu.includes(au))) return true;
-
   return false;
 }
-
-
-const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 4;
-const PAPER_TALK_MAX_VECTOR_INDEX_CHUNKS_PER_IMPORT = 0;
-// v93: allow enough DB papers for agent-style comparison.
-// Keep this bounded to avoid Cloudflare/OpenAI prompt failures, but do not cut broad
-// literature/method questions to only 1-2 papers.
-const PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 10;
-const PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 14000;
-const PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 1600;
-const PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 6000;
-const PAPER_TALK_MIN_FULLTEXT_CHARS = 20;
-const PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS = 12000;
-const PAPER_TALK_SKIP_VECTORIZE_DURING_IMPORT = true;
-
+__name(isSameKnowledgePaper, "isSameKnowledgePaper");
+var PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHUNKS = 4;
+var PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS = 10;
+var PAPER_TALK_MAX_CHAT_CONTEXT_TEXT = 14e3;
+var PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM = 1600;
+var PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS = 6e3;
+var PAPER_TALK_MIN_FULLTEXT_CHARS = 20;
+var PAPER_TALK_MAX_IMPORTED_FULLTEXT_CHARS = 12e3;
 function isLikelyGeneralQuestionFast(message) {
-  const text = String(message || '').trim();
+  const text = String(message || "").trim();
   if (!text) return false;
-
   const lower = text.toLowerCase();
-
-  // v54: If the message contains a paper-title-like scientific span, never route it
-  // to the no-retrieval/general path. This catches multilingual instructions such as
-  // "<English title> 을 읽고 요약해줘", "résume cet article: <title>", etc.
   try {
     const titleLike = extractLikelyPaperTitleForSafeLookup(text);
     const sciTokens = String(titleLike || "").match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || [];
     if (titleLike.length >= 18 && sciTokens.length >= 3) return false;
-  } catch {}
-
+  } catch {
+  }
   const explicitResearchSignal = /paper_talk|db|논문|연구|literature|paper|papers|abstract|doi|pubmed|pmid|reindex|full\s*text|pdf|암|cancer|tumou?r|genomics|single[-\s]?cell|spatial|rna[-\s]?seq|scrna|transcriptomics|proteomics|multi[-\s]?omics|trajectory|velocity|scvelo|velocyto|visium|xenium|cosmx|mutation|variant|biomarker|immunotherapy|checkpoint|t\s*cell|b\s*cell|myeloid|macrophage|fibroblast|pancreatic|melanoma|glioma|breast|lung|colon|metastasis|organoid|crispr|sequencing/i;
   if (explicitResearchSignal.test(text)) return false;
-
   const casualOrUtility = /^(hi|hello|hey|thanks|thank you|고마워|안녕|안녕하세요|테스트|test|오늘 날씨|몇 시|who are you|너 누구|help|도움말|뭐 할 수 있어|무엇을 할 수)/i;
   if (casualOrUtility.test(lower)) return true;
-
   if (text.length <= 80 && !/[?？].*(논문|연구|paper|cancer|omics)/i.test(text)) {
     return true;
   }
-
   return false;
 }
-
-
-function isBroadResearchAdviceQuestionFast(message) {
-  const text = String(message || '').trim();
-  if (!text) return false;
-  const lower = text.toLowerCase();
-
-  // Recommendation requests for specific papers should still use the lightweight DB lookup.
-  if (/(recommend|추천).{0,30}(paper|papers|논문)|(?:paper|papers|논문).{0,30}(recommend|추천)/i.test(text)) return false;
-
-  // These are broad brainstorming / career / direction questions. Searching hundreds of
-  // PDF chunks for them is expensive and caused Cloudflare 500/503 HTML responses after
-  // many full-text uploads. Answer them directly, without DB/Vectorize retrieval.
-  if (/(뭘|뭐|무엇|어떤|어떻게).{0,20}(하면|할까|좋을까|좋을지|추천|아이디어|방향|주제)/.test(text)) return true;
-  if (/(연구|spatial|single.?cell|genomics|cancer).{0,30}(아이디어|방향|추천|주제|하면 좋|할까)/i.test(text)) return true;
-  if (/research\s+(idea|ideas|direction|topic|proposal|plan|recommend)/i.test(lower)) return true;
-  if (/what\s+(spatial|single[-\s]?cell|genomics|cancer).{0,40}(study|project|research)/i.test(lower)) return true;
-
-  return false;
-}
-
+__name(isLikelyGeneralQuestionFast, "isLikelyGeneralQuestionFast");
 function makeEmptyStrictActivePaperContext() {
   return {
     activePaperLocked: false,
-    activePaperQuery: '',
+    activePaperQuery: "",
     activePaperContext: []
   };
 }
-
+__name(makeEmptyStrictActivePaperContext, "makeEmptyStrictActivePaperContext");
 function trimKnowledgeItemForChat(item) {
   if (!item) return item;
-  const content = String(item.content || '').slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM + 1200);
-  const matched = String(item.matched_chunk || makeBestEvidenceExcerpt(item.content || '') || '').slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM);
+  const content = String(item.content || "").slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM + 1200);
+  const matched = String(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "") || "").slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM);
   return {
     ...item,
     content,
     matched_chunk: matched
   };
 }
-
+__name(trimKnowledgeItemForChat, "trimKnowledgeItemForChat");
 function trimContextForChat(context) {
-  return mergeKnowledgeResults(Array.isArray(context) ? context : [])
-    .filter(item => !isThinkingLogicKnowledgeItem(item))
-    .slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS)
-    .map(trimKnowledgeItemForChat);
+  return mergeKnowledgeResults(Array.isArray(context) ? context : []).filter((item) => !isThinkingLogicKnowledgeItem(item)).slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS).map(trimKnowledgeItemForChat);
 }
-
-
+__name(trimContextForChat, "trimContextForChat");
 function extractLikelyPaperTitleForSafeLookup(message) {
-  // v53 multilingual automatic title/snippet detector.
-  // Do not hardcode one language's request words. Instead:
-  // - Prefer quoted text.
-  // - Prefer long scientific Latin/digit spans, which cover most paper titles.
-  // - Fall back to the longest line after removing URLs/PDF suffixes.
-  const raw = String(message || "")
-    .replace(/https?:\/\/\S+/gi, " ")
-    .replace(/\.pdf\b/gi, " ")
-    .replace(/[_]+/g, " ")
-    .replace(/[‐‑‒–—]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
-
+  const raw = String(message || "").replace(/https?:\/\/\S+/gi, " ").replace(/\.pdf\b/gi, " ").replace(/[_]+/g, " ").replace(/[‐‑‒–—]/g, "-").replace(/\s+/g, " ").trim();
   if (!raw) return "";
-
   const quoted = raw.match(/["“”'`「『《](.{8,220}?)[“”"'`」』》]/);
   if (quoted && quoted[1]) {
     return quoted[1].replace(/\s+/g, " ").trim().slice(0, 180);
   }
-
-  const lines = String(message || "")
-    .split(/\n+/)
-    .map(v => v.replace(/https?:\/\/\S+/gi, " ").replace(/\.pdf\b/gi, " ").replace(/[_]+/g, " ").replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-
+  const lines = String(message || "").split(/\n+/).map((v) => v.replace(/https?:\/\/\S+/gi, " ").replace(/\.pdf\b/gi, " ").replace(/[_]+/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
   const candidates = [];
-
   for (const line of [raw, ...lines]) {
-    // Long title-like scientific span. This naturally stops before/after Korean,
-    // Japanese, Chinese, French, Spanish, etc. instruction words when the paper
-    // title itself is in English, without needing language-specific stopwords.
     const spans = line.match(/[A-Za-z0-9][A-Za-z0-9+\-:;,/() ]{10,220}[A-Za-z0-9)]/g) || [];
     for (const span of spans) {
-      const cleaned = span
-        .replace(/\b(?:pdf|txt)\b/ig, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
+      const cleaned = span.replace(/\b(?:pdf|txt)\b/ig, " ").replace(/\s+/g, " ").trim();
       const scientificTokens = cleaned.match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || [];
       if (scientificTokens.length >= 3 && cleaned.length >= 12) candidates.push(cleaned);
     }
-
     if (line.length >= 8) candidates.push(line.slice(0, 220));
   }
-
   if (!candidates.length) return raw.slice(0, 180);
-
   candidates.sort((a, b) => {
     const sciA = (a.match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || []).length;
     const sciB = (b.match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || []).length;
@@ -6877,40 +4890,15 @@ function extractLikelyPaperTitleForSafeLookup(message) {
     const scoreB = sciB * 20 + Math.min(b.length, 180);
     return scoreB - scoreA;
   });
-
   return candidates[0].replace(/\s+/g, " ").trim().slice(0, 180);
 }
-
-
-function makeSafeLikePattern(value, maxLen = 70) {
-  const safe = String(value || '')
-    .toLowerCase()
-    .replace(/[%_]/g, ' ')
-    .replace(/[^a-z0-9가-힣\s\-–:]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, maxLen)
-    .trim();
-  return safe ? `%${safe}%` : '';
-}
-
-
+__name(extractLikelyPaperTitleForSafeLookup, "extractLikelyPaperTitleForSafeLookup");
 async function safeRetrievePaperContextForChat(message, env, gptKey = DEFAULT_GPT_KEY) {
   gptKey = normalizeGptKey(gptKey);
   await ensureSpecialistGptTables(env);
-  // v52 robust bounded D1 retrieval:
-  // - title, file name, keyword, and pasted full-text snippets should all retrieve papers.
-  // - no broad full-table scan
-  // - no Vectorize during chat
-  // - bounded rows and bounded context to avoid Cloudflare 500/503
   const userQuery = String(message || "").trim();
   if (!userQuery) return [];
-
   const allItems = [];
-
-  // Exact paper/title/DOI/URL lookup must run before fuzzy keyword retrieval.
-  // Otherwise a real stored paper can be missed when the user adds multilingual
-  // instructions after the title, e.g. "<title> 논문에서 하이라이트를 한줄로 줘".
   try {
     const explicitMatches = await findExplicitPaperMatchesFromQuestion(userQuery, env, gptKey);
     if (Array.isArray(explicitMatches) && explicitMatches.length) {
@@ -6918,21 +4906,15 @@ async function safeRetrievePaperContextForChat(message, env, gptKey = DEFAULT_GP
       allItems.push(...enriched);
     }
   } catch {
-    // Continue to fuzzy retrieval.
   }
-
   try {
     allItems.push(...await searchPaperFullTextChunks(userQuery, env, 6, gptKey));
   } catch {
-    // Continue to metadata fallback.
   }
-
   const terms = buildRobustFullTextSearchTerms(userQuery).slice(0, 8);
-
   if (terms.length) {
     const clauses = [];
     const params = [];
-
     for (const term of terms) {
       clauses.push(`(
         LOWER(title) LIKE ?
@@ -6943,7 +4925,6 @@ async function safeRetrievePaperContextForChat(message, env, gptKey = DEFAULT_GP
       const like = `%${String(term || "").toLowerCase()}%`;
       params.push(like, like, like, like);
     }
-
     try {
       const rows = await env.DB.prepare(`
         SELECT post_id, title, source_url, pdf_link, content, updated_at
@@ -6957,53 +4938,43 @@ async function safeRetrievePaperContextForChat(message, env, gptKey = DEFAULT_GP
         ORDER BY datetime(updated_at) DESC
         LIMIT 20
       `).bind(gptKey, ...params).all();
-
-      const scored = (rows.results || [])
-        .map(row => {
-          const hay = `${row.title || ""}\n${row.content || ""}\n${row.source_url || ""}\n${row.pdf_link || ""}`.toLowerCase();
-          const score = terms.reduce((sum, term) => sum + (hay.includes(String(term || "").toLowerCase()) ? Math.min(80, 12 + String(term).length) : 0), 0);
-          return { row, score };
-        })
-        .filter(item => item.score > 0)
-        .sort((a, b) => b.score - a.score);
-
+      const scored = (rows.results || []).map((row) => {
+        const hay = `${row.title || ""}
+${row.content || ""}
+${row.source_url || ""}
+${row.pdf_link || ""}`.toLowerCase();
+        const score = terms.reduce((sum, term) => sum + (hay.includes(String(term || "").toLowerCase()) ? Math.min(80, 12 + String(term).length) : 0), 0);
+        return { row, score };
+      }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
       for (const { row, score } of scored.slice(0, 4)) {
         allItems.push({
           post_id: row.post_id || "",
           title: cleanBibtexText(row.title || ""),
           source_url: row.source_url || "",
           pdf_link: row.pdf_link || "",
-          content: String(row.content || "").slice(0, 3000),
+          content: String(row.content || "").slice(0, 3e3),
           matched_chunk: makeBestEvidenceExcerpt(row.content || "").slice(0, 1600),
           similarity_score: score,
           from_research_knowledge_search: true
         });
       }
     } catch {
-      // Continue.
     }
   }
-
-  const merged = mergeKnowledgeResults(allItems)
-    .filter(item => !isThinkingLogicKnowledgeItem(item))
-    .slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS)
-    .map(trimKnowledgeItemForChat);
-
+  const merged = mergeKnowledgeResults(allItems).filter((item) => !isThinkingLogicKnowledgeItem(item)).slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS).map(trimKnowledgeItemForChat);
   return merged;
 }
-
-
+__name(safeRetrievePaperContextForChat, "safeRetrievePaperContextForChat");
 async function callOpenAIGeneralNoRetrieval(userMessage, env, cancelRuntime = null) {
-  if (!env.AI) return "Cloudflare Workers AI binding is missing.";
-
+  if (!env.OPENAI_API_KEY) return "OPENAI_API_KEY is missing.";
   await cancelRuntime?.throwIfCanceled?.();
-  const abortable = createLinkedAbortController(cancelRuntime, 45000);
-
+  const abortable = createLinkedAbortController(cancelRuntime, 45e3);
   try {
-    const res = await fetchChatCompletionWithWorkersAI(env, {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       signal: abortable.signal,
       headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -7035,7 +5006,6 @@ Plain text only.`
         max_completion_tokens: 1800
       })
     });
-
     const raw = await res.text();
     let data = {};
     try {
@@ -7043,11 +5013,9 @@ Plain text only.`
     } catch {
       return `OpenAI general request returned non-JSON response. HTTP ${res.status}. ${raw.slice(0, 300)}`;
     }
-
     if (!res.ok) {
       return `OpenAI general request failed. HTTP ${res.status}. ${data?.error?.message || JSON.stringify(data).slice(0, 300)}`;
     }
-
     return extractOpenAIText(data) || "No answer returned.";
   } catch (error) {
     if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
@@ -7061,15 +5029,9 @@ Plain text only.`
     abortable.cleanup();
   }
 }
-
-
-// =============================
-// Paper_Talk v72 semantic routing helpers
-// =============================
-
+__name(callOpenAIGeneralNoRetrieval, "callOpenAIGeneralNoRetrieval");
 function normalizePaperTalkIntentLabel(value) {
   const v = String(value || "").trim().toUpperCase().replace(/[^A-Z_]/g, "");
-
   if ([
     "LITERATURE_REVIEW",
     "RESEARCH_IDEA",
@@ -7082,11 +5044,8 @@ function normalizePaperTalkIntentLabel(value) {
     "SOURCE_TRACE",
     "GENERAL"
   ].includes(v)) return v;
-
   if (v === "LITERATURE" || v === "REVIEW" || v === "TREND" || v === "TRENDS") return "LITERATURE_REVIEW";
   if (v === "RESEARCH" || v === "RESEARCH_DIRECTION" || v === "RESEARCH_INSIGHT" || v === "IDEA" || v === "PROJECT_IDEA") return "RESEARCH_IDEA";
-
-  // v82: distinguish tool/method extraction from end-to-end workflow requests.
   if ([
     "PIPELINE",
     "WORKFLOW",
@@ -7098,7 +5057,6 @@ function normalizePaperTalkIntentLabel(value) {
     "PIPELINE_EXTRACTION",
     "WORKFLOW_EXTRACTION"
   ].includes(v)) return "PIPELINE_WORKFLOW";
-
   if ([
     "METHOD",
     "METHODS",
@@ -7112,11 +5070,10 @@ function normalizePaperTalkIntentLabel(value) {
     "PACKAGE_EXTRACTION",
     "SOFTWARE_EXTRACTION"
   ].includes(v)) return "METHOD_EXTRACTION";
-
   if (v === "EXPLANATION") return "CONCEPT";
   return "GENERAL";
 }
-
+__name(normalizePaperTalkIntentLabel, "normalizePaperTalkIntentLabel");
 function normalizePaperTalkDomainLabel(value) {
   const v = String(value || "").trim().toUpperCase().replace(/[^A-Z_]/g, "");
   if (["SPATIAL_BIOLOGY", "CANCER_GENOMICS", "SINGLE_CELL", "IMMUNOLOGY", "AGING", "MULTIOMICS", "AI_METHOD", "GENERAL"].includes(v)) return v;
@@ -7128,22 +5085,18 @@ function normalizePaperTalkDomainLabel(value) {
   if (v.includes("AI") || v.includes("DEEP") || v.includes("MODEL")) return "AI_METHOD";
   return "GENERAL";
 }
-
+__name(normalizePaperTalkDomainLabel, "normalizePaperTalkDomainLabel");
 function toSemanticBoolean(value) {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
   const v = String(value || "").trim().toLowerCase();
   return ["true", "yes", "y", "1"].includes(v);
 }
-
+__name(toSemanticBoolean, "toSemanticBoolean");
 function normalizeSemanticAnswerStyle(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
 }
-
+__name(normalizeSemanticAnswerStyle, "normalizeSemanticAnswerStyle");
 function shouldUseCodeFirstMode({
   inferredIntent,
   forcedOutputStyle,
@@ -7153,17 +5106,8 @@ function shouldUseCodeFirstMode({
   const semanticIntent = normalizePaperTalkIntentLabel(
     inferredIntent?.paper_talk_intent || inferredIntent?.question_type || ""
   );
-
   const answerStyle = normalizeSemanticAnswerStyle(inferredIntent?.answer_style || "");
-
-  // Only the semantic planner can turn this on. Do not use keyword matching here.
-  const wantsExecutableCode =
-    toSemanticBoolean(inferredIntent?.wants_executable_code) ||
-    answerStyle === "executable_code" ||
-    answerStyle === "runnable_code" ||
-    answerStyle === "script_generation" ||
-    answerStyle === "code_generation";
-
+  const wantsExecutableCode = toSemanticBoolean(inferredIntent?.wants_executable_code) || answerStyle === "executable_code" || answerStyle === "runnable_code" || answerStyle === "script_generation" || answerStyle === "code_generation";
   const literatureOrResearchIntent = [
     "LITERATURE_REVIEW",
     "RESEARCH_IDEA",
@@ -7173,7 +5117,6 @@ function shouldUseCodeFirstMode({
     "SOURCE_TRACE",
     "CONCEPT"
   ].includes(semanticIntent);
-
   const nonCodeContinuationStyle = [
     "LITERATURE_REVIEW",
     "RESEARCH_INSIGHT",
@@ -7185,34 +5128,24 @@ function shouldUseCodeFirstMode({
     "CONCEPT_EXPLANATION",
     "FOLLOW_UP_MORE"
   ].includes(String(forcedOutputStyle || ""));
-
   if (relatedPaperMode) return false;
   if (strictActivePaperState?.activePaperLocked && forcedOutputStyle === "PAPER_SUMMARY") return false;
   if (literatureOrResearchIntent) return false;
   if (nonCodeContinuationStyle) return false;
-
   return wantsExecutableCode;
 }
-
+__name(shouldUseCodeFirstMode, "shouldUseCodeFirstMode");
 function isSpatialRoiMethodWorkflowQuestion(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
   if (!text) return false;
-
-  const hasSpatialImagingSignal =
-    /(spatial|공간|multiplex|multiplexing|multi[-\s]?plex|멀티플렉스|다중화|imaging|image|이미지|codex|mibi|imc|cycif|xenium|cosmx|merfish|seqfish|visium|slide[-\s]?seq|spatial transcriptomics|공간전사체|공간 전사체)/i.test(text);
-
-  const hasRegionSignal =
-    /(roi|region of interest|region|regions|tissue region|spatial region|domain|niche|neighborhood|neighbourhood|microenvironment|territory|compartment|area|영역|관심영역|관심 영역|구역|부위|니치|도메인|네이버후드|근처|주변|조직 구조|조직영역)/i.test(text);
-
-  const hasHowToSignal =
-    /(how to|how do|how should|find|detect|identify|define|select|choose|segment|discover|extract|analy[sz]e|workflow|pipeline|어떻게|어케|찾|잡|정의|선정|고르|뽑|검출|발견|분석|나누|구분|만들|할지|하지)/i.test(text);
-
+  const hasSpatialImagingSignal = /(spatial|공간|multiplex|multiplexing|multi[-\s]?plex|멀티플렉스|다중화|imaging|image|이미지|codex|mibi|imc|cycif|xenium|cosmx|merfish|seqfish|visium|slide[-\s]?seq|spatial transcriptomics|공간전사체|공간 전사체)/i.test(text);
+  const hasRegionSignal = /(roi|region of interest|region|regions|tissue region|spatial region|domain|niche|neighborhood|neighbourhood|microenvironment|territory|compartment|area|영역|관심영역|관심 영역|구역|부위|니치|도메인|네이버후드|근처|주변|조직 구조|조직영역)/i.test(text);
+  const hasHowToSignal = /(how to|how do|how should|find|detect|identify|define|select|choose|segment|discover|extract|analy[sz]e|workflow|pipeline|어떻게|어케|찾|잡|정의|선정|고르|뽑|검출|발견|분석|나누|구분|만들|할지|하지)/i.test(text);
   return hasSpatialImagingSignal && hasRegionSignal && hasHowToSignal;
 }
-
+__name(isSpatialRoiMethodWorkflowQuestion, "isSpatialRoiMethodWorkflowQuestion");
 function heuristicPaperTalkPlanner(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
-
   let literatureScore = 0;
   let ideaScore = 0;
   let methodScore = 0;
@@ -7220,40 +5153,26 @@ function heuristicPaperTalkPlanner(message) {
   let validationScore = 0;
   let comparisonScore = 0;
   let conceptScore = 0;
-
-  const add = (regex, score, bucket) => { if (regex.test(text)) bucket(score); };
-  add(/(trend|trendy|hot|latest|recent|emerging|state of the art|sota|요즘|최근|최신|트렌드|트렌디|핫한|뜨는|유행|동향|읽어볼|볼 만한|중요한 연구|대표 논문|논문 추천|literature|papers? to read|recommend.*papers?)/i, 3, s => literatureScore += s);
-  add(/(what research|project idea|research idea|future direction|promising|hypothesis|뭘 연구|어떤 연구|연구.*아이디어|연구.*주제|연구.*방향|앞으로|향후|유망|가설|할 수 있을까|하면 좋을까|접목)/i, 3, s => ideaScore += s);
-
-  // Fallback only. Primary routing is done by the LLM planner below.
-  // Pipeline/workflow requests should produce a step-by-step workflow, not just a tool list.
-  add(/(pipeline|workflow|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step|analysis\s+order|procedure|파이프라인|워크플로우|분석\s*순서|분석\s*단계|단계별|전체\s*분석|처음부터|raw\s*data\s*to|FASTQ.*interpretation)/i, 6, s => pipelineScore += s);
-
-  // v89: ROI / spatial region / multiplex imaging "how to find/analyze" questions
-  // are practical workflow questions. They need DB-grounded paper candidates,
-  // theme comparison, discussion, and a usable ROI-finding workflow.
+  const add = /* @__PURE__ */ __name((regex, score, bucket) => {
+    if (regex.test(text)) bucket(score);
+  }, "add");
+  add(/(trend|trendy|hot|latest|recent|emerging|state of the art|sota|요즘|최근|최신|트렌드|트렌디|핫한|뜨는|유행|동향|읽어볼|볼 만한|중요한 연구|대표 논문|논문 추천|literature|papers? to read|recommend.*papers?)/i, 3, (s) => literatureScore += s);
+  add(/(what research|project idea|research idea|future direction|promising|hypothesis|뭘 연구|어떤 연구|연구.*아이디어|연구.*주제|연구.*방향|앞으로|향후|유망|가설|할 수 있을까|하면 좋을까|접목)/i, 3, (s) => ideaScore += s);
+  add(/(pipeline|workflow|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step|analysis\s+order|procedure|파이프라인|워크플로우|분석\s*순서|분석\s*단계|단계별|전체\s*분석|처음부터|raw\s*data\s*to|FASTQ.*interpretation)/i, 6, (s) => pipelineScore += s);
   if (isSpatialRoiMethodWorkflowQuestion(text)) {
     pipelineScore += 8;
   }
-
-  // This catches obvious package/tool/method questions when OpenAI intent inference is unavailable.
-  add(/(package|packages|software|tool|tools|library|libraries|method|methods|methodology|algorithm|implementation|code|model|models|패키지|툴|도구|소프트웨어|방법론|분석법|분석 방법|알고리즘|구현|모델)/i, 4, s => methodScore += s);
-  add(/(논문|paper|papers|study|studies).{0,60}(썼|사용|used|applied|implemented|분석|방법|패키지|도구|툴|software|method|package|tool|algorithm|model)/i, 5, s => methodScore += s);
-
-  add(/(validate|validation|experiment|검증|실험 설계|확인하려면|어떻게 증명)/i, 3, s => validationScore += s);
-  add(/(compare|comparison|versus| vs |차이|비교|다른 점)/i, 3, s => comparisonScore += s);
-  add(/(what is|explain|definition|개념|설명|무엇|뭐야|정의)/i, 2, s => conceptScore += s);
-
-  // Restore older Paper_Talk behavior for broad biological association/crosstalk questions:
-  // these should be answered as evidence-grounded field insight, not as a generic concept answer.
+  add(/(package|packages|software|tool|tools|library|libraries|method|methods|methodology|algorithm|implementation|code|model|models|패키지|툴|도구|소프트웨어|방법론|분석법|분석 방법|알고리즘|구현|모델)/i, 4, (s) => methodScore += s);
+  add(/(논문|paper|papers|study|studies).{0,60}(썼|사용|used|applied|implemented|분석|방법|패키지|도구|툴|software|method|package|tool|algorithm|model)/i, 5, (s) => methodScore += s);
+  add(/(validate|validation|experiment|검증|실험 설계|확인하려면|어떻게 증명)/i, 3, (s) => validationScore += s);
+  add(/(compare|comparison|versus| vs |차이|비교|다른 점)/i, 3, (s) => comparisonScore += s);
+  add(/(what is|explain|definition|개념|설명|무엇|뭐야|정의)/i, 2, (s) => conceptScore += s);
   if (isEvidenceStyleAssociationQuestion(text)) {
     literatureScore += 5;
   }
-
   let paperTalkIntent = "GENERAL";
   const best = Math.max(literatureScore, ideaScore, methodScore, pipelineScore, validationScore, comparisonScore, conceptScore);
   if (best > 0) {
-    // Tie-breaker: workflow wins over method list; method extraction wins over literature/trend.
     if (pipelineScore === best) paperTalkIntent = "PIPELINE_WORKFLOW";
     else if (methodScore === best) paperTalkIntent = "METHOD_EXTRACTION";
     else if (literatureScore === best) paperTalkIntent = "LITERATURE_REVIEW";
@@ -7262,11 +5181,9 @@ function heuristicPaperTalkPlanner(message) {
     else if (comparisonScore === best) paperTalkIntent = "COMPARISON";
     else if (conceptScore === best) paperTalkIntent = "CONCEPT";
   }
-
   let primaryDomain = "GENERAL";
   const hasScRnaSignal = /(scrna|sc\s*rna|single[-\s]?cell\s+rna|single[-\s]?cell|싱글셀|단일세포|rna[-\s]?seq|전사체)/i.test(text);
   const hasScAtacSignal = /(scatac|sc\s*atac|single[-\s]?cell\s+atac|atac[-\s]?seq|chromatin|크로마틴|accessibility|접근성|epigenomic|epigenomics|후성유전체)/i.test(text);
-
   if (hasScRnaSignal && hasScAtacSignal) primaryDomain = "MULTIOMICS";
   else if (hasScAtacSignal) primaryDomain = "MULTIOMICS";
   else if (/(spatial|visium|xenium|cosmx|merfish|spatial transcriptomics|공간|공간 전사체|공간전사체)/i.test(text)) primaryDomain = "SPATIAL_BIOLOGY";
@@ -7275,32 +5192,21 @@ function heuristicPaperTalkPlanner(message) {
   else if (/(immune|immunology|t cell|b cell|myeloid|면역)/i.test(text)) primaryDomain = "IMMUNOLOGY";
   else if (/(multiomics|multi-omics|proteomics|epigenomics|멀티오믹스)/i.test(text)) primaryDomain = "MULTIOMICS";
   else if (/(deep learning|machine learning|foundation model|transformer|gnn|diffusion|딥러닝|머신러닝|파운데이션|트랜스포머)/i.test(text)) primaryDomain = "AI_METHOD";
-
   return { paperTalkIntent, primaryDomain };
 }
-
-
+__name(heuristicPaperTalkPlanner, "heuristicPaperTalkPlanner");
 function buildPaperTalkKeywordAnchor(text) {
   const raw = String(text || "").replace(/\s+/g, " ").trim();
   if (!raw) return "";
-
-  const cleaned = raw
-    .replace(/(분석\s*)?(파이프라인|워크플로우|workflow|pipeline|work\s*flow|pipe\s*line|analysis\s*workflow|analysis\s*pipeline|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step)/ig, " ")
-    .replace(/(논문|paper|papers|study|studies|관련|맞는|찾아|찾아서|읽고|참고|기반|기준|줘|주세요|달라고|알려줘|보여줘|정리해줘|어떤|무슨|뭐|뭘|키워드)/ig, " ")
-    .replace(/[?？!！]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  // Preserve user-provided scientific keywords whenever possible. If cleaning removes too much, fall back to raw query.
+  const cleaned = raw.replace(/(분석\s*)?(파이프라인|워크플로우|workflow|pipeline|work\s*flow|pipe\s*line|analysis\s*workflow|analysis\s*pipeline|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step)/ig, " ").replace(/(논문|paper|papers|study|studies|관련|맞는|찾아|찾아서|읽고|참고|기반|기준|줘|주세요|달라고|알려줘|보여줘|정리해줘|어떤|무슨|뭐|뭘|키워드)/ig, " ").replace(/[?？!！]/g, " ").replace(/\s+/g, " ").trim();
   const anchor = cleaned.length >= 3 ? cleaned : raw;
   return anchor.slice(0, 220);
 }
-
+__name(buildPaperTalkKeywordAnchor, "buildPaperTalkKeywordAnchor");
 function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
   const q = String(text || "").trim();
   const queries = [q];
   const t = q.toLowerCase();
-
   if (primaryDomain === "SPATIAL_BIOLOGY" || /spatial|visium|xenium|cosmx|공간/i.test(t)) {
     queries.push(
       "spatial transcriptomics tumor microenvironment deep learning",
@@ -7308,7 +5214,6 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
       "spatial multiomics cell cell interaction graph neural network"
     );
   }
-
   if (isSpatialRoiMethodWorkflowQuestion(q)) {
     queries.unshift(
       "multiplex imaging spatial ROI region of interest cell neighborhood tissue architecture CODEX MIBI IMC CyCIF",
@@ -7317,18 +5222,15 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
       "tumor microenvironment multiplex imaging ROI CAF myeloid tumor epithelial CD8 exclusion spatial niche"
     );
   }
-
   if (primaryDomain === "CANCER_GENOMICS" || /cancer|tumor|암|종양/i.test(t)) {
     queries.push(
       "cancer genomics tumor evolution immune escape spatial",
       "drug response prediction tumor microenvironment multiomics"
     );
   }
-
   if (paperTalkIntent === "LITERATURE_REVIEW") {
     queries.push("recent review trend state of the art important papers");
   }
-
   if (isEvidenceStyleAssociationQuestion(q)) {
     queries.unshift(
       "CAF macrophage immunosuppression immune exclusion tumor microenvironment",
@@ -7336,10 +5238,7 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
       "fibroblast macrophage reciprocal interaction cancer fibrosis immune suppression"
     );
   }
-
   if (paperTalkIntent === "PIPELINE_WORKFLOW") {
-    // v84: workflow/pipeline questions must first retrieve keyword-matched papers and extract their methods/workflow.
-    // The model should synthesize workflows used in relevant papers, not give a generic protocol first.
     const keywordAnchor = buildPaperTalkKeywordAnchor(q);
     if (keywordAnchor) {
       queries.push(
@@ -7348,16 +5247,8 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
         `${keywordAnchor} used workflow used methods pipeline papers`
       );
     }
-
-    const asksSpatialWorkflow =
-      primaryDomain === "SPATIAL_BIOLOGY" ||
-      /(spatial|visium|xenium|cosmx|merfish|slide[-\s]?seq|seq[-\s]?fish|spatial transcriptomics|공간|공간전사체|공간 전사체)/i.test(t);
-
-    const asksSingleCellWorkflow =
-      primaryDomain === "SINGLE_CELL" ||
-      primaryDomain === "MULTIOMICS" ||
-      /(scrna|sc\s*rna|single[-\s]?cell|싱글셀|단일세포|scatac|sc\s*atac|atac[-\s]?seq|chromatin|크로마틴|multi[-\s]?omics|멀티오믹스)/i.test(t);
-
+    const asksSpatialWorkflow = primaryDomain === "SPATIAL_BIOLOGY" || /(spatial|visium|xenium|cosmx|merfish|slide[-\s]?seq|seq[-\s]?fish|spatial transcriptomics|공간|공간전사체|공간 전사체)/i.test(t);
+    const asksSingleCellWorkflow = primaryDomain === "SINGLE_CELL" || primaryDomain === "MULTIOMICS" || /(scrna|sc\s*rna|single[-\s]?cell|싱글셀|단일세포|scatac|sc\s*atac|atac[-\s]?seq|chromatin|크로마틴|multi[-\s]?omics|멀티오믹스)/i.test(t);
     if (asksSpatialWorkflow) {
       queries.push(
         `${keywordAnchor || "spatial transcriptomics"} spatial transcriptomics paper workflow preprocessing QC normalization spatial domains deconvolution cell cell interaction`,
@@ -7367,7 +5258,6 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
         `${keywordAnchor || "spatial ROI"} region of interest detection spatial proteomics cell neighborhoods marker composition spatial graph tissue niche analysis`
       );
     }
-
     if (asksSingleCellWorkflow) {
       queries.push(
         `${keywordAnchor || "single cell"} single cell paper workflow scRNA scATAC multiome preprocessing QC integration downstream analysis used methods`,
@@ -7375,69 +5265,46 @@ function buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent) {
         `${keywordAnchor || "single cell chromatin accessibility"} single cell chromatin accessibility workflow gene activity peak calling LSI motif TF activity SCENIC SCENIC+ chromVAR Cicero papers`
       );
     }
-
     queries.push(
       "methods workflow used in paper analysis pipeline QC preprocessing downstream interpretation",
       "end to end analysis workflow paper methods raw data QC preprocessing integration interpretation"
     );
   }
-
   if (paperTalkIntent === "METHOD_EXTRACTION") {
-    const asksSingleCellChromatin =
-      primaryDomain === "SINGLE_CELL" ||
-      primaryDomain === "MULTIOMICS" ||
-      /(scrna|sc\s*rna|single[-\s]?cell|싱글셀|단일세포|scatac|sc\s*atac|atac[-\s]?seq|chromatin|크로마틴|multi[-\s]?omics|멀티오믹스)/i.test(t);
-
+    const asksSingleCellChromatin = primaryDomain === "SINGLE_CELL" || primaryDomain === "MULTIOMICS" || /(scrna|sc\s*rna|single[-\s]?cell|싱글셀|단일세포|scatac|sc\s*atac|atac[-\s]?seq|chromatin|크로마틴|multi[-\s]?omics|멀티오믹스)/i.test(t);
     if (asksSingleCellChromatin) {
-      // Put the standard method catalog query before generic method queries so it is not dropped by the retrieval-query cap.
       queries.push(
         "LIGER iNMF Seurat Signac WNN ArchR GLUE MultiVI scvi-tools SnapATAC2 Harmony MOFA+ SCENIC SCENIC+ pySCENIC chromVAR Cicero cisTopic Cell Ranger RNA ATAC",
         "scRNA scATAC multiome integration LIGER Seurat WNN Signac ArchR GLUE MultiVI SnapATAC2 Harmony MOFA SCENIC"
       );
     }
-
     queries.push(
       "analysis method package software tool algorithm implementation benchmark",
       "single cell spatial transcriptomics scRNA scATAC integration package method tool",
       "used methods software packages tools models algorithms in papers"
     );
   }
-
   if (paperTalkIntent === "RESEARCH_IDEA") {
     queries.push("research gap future direction hypothesis validation project idea");
   }
-
-  const queryLimit = paperTalkIntent === "PIPELINE_WORKFLOW" ? 8 : (paperTalkIntent === "METHOD_EXTRACTION" ? 6 : 4);
+  const queryLimit = paperTalkIntent === "PIPELINE_WORKFLOW" ? 8 : paperTalkIntent === "METHOD_EXTRACTION" ? 6 : 4;
   return [...new Set(queries.filter(Boolean))].slice(0, queryLimit);
 }
+__name(buildPaperTalkRetrievalQueries, "buildPaperTalkRetrievalQueries");
 async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRuntime = null) {
   const text = String(userMessage || "").trim();
   const heuristic = heuristicPaperTalkPlanner(text);
   const heuristicQueries = buildPaperTalkRetrievalQueries(text, heuristic.primaryDomain, heuristic.paperTalkIntent);
-
   const fallback = {
     is_research_related: !isLikelyGeneralQuestionFast(text) || heuristic.paperTalkIntent !== "GENERAL",
-    question_type:
-      heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
-      heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" :
-      heuristic.paperTalkIntent === "PIPELINE_WORKFLOW" ? "PIPELINE" :
-      heuristic.paperTalkIntent === "METHOD_EXTRACTION" ? "METHOD" :
-      heuristic.paperTalkIntent === "VALIDATION" ? "VALIDATION" :
-      heuristic.paperTalkIntent === "COMPARISON" ? "COMPARISON" :
-      heuristic.paperTalkIntent === "CONCEPT" ? "CONCEPT" :
-      (isLikelyGeneralQuestionFast(text) ? "GENERAL" : "RESEARCH"),
+    question_type: heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" : heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" : heuristic.paperTalkIntent === "PIPELINE_WORKFLOW" ? "PIPELINE" : heuristic.paperTalkIntent === "METHOD_EXTRACTION" ? "METHOD" : heuristic.paperTalkIntent === "VALIDATION" ? "VALIDATION" : heuristic.paperTalkIntent === "COMPARISON" ? "COMPARISON" : heuristic.paperTalkIntent === "CONCEPT" ? "CONCEPT" : isLikelyGeneralQuestionFast(text) ? "GENERAL" : "RESEARCH",
     paper_talk_intent: heuristic.paperTalkIntent,
     primary_domain: heuristic.primaryDomain,
-    answer_style:
-      heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "paper_recommendation_by_theme" :
-      heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "actionable_project_ideas" :
-      heuristic.paperTalkIntent === "PIPELINE_WORKFLOW" ? "end_to_end_workflow" :
-      heuristic.paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" :
-      "calm_research_mentor",
+    answer_style: heuristic.paperTalkIntent === "LITERATURE_REVIEW" ? "paper_recommendation_by_theme" : heuristic.paperTalkIntent === "RESEARCH_IDEA" ? "actionable_project_ideas" : heuristic.paperTalkIntent === "PIPELINE_WORKFLOW" ? "end_to_end_workflow" : heuristic.paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" : "calm_research_mentor",
     // Conservative fallback: do not enter code-first mode without an explicit semantic planner decision.
     // This prevents paper-recommendation/literature questions from being hijacked by old keyword routing.
     wants_executable_code: false,
-    should_generate_hypotheses: heuristic.paperTalkIntent === "RESEARCH_IDEA" || (!["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(heuristic.paperTalkIntent) && /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text)),
+    should_generate_hypotheses: heuristic.paperTalkIntent === "RESEARCH_IDEA" || !["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(heuristic.paperTalkIntent) && /idea|ideas|아이디어|방향|주제|유망|promising|hypothesis|가설|validation|검증/i.test(text),
     should_use_db_evidence: !isLikelyGeneralQuestionFast(text) || heuristic.paperTalkIntent !== "GENERAL",
     interpreted_intent: text.slice(0, 500),
     key_entities: [],
@@ -7447,17 +5314,15 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
     hypothesis_angle: "",
     validation_angle: ""
   };
-
-  if (!text || !env.AI) return fallback;
-
+  if (!text || !env.OPENAI_API_KEY) return fallback;
   await cancelRuntime?.throwIfCanceled?.();
-  const abortable = createLinkedAbortController(cancelRuntime, 9000);
-
+  const abortable = createLinkedAbortController(cancelRuntime, 9e3);
   try {
-    const res = await fetchChatCompletionWithWorkersAI(env, {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       signal: abortable.signal,
       headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -7476,7 +5341,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
               "Use METHOD_EXTRACTION when the user wants practical analysis methods, packages, software, tools, algorithms, models, or wants to know what methods were actually used in papers.",
               "Important: if the user asks for a workflow/pipeline/analysis order, choose PIPELINE_WORKFLOW, not METHOD_EXTRACTION and not LITERATURE_REVIEW. A workflow request should first find relevant papers for the provided keyword/domain and then synthesize the workflow used in those papers; do not list generic tools only.",
               "Important: if the user asks what papers used, what researchers used, what analysis was done, which package/method/tool is used, or what can be used for actual data analysis, choose METHOD_EXTRACTION, not LITERATURE_REVIEW.",
-              "Important: a question can mention papers, 논문, literature, or studies and still be METHOD_EXTRACTION if the goal is extracting methods/tools rather than recommending papers.",
+              "Important: a question can mention papers, \uB17C\uBB38, literature, or studies and still be METHOD_EXTRACTION if the goal is extracting methods/tools rather than recommending papers.",
               "Use RESEARCH_IDEA when the user asks what research can be done, project ideas, future directions, hypotheses, grant ideas, or actionable research topics.",
               "primary_domain must be one of: SPATIAL_BIOLOGY, CANCER_GENOMICS, SINGLE_CELL, IMMUNOLOGY, AGING, MULTIOMICS, AI_METHOD, GENERAL.",
               "If spatial/deep learning/cancer genomics appears, infer adjacent concepts such as spatial transcriptomics, histology, tumor microenvironment, multimodal AI, GNN, transformer, foundation model, immune niche, tumor evolution, and drug response.",
@@ -7496,25 +5361,16 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
         max_completion_tokens: 520
       })
     });
-
     const data = await readJsonResponseSafely(res, "OpenAI research intent inference request");
     let raw = extractOpenAIText(data);
     raw = raw.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
-
     const parsed = JSON.parse(raw);
     const associationEvidenceStyle = isEvidenceStyleAssociationQuestion(text);
     const spatialRoiWorkflowQuestion = isSpatialRoiMethodWorkflowQuestion(text);
-    const paperTalkIntent = spatialRoiWorkflowQuestion
-      ? "PIPELINE_WORKFLOW"
-      : associationEvidenceStyle
-        ? "LITERATURE_REVIEW"
-        : normalizePaperTalkIntentLabel(parsed.paper_talk_intent || parsed.question_type || fallback.paper_talk_intent);
+    const paperTalkIntent = spatialRoiWorkflowQuestion ? "PIPELINE_WORKFLOW" : associationEvidenceStyle ? "LITERATURE_REVIEW" : normalizePaperTalkIntentLabel(parsed.paper_talk_intent || parsed.question_type || fallback.paper_talk_intent);
     const primaryDomain = normalizePaperTalkDomainLabel(parsed.primary_domain || fallback.primary_domain);
-    const queries = Array.isArray(parsed.retrieval_queries)
-      ? parsed.retrieval_queries.map(v => String(v || "").trim()).filter(Boolean)
-      : [];
-    const retrievalQueryLimit = paperTalkIntent === "PIPELINE_WORKFLOW" ? 8 : (paperTalkIntent === "METHOD_EXTRACTION" ? 6 : 4);
-
+    const queries = Array.isArray(parsed.retrieval_queries) ? parsed.retrieval_queries.map((v) => String(v || "").trim()).filter(Boolean) : [];
+    const retrievalQueryLimit = paperTalkIntent === "PIPELINE_WORKFLOW" ? 8 : paperTalkIntent === "METHOD_EXTRACTION" ? 6 : 4;
     const inferred = {
       ...fallback,
       ...parsed,
@@ -7525,31 +5381,21 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
       wants_executable_code: toSemanticBoolean(parsed.wants_executable_code),
       is_related_paper_request: toSemanticBoolean(parsed.is_related_paper_request),
       should_generate_hypotheses: Boolean(parsed.should_generate_hypotheses || paperTalkIntent === "RESEARCH_IDEA") && !["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(paperTalkIntent),
-      question_type:
-        paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" :
-        paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" :
-        paperTalkIntent === "PIPELINE_WORKFLOW" ? "PIPELINE" :
-        paperTalkIntent === "METHOD_EXTRACTION" ? "METHOD" :
-        paperTalkIntent === "VALIDATION" ? "VALIDATION" :
-        paperTalkIntent === "COMPARISON" ? "COMPARISON" :
-        paperTalkIntent === "CONCEPT" ? "CONCEPT" :
-        (parsed.question_type || fallback.question_type),
-      answer_style: paperTalkIntent === "PIPELINE_WORKFLOW" ? "end_to_end_workflow" : (paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" : (parsed.answer_style || fallback.answer_style)),
-      key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v || "").trim()).filter(Boolean).slice(0, 12) : [],
+      question_type: paperTalkIntent === "LITERATURE_REVIEW" ? "LITERATURE" : paperTalkIntent === "RESEARCH_IDEA" ? "RESEARCH" : paperTalkIntent === "PIPELINE_WORKFLOW" ? "PIPELINE" : paperTalkIntent === "METHOD_EXTRACTION" ? "METHOD" : paperTalkIntent === "VALIDATION" ? "VALIDATION" : paperTalkIntent === "COMPARISON" ? "COMPARISON" : paperTalkIntent === "CONCEPT" ? "CONCEPT" : parsed.question_type || fallback.question_type,
+      answer_style: paperTalkIntent === "PIPELINE_WORKFLOW" ? "end_to_end_workflow" : paperTalkIntent === "METHOD_EXTRACTION" ? "practical_method_table" : parsed.answer_style || fallback.answer_style,
+      key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map((v) => String(v || "").trim()).filter(Boolean).slice(0, 12) : [],
       retrieval_queries: queries.length ? queries.slice(0, retrievalQueryLimit) : buildPaperTalkRetrievalQueries(text, primaryDomain, paperTalkIntent),
-      gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v || "").trim()).filter(Boolean).slice(0, 8) : [],
+      gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map((v) => String(v || "").trim()).filter(Boolean).slice(0, 8) : [],
       interpreted_intent: String(parsed.interpreted_intent || fallback.interpreted_intent).slice(0, 500),
       hypothesis_angle: String(parsed.hypothesis_angle || "").slice(0, 500),
       validation_angle: String(parsed.validation_angle || "").slice(0, 500)
     };
-
     if (inferred.is_research_related) {
       inferred.should_use_db_evidence = true;
       if (!inferred.retrieval_queries.includes(text)) inferred.retrieval_queries.unshift(text);
       inferred.retrieval_queries = [...new Set(inferred.retrieval_queries)].slice(0, retrievalQueryLimit);
     }
     inferred.retrieval_query = inferred.retrieval_queries.join(", ");
-
     return inferred;
   } catch (error) {
     if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
@@ -7560,9 +5406,7 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
     abortable.cleanup();
   }
 }
-
-
-/* v60: persistent supporting-paper memory for follow-up evidence questions */
+__name(inferPaperTalkResearchIntentForChat, "inferPaperTalkResearchIntentForChat");
 async function ensureGptMessageSourcesTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS gpt_message_sources (
@@ -7581,203 +5425,185 @@ async function ensureGptMessageSourcesTable(env) {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
-
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_gpt_message_sources_thread
     ON gpt_message_sources(thread_id, created_at)
   `).run();
-
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_gpt_message_sources_message
     ON gpt_message_sources(message_id)
   `).run();
 }
-
-
+__name(ensureGptMessageSourcesTable, "ensureGptMessageSourcesTable");
 function estimateAdaptiveSupportingPaperLimit(context, outputStyle = "STANDARD") {
   const items = Array.isArray(context) ? context : [];
   if (!items.length) return 0;
-
-  // v94:
-  // Candidate count should come from the DB evidence itself, not from a fixed
-  // "narrow topic = N papers" rule. If many retrieved papers strongly match the
-  // question, include many strong candidates up to the bounded context limit.
-  // If only a few papers are truly relevant, include only those few.
-  const maxLimit =
-    outputStyle === "SOURCE_TRACE" ||
-    outputStyle === "LITERATURE_REVIEW" ||
-    outputStyle === "METHOD_EXTRACTION" ||
-    outputStyle === "PIPELINE_WORKFLOW"
-      ? 10
-      : 8;
-
-  const scores = items
-    .map(item => Number(item?.similarity_score || 0))
-    .filter(score => Number.isFinite(score) && score > 0);
-
+  const maxLimit = outputStyle === "SOURCE_TRACE" || outputStyle === "LITERATURE_REVIEW" || outputStyle === "METHOD_EXTRACTION" || outputStyle === "PIPELINE_WORKFLOW" ? 10 : 8;
+  const scores = items.map((item) => Number(item?.similarity_score || 0)).filter((score) => Number.isFinite(score) && score > 0);
   if (!scores.length) {
     return Math.min(items.length, maxLimit);
   }
-
   const best = Math.max(...scores);
   const relevanceFloor = Math.max(0.35, best * 0.55);
-  const strongCount = items.filter(item => {
+  const strongCount = items.filter((item) => {
     const score = Number(item?.similarity_score || 0);
     return Number.isFinite(score) && score >= relevanceFloor;
   }).length;
-
   if (strongCount > 0) {
     return Math.min(strongCount, items.length, maxLimit);
   }
-
   return Math.min(items.length, maxLimit);
 }
-
+__name(estimateAdaptiveSupportingPaperLimit, "estimateAdaptiveSupportingPaperLimit");
 function selectTopSupportingPapersForAnswer(context, limit = null, outputStyle = "STANDARD") {
-  const seen = new Set();
+  const seen = /* @__PURE__ */ new Set();
   const selected = [];
   const adaptiveLimit = limit || estimateAdaptiveSupportingPaperLimit(context, outputStyle) || 0;
-
   for (const item of Array.isArray(context) ? context : []) {
     const normalized = normalizeKnowledgeItem(item) || item;
     const title = bestDisplayPaperTitleFromItem(normalized);
     if (!title) continue;
-
     const key = normalizeSearchText(title);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-
     selected.push({ ...normalized, title });
     if (selected.length >= adaptiveLimit) break;
   }
-
   return selected;
 }
-
+__name(selectTopSupportingPapersForAnswer, "selectTopSupportingPapersForAnswer");
 function isSupportingPaperFollowUp(message) {
   return isExplicitSourceTraceRequest(message);
 }
-
+__name(isSupportingPaperFollowUp, "isSupportingPaperFollowUp");
 function getRequestedPaperOrdinal(message) {
   const text = String(message || "").toLowerCase();
-
   const letter = text.match(/(?:논문|paper)\s*([a-e])/i);
   if (letter) return letter[1].toUpperCase().charCodeAt(0) - 65;
-
   const digit = text.match(/(?:논문|paper)?\s*([1-5])\s*(?:번째|번|paper|논문)?/i);
   if (digit) return Number(digit[1]) - 1;
-
   if (/첫\s*번째/.test(text)) return 0;
   if (/두\s*번째/.test(text)) return 1;
   if (/세\s*번째/.test(text)) return 2;
   if (/네\s*번째/.test(text)) return 3;
   if (/다섯\s*번째/.test(text)) return 4;
-
   return null;
 }
-
-
+__name(getRequestedPaperOrdinal, "getRequestedPaperOrdinal");
 function isPaperRecommendationRequest(message) {
   return heuristicPaperTalkPlanner(message).paperTalkIntent === "LITERATURE_REVIEW";
 }
-
+__name(isPaperRecommendationRequest, "isPaperRecommendationRequest");
 function isEvidenceStyleAssociationQuestion(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
-
-  // Broad biological association / crosstalk questions should behave like the
-  // older Paper_Talk style: answer the biology first, then show a few retrieved
-  // DB paper titles as supporting context. This preserves the preferred answer
-  // style for questions such as CAF-macrophage immune exclusion.
   const asksAssociation = /(association|associated|relationship|relation|correlation|correlated|link|linked|crosstalk|cross-talk|interaction|interact|connected|connection|관련|연관|관계|상관|상호작용)/i.test(text);
   const hasCancerImmuneContext = /(caf|fibroblast|fibroblasts|macrophage|macrophages|tam|tams|immune|immuno|immunosuppression|immunosuppressive|suppression|excluded|exclusion|tme|tumou?r microenvironment|cancer|tumou?r|면역|면역억제|면역배제|대식세포|섬유아세포|종양미세환경|암)/i.test(text);
   const notMethodOrPipeline = !/(pipeline|workflow|package|software|tool|method|algorithm|파이프라인|워크플로우|패키지|툴|도구|방법론|분석법)/i.test(text);
-
   return asksAssociation && hasCancerImmuneContext && notMethodOrPipeline;
 }
-
+__name(isEvidenceStyleAssociationQuestion, "isEvidenceStyleAssociationQuestion");
 function isResearchDirectionRequest(message) {
   return heuristicPaperTalkPlanner(message).paperTalkIntent === "RESEARCH_IDEA";
 }
-
-
+__name(isResearchDirectionRequest, "isResearchDirectionRequest");
 function isContinuationMoreRequest(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
-
-  return (
-    /(더\s*주세요|더\s*줘|더\s*알려|추가로|추가\s*추천|다른\s*것도|다른\s*논문|비슷한\s*논문|유사한\s*논문|관련\s*논문|같은\s*주제|후속\s*연구|비슷한\s*연구|관련\s*연구|더\s*많이|몇\s*개\s*더|[0-9]+\s*개\s*더|끝인가요|끝이야|더\s*있|more|more papers|similar papers?|related papers?|other papers?|give me more|another|additional)/i.test(text)
-  );
+  return /(더\s*주세요|더\s*줘|더\s*알려|추가로|추가\s*추천|다른\s*것도|다른\s*논문|비슷한\s*논문|유사한\s*논문|관련\s*논문|같은\s*주제|후속\s*연구|비슷한\s*연구|관련\s*연구|더\s*많이|몇\s*개\s*더|[0-9]+\s*개\s*더|끝인가요|끝이야|더\s*있|more|more papers|similar papers?|related papers?|other papers?|give me more|another|additional)/i.test(text);
 }
-
+__name(isContinuationMoreRequest, "isContinuationMoreRequest");
 function isPaperHighlightOrShortSummaryFollowUp(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
   if (!text) return false;
-
-  // Short follow-ups such as "하이라이트를 줘", "한줄로", "영어로 줘",
-  // "아니 앞에는 논문 하이라이트를 한줄만 달라고" must keep the previous
-  // paper/topic context instead of being treated as a brand-new generic question.
   const shortEnough = text.length <= 260;
   const hasFollowUpTask = /(?:하이라이트|highlight|핵심|중요\s*부분|중요한\s*부분|takeaway|key\s*point|main\s*finding|summary|summari[sz]e|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要|요약|한\s*줄|한줄|1\s*줄|one[-\s]?line|one\s*sentence|짧게|간단히|영어로|한국어로|한글로|번역|다시|rewrite|rephrase|앞에는|위에는|방금|아까|이\s*논문|그\s*논문|this\s+paper|that\s+paper|previous\s+paper|above)/i.test(text);
   const hasLooseRequestIntent = hasAnyLanguageAgnosticIntentTerm(text, [
-    "summary", "summarize", "summarise", "highlight", "takeaway", "translate", "shorter", "longer", "again",
-    "요약", "정리", "하이라이트", "핵심", "번역", "짧게", "다시",
-    "résumé", "résumer", "resumen", "resumir", "sumario",
-    "zusammenfassung", "riassunto", "sintesi", "要約", "总结", "總結", "摘要"
+    "summary",
+    "summarize",
+    "summarise",
+    "highlight",
+    "takeaway",
+    "translate",
+    "shorter",
+    "longer",
+    "again",
+    "\uC694\uC57D",
+    "\uC815\uB9AC",
+    "\uD558\uC774\uB77C\uC774\uD2B8",
+    "\uD575\uC2EC",
+    "\uBC88\uC5ED",
+    "\uC9E7\uAC8C",
+    "\uB2E4\uC2DC",
+    "r\xE9sum\xE9",
+    "r\xE9sumer",
+    "resumen",
+    "resumir",
+    "sumario",
+    "zusammenfassung",
+    "riassunto",
+    "sintesi",
+    "\u8981\u7D04",
+    "\u603B\u7ED3",
+    "\u7E3D\u7D50",
+    "\u6458\u8981"
   ]);
   const hasNewLongScientificTitle = /[A-Za-z0-9][A-Za-z0-9:+,()\/[\] ._-]{45,}/.test(text);
-
   return shortEnough && (hasFollowUpTask || hasLooseRequestIntent || isSafeUniversalShortFollowUpShape(text)) && !hasNewLongScientificTitle;
 }
-
+__name(isPaperHighlightOrShortSummaryFollowUp, "isPaperHighlightOrShortSummaryFollowUp");
 function isAutomaticPreviousContextFollowUp(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
   if (!text) return false;
-
-  // Very short follow-ups in any language should automatically inherit the previous
-  // paper/topic context. The user should not have to repeat the paper title.
-  // Examples: "하이라이트를 줘", "한줄로", "영어로", "좀 더 자세히",
-  // "앞에는 논문 하이라이트를 한줄만 달라고", "translate", "make it shorter",
-  // or short typo/noisy messages in other scripts.
   const shortEnough = text.length <= 320;
-
   const explicitFollowUpTask = /(하이라이트|highlight|highlights|핵심|중요\s*부분|중요한\s*부분|takeaway|takeaways|key\s*point|key\s*points|main\s*finding|main\s*findings|요약|summary|summari[sz]e|resumen|resumir|résumé|résume|résumer|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要|한\s*줄|한줄|1\s*줄|one[-\s]?line|one\s*sentence|짧게|간단히|briefly|shortly|concise|좀\s*더|더\s*자세히|자세히|풀어서|영어로|한국어로|한글로|일본어로|중국어로|다국어|multilingual|multi[-\s]?language|번역|translate|translation|다시|rewrite|rephrase|paraphrase|앞에는|위에는|방금|아까|이\s*논문|그\s*논문|this\s+paper|that\s+paper|previous\s+paper|above|it|this|that)/i.test(text);
-
   const isJustFormatInstruction = /^(하이라이트(를)?\s*줘|하이라이트만|핵심만|요약해줘|요약|한\s*줄로?|한줄로?|1\s*줄로?|영어로(\s*줘)?|한국어로(\s*줘)?|한글로(\s*줘)?|짧게|간단히|다시|more|shorter|longer|translate|summari[sz]e|summary|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要|highlight)$/i.test(text);
   const hasLooseRequestIntent = hasAnyLanguageAgnosticIntentTerm(text, [
-    "summary", "summarize", "summarise", "highlight", "takeaway", "translate", "shorter", "longer", "again", "more",
-    "요약", "정리", "하이라이트", "핵심", "번역", "짧게", "다시", "자세히",
-    "résumé", "résumer", "resumen", "resumir", "sumario",
-    "zusammenfassung", "riassunto", "sintesi", "要約", "总结", "總結", "摘要"
+    "summary",
+    "summarize",
+    "summarise",
+    "highlight",
+    "takeaway",
+    "translate",
+    "shorter",
+    "longer",
+    "again",
+    "more",
+    "\uC694\uC57D",
+    "\uC815\uB9AC",
+    "\uD558\uC774\uB77C\uC774\uD2B8",
+    "\uD575\uC2EC",
+    "\uBC88\uC5ED",
+    "\uC9E7\uAC8C",
+    "\uB2E4\uC2DC",
+    "\uC790\uC138\uD788",
+    "r\xE9sum\xE9",
+    "r\xE9sumer",
+    "resumen",
+    "resumir",
+    "sumario",
+    "zusammenfassung",
+    "riassunto",
+    "sintesi",
+    "\u8981\u7D04",
+    "\u603B\u7ED3",
+    "\u7E3D\u7D50",
+    "\u6458\u8981"
   ]);
   const universalShortFollowUp = isSafeUniversalShortFollowUpShape(text);
-
-  // If the user pasted a new long scientific title, treat it as a new paper query,
-  // not as a follow-up. Otherwise inherit the previous context.
   const hasNewLongScientificTitle = /[A-Za-z0-9][A-Za-z0-9:+,()\/[\] ._-]{55,}/.test(text) && !/(이\s*논문|그\s*논문|this\s+paper|that\s+paper|앞에는|위에는|방금|아까)/i.test(text);
-
   return shortEnough && (explicitFollowUpTask || isJustFormatInstruction || hasLooseRequestIntent || universalShortFollowUp) && !hasNewLongScientificTitle;
 }
-
+__name(isAutomaticPreviousContextFollowUp, "isAutomaticPreviousContextFollowUp");
 function isContextualThreadFollowUpRequest(message) {
-  return (
-    isContinuationMoreRequest(message) ||
-    isPaperHighlightOrShortSummaryFollowUp(message) ||
-    isAutomaticPreviousContextFollowUp(message)
-  );
+  return isContinuationMoreRequest(message) || isPaperHighlightOrShortSummaryFollowUp(message) || isAutomaticPreviousContextFollowUp(message);
 }
-
+__name(isContextualThreadFollowUpRequest, "isContextualThreadFollowUpRequest");
 function isExplicitSourceTraceRequest(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
-
-  // Only explicit evidence/source tracing should enter SOURCE_TRACE.
-  // "더 주세요", "다른 논문", "추가 추천" should NOT match this.
-  return (
-    /(어떤\s*논문\s*기반|무슨\s*논문\s*기반|어떤\s*논문을\s*기반|근거\s*논문|참고\s*논문|사용한\s*논문|기반으로\s*한\s*논문|출처|레퍼런스|reference|references|source|sources|citation|cite|based on which papers|which papers did you use)/i.test(text)
-  );
+  return /(어떤\s*논문\s*기반|무슨\s*논문\s*기반|어떤\s*논문을\s*기반|근거\s*논문|참고\s*논문|사용한\s*논문|기반으로\s*한\s*논문|출처|레퍼런스|reference|references|source|sources|citation|cite|based on which papers|which papers did you use)/i.test(text);
 }
-
+__name(isExplicitSourceTraceRequest, "isExplicitSourceTraceRequest");
 async function getRecentThreadMessagesForContinuation({ threadId, userId, env, limit = 8 }) {
   if (!threadId || !userId || threadId === "guest") return [];
-
   const rows = await env.DB.prepare(`
     SELECT role, content, created_at
     FROM gpt_messages
@@ -7786,63 +5612,33 @@ async function getRecentThreadMessagesForContinuation({ threadId, userId, env, l
     ORDER BY datetime(created_at) DESC
     LIMIT ?
   `).bind(threadId, userId, limit).all();
-
   return (rows.results || []).reverse();
 }
-
-
+__name(getRecentThreadMessagesForContinuation, "getRecentThreadMessagesForContinuation");
 function getFollowUpAnswerLanguageOverride(message) {
   const text = String(message || "").toLowerCase().replace(/\s+/g, " ").trim();
   if (!text) return "";
-
-  // Explicit target language should override the language of older context.
-  // This prevents a short follow-up such as "in English" from being answered in Korean
-  // only because the previous message/context was Korean.
   if (/(영어로|영문으로|english|in english|to english)/i.test(text)) return "English";
   if (/(한국어로|한글로|한글|korean|in korean|to korean)/i.test(text)) return "Korean";
   if (/(일본어로|일어로|japanese|in japanese|to japanese)/i.test(text)) return "Japanese";
   if (/(중국어로|중문으로|chinese|in chinese|to chinese)/i.test(text)) return "Chinese";
-
-  // Language-neutral multilingual request. Use English as the safe fallback unless
-  // the user names exact target languages in the same request.
   if (/(다국어|여러\s*언어|multilingual|multi[-\s]?language|several languages|multiple languages)/i.test(text)) {
     return "Multilingual";
   }
-
   return "";
 }
-
+__name(getFollowUpAnswerLanguageOverride, "getFollowUpAnswerLanguageOverride");
 function buildContinuationQuestionFromHistory({ currentMessage, recentMessages }) {
   const current = String(currentMessage || "").trim();
   const messages = Array.isArray(recentMessages) ? recentMessages : [];
-
-  const previousUserMessages = messages
-    .filter(m => m.role === "user")
-    .map(m => String(m.content || "").trim())
-    .filter(v => v && v !== current);
-
-  const previousAssistantMessages = messages
-    .filter(m => m.role === "assistant")
-    .map(m => String(m.content || "").trim())
-    .filter(Boolean);
-
-  const lastUser = previousUserMessages.length
-    ? previousUserMessages[previousUserMessages.length - 1]
-    : "";
-
-  // Use the previous substantial user question as the topic.
-  const topicUser = [...previousUserMessages].reverse().find(v =>
-    v.length >= 8 &&
-    !isContinuationMoreRequest(v) &&
-    !isExplicitSourceTraceRequest(v)
+  const previousUserMessages = messages.filter((m) => m.role === "user").map((m) => String(m.content || "").trim()).filter((v) => v && v !== current);
+  const previousAssistantMessages = messages.filter((m) => m.role === "assistant").map((m) => String(m.content || "").trim()).filter(Boolean);
+  const lastUser = previousUserMessages.length ? previousUserMessages[previousUserMessages.length - 1] : "";
+  const topicUser = [...previousUserMessages].reverse().find(
+    (v) => v.length >= 8 && !isContinuationMoreRequest(v) && !isExplicitSourceTraceRequest(v)
   ) || lastUser;
-
-  const lastAssistant = previousAssistantMessages.length
-    ? previousAssistantMessages[previousAssistantMessages.length - 1].slice(0, 1800)
-    : "";
-
+  const lastAssistant = previousAssistantMessages.length ? previousAssistantMessages[previousAssistantMessages.length - 1].slice(0, 1800) : "";
   const languageOverride = getFollowUpAnswerLanguageOverride(current);
-
   return [
     "AUTO-CONTEXT FOLLOW-UP MODE",
     "The current user message is a short follow-up. Automatically inherit the previous paper/topic context.",
@@ -7868,33 +5664,23 @@ function buildContinuationQuestionFromHistory({ currentMessage, recentMessages }
     "6. Never ask for clarification unless there is truly no previous context."
   ].filter(Boolean).join("\\n");
 }
-
+__name(buildContinuationQuestionFromHistory, "buildContinuationQuestionFromHistory");
 function inferContinuationOutputStyle({ currentMessage, previousTopic, previousAssistant, fallbackStyle }) {
   const combined = [currentMessage, previousTopic, previousAssistant].join(" ").toLowerCase();
-
-  // If the previous topic or assistant answer was about recommending papers, "더 주세요" should
-  // continue paper recommendation, not source tracing and not generic research insight.
-  if (
-    isPaperRecommendationRequest(previousTopic) ||
-    /(논문\s*추천|관련\s*논문|트렌디한\s*논문|추천\s*논문|paper recommendation|related papers|recent papers|latest papers)/i.test(combined)
-  ) {
+  if (isPaperRecommendationRequest(previousTopic) || /(논문\s*추천|관련\s*논문|트렌디한\s*논문|추천\s*논문|paper recommendation|related papers|recent papers|latest papers)/i.test(combined)) {
     return "LITERATURE_REVIEW";
   }
-
   if (isPaperHighlightOrShortSummaryFollowUp(currentMessage)) {
     return "PAPER_SUMMARY";
   }
-
   if (isResearchDirectionRequest(previousTopic) || /(유망|앞으로|연구\s*방향|future direction|promising|research direction|아이디어|가설|gap)/i.test(combined)) {
     return "RESEARCH_INSIGHT";
   }
-
   return fallbackStyle || "RESEARCH_SYNTHESIS";
 }
-
+__name(inferContinuationOutputStyle, "inferContinuationOutputStyle");
 async function getLastSupportingPapersForThread({ threadId, userId, env }) {
   await ensureGptMessageSourcesTable(env);
-
   const last = await env.DB.prepare(`
     SELECT message_id
     FROM gpt_message_sources
@@ -7903,9 +5689,7 @@ async function getLastSupportingPapersForThread({ threadId, userId, env }) {
     ORDER BY datetime(created_at) DESC
     LIMIT 1
   `).bind(threadId, userId).first();
-
   if (!last?.message_id) return [];
-
   const rows = await env.DB.prepare(`
     SELECT
       rank_index,
@@ -7923,57 +5707,45 @@ async function getLastSupportingPapersForThread({ threadId, userId, env }) {
     ORDER BY rank_index ASC
     LIMIT 10
   `).bind(last.message_id, threadId, userId).all();
-
   return rows.results || [];
 }
-
+__name(getLastSupportingPapersForThread, "getLastSupportingPapersForThread");
 function formatStoredSupportingPapersAnswer(rows, userMessage = "") {
   const papers = Array.isArray(rows) ? rows : [];
   if (!papers.length) {
-    return "직전 답변에 저장된 근거 논문 목록을 찾지 못했습니다. 같은 thread에서 먼저 연구 질문을 한 뒤 다시 물어보면, 그 답변에 사용된 Paper_Talk DB 논문을 보여드릴 수 있습니다.";
+    return "\uC9C1\uC804 \uB2F5\uBCC0\uC5D0 \uC800\uC7A5\uB41C \uADFC\uAC70 \uB17C\uBB38 \uBAA9\uB85D\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uAC19\uC740 thread\uC5D0\uC11C \uBA3C\uC800 \uC5F0\uAD6C \uC9C8\uBB38\uC744 \uD55C \uB4A4 \uB2E4\uC2DC \uBB3C\uC5B4\uBCF4\uBA74, \uADF8 \uB2F5\uBCC0\uC5D0 \uC0AC\uC6A9\uB41C Paper_Talk DB \uB17C\uBB38\uC744 \uBCF4\uC5EC\uB4DC\uB9B4 \uC218 \uC788\uC2B5\uB2C8\uB2E4.";
   }
-
   const requestedIndex = getRequestedPaperOrdinal(userMessage);
-  const target =
-    requestedIndex !== null && requestedIndex >= 0 && requestedIndex < papers.length
-      ? papers[requestedIndex]
-      : null;
-
+  const target = requestedIndex !== null && requestedIndex >= 0 && requestedIndex < papers.length ? papers[requestedIndex] : null;
   if (target) {
-    const label = target.paper_label || `논문 ${String.fromCharCode(65 + Number(target.rank_index || requestedIndex))}`;
+    const label = target.paper_label || `\uB17C\uBB38 ${String.fromCharCode(65 + Number(target.rank_index || requestedIndex))}`;
     return [
       `${target.title}`,
       target.source_url ? `Article URL: ${target.source_url}` : "",
       target.pdf_link ? `PDF URL: ${target.pdf_link}` : "",
-      target.evidence_excerpt ? `이 답변에서 사용한 DB excerpt: ${String(target.evidence_excerpt).slice(0, 900)}` : "",
+      target.evidence_excerpt ? `\uC774 \uB2F5\uBCC0\uC5D0\uC11C \uC0AC\uC6A9\uD55C DB excerpt: ${String(target.evidence_excerpt).slice(0, 900)}` : "",
       "",
-      "이 논문을 더 자세히 요약하거나, 이 논문만 기반으로 연구 가설을 다시 정리할 수 있습니다."
+      "\uC774 \uB17C\uBB38\uC744 \uB354 \uC790\uC138\uD788 \uC694\uC57D\uD558\uAC70\uB098, \uC774 \uB17C\uBB38\uB9CC \uAE30\uBC18\uC73C\uB85C \uC5F0\uAD6C \uAC00\uC124\uC744 \uB2E4\uC2DC \uC815\uB9AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4."
     ].filter(Boolean).join("\n");
   }
-
   return [
-    "직전 답변은 아래 Paper_Talk DB 논문들을 기반으로 생성했습니다.",
+    "\uC9C1\uC804 \uB2F5\uBCC0\uC740 \uC544\uB798 Paper_Talk DB \uB17C\uBB38\uB4E4\uC744 \uAE30\uBC18\uC73C\uB85C \uC0DD\uC131\uD588\uC2B5\uB2C8\uB2E4.",
     "",
     ...papers.map((paper, index) => {
-      const label = paper.paper_label || `논문 ${String.fromCharCode(65 + index)}`;
-      const links = [paper.source_url ? `Article: ${paper.source_url}` : "", paper.pdf_link ? `PDF: ${paper.pdf_link}` : ""]
-        .filter(Boolean)
-        .join(" | ");
+      const label = paper.paper_label || `\uB17C\uBB38 ${String.fromCharCode(65 + index)}`;
+      const links = [paper.source_url ? `Article: ${paper.source_url}` : "", paper.pdf_link ? `PDF: ${paper.pdf_link}` : ""].filter(Boolean).join(" | ");
       return `${index + 1}. ${paper.title}${links ? "\n   " + links : ""}`;
     })
   ].join("\n");
 }
-
+__name(formatStoredSupportingPapersAnswer, "formatStoredSupportingPapersAnswer");
 async function saveSupportingPapersForAssistantMessage({ assistantMessageId, threadId, userId, context, env }) {
   const selected = selectTopSupportingPapersForAnswer(context);
   if (!assistantMessageId || !threadId || !userId || !selected.length) return;
-
   await ensureGptMessageSourcesTable(env);
-
   const statements = selected.map((item, index) => {
     const title = cleanBibtexText(item?.title || "").trim();
     const excerpt = cleanBibtexText(item?.matched_chunk || makeBestEvidenceExcerpt(item?.content || "")).slice(0, 1200);
-
     return env.DB.prepare(`
       INSERT INTO gpt_message_sources (
         id,
@@ -7997,7 +5769,7 @@ async function saveSupportingPapersForAssistantMessage({ assistantMessageId, thr
       threadId,
       userId,
       index,
-      `논문 ${String.fromCharCode(65 + index)}`,
+      `\uB17C\uBB38 ${String.fromCharCode(65 + index)}`,
       item?.post_id || "",
       title,
       item?.source_url || "",
@@ -8006,39 +5778,24 @@ async function saveSupportingPapersForAssistantMessage({ assistantMessageId, thr
       excerpt
     );
   });
-
   if (statements.length) {
     await env.DB.batch(statements);
   }
 }
-
+__name(saveSupportingPapersForAssistantMessage, "saveSupportingPapersForAssistantMessage");
 async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent, env, gptKey = DEFAULT_GPT_KEY, cancelRuntime = null) {
   gptKey = normalizeGptKey(gptKey);
-  // v57 safe DB-grounded retrieval:
-  // Research questions should always consult Paper_Talk DB, but the chat path must stay bounded.
-  // Do NOT call the older broad retrieval stack here, because it can trigger many D1/Vectorize/OpenAI
-  // calls and Cloudflare may return an HTML 503 page before our JSON catch can run.
   const text = String(userMessage || "").trim();
   if (!text) return [];
   await cancelRuntime?.throwIfCanceled?.();
-
   const rawQueries = [
     text,
-    ...(Array.isArray(inferredIntent?.retrieval_queries) ? inferredIntent.retrieval_queries : []),
-    ...(Array.isArray(inferredIntent?.key_entities) ? inferredIntent.key_entities : []),
+    ...Array.isArray(inferredIntent?.retrieval_queries) ? inferredIntent.retrieval_queries : [],
+    ...Array.isArray(inferredIntent?.key_entities) ? inferredIntent.key_entities : [],
     inferredIntent?.primary_domain || ""
-  ]
-    .map(v => String(v || "").trim())
-    .filter(Boolean);
-
-  // Keep only a few short, meaningful queries. This is the key CPU/subrequest guard.
-  const uniqueQueries = [...new Set(rawQueries)]
-    .map(q => q.slice(0, 180))
-    .filter(q => q.length >= 2)
-    .slice(0, 4);
-
+  ].map((v) => String(v || "").trim()).filter(Boolean);
+  const uniqueQueries = [...new Set(rawQueries)].map((q) => q.slice(0, 180)).filter((q) => q.length >= 2).slice(0, 4);
   const all = [];
-
   for (const query of uniqueQueries) {
     await cancelRuntime?.throwIfCanceled?.();
     try {
@@ -8049,18 +5806,11 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
       if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
         throw new UserCanceledError();
       }
-      // Keep the route alive. Retrieval failure should not turn into an HTML 503 response.
     }
-
-    // Stop early once we already have enough DB evidence for answer generation.
     if (mergeKnowledgeResults(all).length >= PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS) break;
   }
-
   await cancelRuntime?.throwIfCanceled?.();
   const merged = trimContextForChat(mergeKnowledgeResults(all));
-
-  // Optional tiny fallback: if inferred English queries missed Korean/mixed-language text,
-  // retry once with the likely title/scientific span. Still safe and bounded.
   if (!merged.length) {
     try {
       const titleCandidate = extractLikelyPaperTitleForSafeLookup(text);
@@ -8073,30 +5823,14 @@ async function retrievePaperTalkDbForResearchIntent(userMessage, inferredIntent,
       }
     }
   }
-
   return merged;
 }
-
-
-// ======================================
-// Code-first pipeline request support
-// ======================================
-function isPipelineCodeRequest(value = "") {
-  const text = String(value || "").toLowerCase();
-  if (!text.trim()) return false;
-
-  const asksCode = /코드|스크립트|script|code|pipeline code|workflow code|bash|shell|sh\b|snakemake|nextflow|r code|r코드|r script|python|파이썬|실행\s*가능|실행가능|구현|implementation/.test(text);
-  const pipelineData = /bulk\s*rna|bulk\s*rnaseq|bulk\s*rna-seq|rna\s*seq|rna-seq|fastq|fq\.gz|sc\s*rna|scrna|single[- ]cell|single cell|visium|xenium|spatial|spatial transcriptomics|10x|cellranger|cell ranger|seurat|scanpy|deseq2|featurecounts|star\b|hisat2|salmon|kallisto/.test(text);
-
-  return asksCode && pipelineData;
-}
-
+__name(retrievePaperTalkDbForResearchIntent, "retrievePaperTalkDbForResearchIntent");
 function detectRequestedCodeLanguage(value = "") {
   const text = String(value || "").toLowerCase();
   const wantsR = /\br\b|r코드|r code|r script|r로|r으로|deseq2|edger|seurat|bioconductor/.test(text);
   const wantsPython = /python|파이썬|py\b|scanpy|anndata|pandas|snakemake/.test(text);
   const wantsShell = /bash|shell|\.sh|command line|cli|터미널|fastqc|star\b|hisat2|featurecounts|salmon|kallisto/.test(text);
-
   if (wantsR && !wantsPython && !wantsShell) return "R";
   if (wantsPython && !wantsR && !wantsShell) return "Python";
   if (wantsShell && !wantsR && !wantsPython) return "Bash";
@@ -8105,11 +5839,10 @@ function detectRequestedCodeLanguage(value = "") {
   if (wantsR && wantsPython) return "R + Python";
   return "auto";
 }
-
+__name(detectRequestedCodeLanguage, "detectRequestedCodeLanguage");
 function detectPipelineDataTypes(value = "") {
   const text = String(value || "").toLowerCase();
   const types = [];
-
   if (/bulk\s*rna|bulk\s*rnaseq|bulk\s*rna-seq|rna\s*seq|rna-seq|fastq|featurecounts|deseq2|edger|star\b|hisat2|salmon|kallisto/.test(text)) {
     types.push("bulk_rna_seq_fastq");
   }
@@ -8122,45 +5855,61 @@ function detectPipelineDataTypes(value = "") {
   if (/xenium|xoa|xenium explorer|in situ/.test(text)) {
     types.push("xenium");
   }
-
   return types.length ? types : ["auto_detect_from_question"];
 }
-
+__name(detectPipelineDataTypes, "detectPipelineDataTypes");
 function looksLikeCodeChunk(text = "") {
   const value = String(text || "");
   if (!value.trim()) return false;
-
   return /```|^\s*#!|\bimport\s+[A-Za-z0-9_.]+|\bfrom\s+[A-Za-z0-9_.]+\s+import\b|\blibrary\s*\(|\brequire\s*\(|<-\s*|%>%|\bfunction\s*\(|\bfor\s*\(|\bif\s*\(|\bdef\s+|\bclass\s+|\bsnakemake\b|\brule\s+\w+\s*:|\bprocess\s+\w+\s*\{|\bfastqc\b|\bmultiqc\b|\btrim_galore\b|\bcutadapt\b|\bSTAR\b|\bhisat2\b|\bfeatureCounts\b|\bsalmon\b|\bkallisto\b|\bDESeqDataSetFromMatrix\b|\bDESeq\s*\(|\bFindMarkers\s*\(|\bRead10X\s*\(|\bread10x\b|\bscanpy\b|\bsc\.\w+/im.test(value);
 }
-
+__name(looksLikeCodeChunk, "looksLikeCodeChunk");
 function scorePipelineCodeChunk(row, queryText) {
-  const haystack = [row.title, row.file_name, row.source_type, row.text].map(v => String(v || "").toLowerCase()).join("\n");
+  const haystack = [row.title, row.file_name, row.source_type, row.text].map((v) => String(v || "").toLowerCase()).join("\n");
   const query = String(queryText || "").toLowerCase();
   let score = 0;
-
   if (/\.py$/i.test(String(row.file_name || "")) || /python/i.test(String(row.source_type || ""))) score += 8;
   if (/\.r$/i.test(String(row.file_name || "")) || /r_code|r script/i.test(String(row.source_type || ""))) score += 8;
   if (/code/i.test(String(row.source_type || ""))) score += 7;
   if (looksLikeCodeChunk(row.text)) score += 6;
-
   const terms = [
-    "bulk", "rna", "rna-seq", "rnaseq", "fastq", "fastqc", "multiqc", "trim", "star", "hisat2", "featurecounts", "deseq2", "edger", "salmon", "kallisto",
-    "scrna", "single-cell", "single cell", "seurat", "scanpy", "cellranger", "10x",
-    "visium", "spaceranger", "spatial", "xenium"
+    "bulk",
+    "rna",
+    "rna-seq",
+    "rnaseq",
+    "fastq",
+    "fastqc",
+    "multiqc",
+    "trim",
+    "star",
+    "hisat2",
+    "featurecounts",
+    "deseq2",
+    "edger",
+    "salmon",
+    "kallisto",
+    "scrna",
+    "single-cell",
+    "single cell",
+    "seurat",
+    "scanpy",
+    "cellranger",
+    "10x",
+    "visium",
+    "spaceranger",
+    "spatial",
+    "xenium"
   ];
-
   for (const term of terms) {
     if (query.includes(term) && haystack.includes(term)) score += 3;
   }
-
   return score;
 }
-
+__name(scorePipelineCodeChunk, "scorePipelineCodeChunk");
 async function retrievePipelineCodeContext({ userMessage, gptKey, env }) {
   if (!env.DB) return [];
   await ensurePaperFullTextTables(env);
   await ensureSpecialistGptTables(env);
-
   const normalizedGptKey = normalizeGptKey(gptKey);
   const rows = await env.DB.prepare(`
     SELECT title, source_url, pdf_link, file_name, source_type, text, chunk_index, created_at
@@ -8192,25 +5941,17 @@ async function retrievePipelineCodeContext({ userMessage, gptKey, env }) {
     ORDER BY datetime(created_at) DESC, chunk_index ASC
     LIMIT 80
   `).bind(normalizedGptKey).all();
-
-  const scored = (rows.results || [])
-    .map(row => ({ ...row, _score: scorePipelineCodeChunk(row, userMessage) }))
-    .filter(row => row._score > 0 || looksLikeCodeChunk(row.text))
-    .sort((a, b) => b._score - a._score)
-    .slice(0, 14);
-
+  const scored = (rows.results || []).map((row) => ({ ...row, _score: scorePipelineCodeChunk(row, userMessage) })).filter((row) => row._score > 0 || looksLikeCodeChunk(row.text)).sort((a, b) => b._score - a._score).slice(0, 14);
   return scored;
 }
-
+__name(retrievePipelineCodeContext, "retrievePipelineCodeContext");
 function buildPipelineCodeContextText(rows = []) {
   if (!Array.isArray(rows) || !rows.length) return "NO_UPLOADED_CODE_OR_PDF_CODE_CONTEXT_FOUND";
-
   return rows.map((row, index) => {
     const title = cleanBibtexText(row.title || "");
     const fileName = cleanBibtexText(row.file_name || "");
     const sourceType = cleanBibtexText(row.source_type || "");
     const text = String(row.text || "").slice(0, 5500);
-
     return [
       `CODE_CONTEXT_${index + 1}`,
       title ? `TITLE: ${title}` : "",
@@ -8220,16 +5961,15 @@ function buildPipelineCodeContextText(rows = []) {
       "CONTENT:",
       text
     ].filter(Boolean).join("\n");
-  }).join("\n\n---\n\n").slice(0, 52000);
+  }).join("\n\n---\n\n").slice(0, 52e3);
 }
-
+__name(buildPipelineCodeContextText, "buildPipelineCodeContextText");
 async function callOpenAIForPipelineCode({ userMessage, effectiveMessage, codeRows, gptProfile }, env, cancelRuntime = null) {
   const requestedLanguage = detectRequestedCodeLanguage(userMessage + "\n" + effectiveMessage);
   const dataTypes = detectPipelineDataTypes(userMessage + "\n" + effectiveMessage);
   const codeContextText = buildPipelineCodeContextText(codeRows);
   const userLanguage = detectUserLanguage(userMessage);
   const isKo = userLanguage === "Korean";
-
   const prompt = `
 You are ${gptProfile?.title || "Paper_Talk Vision GPT"} in CODE-FIRST PIPELINE MODE.
 
@@ -8242,7 +5982,7 @@ Detected data type(s): ${dataTypes.join(", ")}
 
 Hard rules:
 1. Start with runnable code blocks immediately.
-2. Do not start with "먼저 찾은 관련 pipeline 논문" or any related-paper section.
+2. Do not start with "\uBA3C\uC800 \uCC3E\uC740 \uAD00\uB828 pipeline \uB17C\uBB38" or any related-paper section.
 3. Do not ask a clarification question when the data type and request are already clear.
 4. If uploaded Python code is found but the user asks for R, translate the logic into R.
 5. If uploaded R code is found but the user asks for Python, translate the logic into Python.
@@ -8260,17 +6000,17 @@ Hard rules:
 Uploaded code/PDF-code context:
 ${codeContextText}
   `.trim();
-
-  const abortable = createLinkedAbortController(cancelRuntime, 120000);
+  const abortable = createLinkedAbortController(cancelRuntime, 12e4);
   try {
-    const response = await fetchChatCompletionWithWorkersAI(env, {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       signal: abortable.signal,
       headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: env.CLOUDFLARE_AI_MODEL || "@cf/openai/gpt-oss-120b",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           { role: "system", content: prompt },
           { role: "user", content: String(effectiveMessage || userMessage || "").slice(0, 2400) }
@@ -8279,7 +6019,6 @@ ${codeContextText}
         max_completion_tokens: 4500
       })
     });
-
     const data = await readJsonResponseSafely(response, "OpenAI pipeline-code answer request");
     return extractOpenAIText(data) || getOpenAIErrorMessage(data);
   } catch (error) {
@@ -8291,7 +6030,7 @@ ${codeContextText}
     abortable.cleanup();
   }
 }
-
+__name(callOpenAIForPipelineCode, "callOpenAIForPipelineCode");
 async function gptChat(request, env) {
   let activeCancelId = "";
   let activeCancelOwnerKey = "";
@@ -8299,24 +6038,19 @@ async function gptChat(request, env) {
   const gptKeyForAccess = getGptKeyFromRequestData(bodyForAccess);
   const neuroAccessError = requireNeuroGptAccessIfNeeded(request, env, gptKeyForAccess);
   if (neuroAccessError) return neuroAccessError;
-
   try {
     const user = await getSession(request, env);
     const isGuest = !user;
-
-    if (!env.AI) {
-      return json({ ok: false, error: "Cloudflare Workers AI binding is missing." }, 500);
+    if (!env.OPENAI_API_KEY) {
+      return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
     }
-
     await ensureSpecialistGptTables(env);
-
     const data = await request.json().catch(() => ({}));
     const rawMessage = String(data.message || "").trim();
     const message = normalizeChatInputNoise(rawMessage);
     const gptKey = getGptKeyFromRequestData(data);
     const gptProfile = getGptProfile(gptKey);
     let threadId = String(data.threadId || "").trim();
-
     const cancelId = normalizeGptCancelId(data.cancelId || data.requestId || data.chatRequestId || "");
     const cancelOwnerKey = await getGptCancelOwnerKey(request, env, user);
     activeCancelId = cancelId;
@@ -8324,26 +6058,18 @@ async function gptChat(request, env) {
     const cancelRuntime = makeGptCancelRuntime({ request, env, cancelId, ownerKey: cancelOwnerKey });
     await registerGptCancellableRequest({ env, cancelId, ownerKey: cancelOwnerKey, gptKey });
     await cancelRuntime.throwIfCanceled();
-
     if (!message) {
       return json({ ok: false, error: "Message is required." }, 400);
     }
-
     await cancelRuntime.throwIfCanceled();
-
-    const quotaBefore = isGuest
-      ? await getGuestGptQuota(request, env)
-      : await getMonthlyGptQuota(user.id, env, user);
-
+    const quotaBefore = isGuest ? await getGuestGptQuota(request, env) : await getMonthlyGptQuota(user.id, env, user);
     if (quotaBefore.used >= quotaBefore.limit) {
       return json({
         ok: false,
         guest: isGuest,
         signupRequired: isGuest,
         signupUrl: isGuest ? "/auth/google" : null,
-        error: isGuest
-          ? `You have used all 3 free guest questions today. Please sign up for free with Google to continue with ${SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT} total GPT questions per month.`
-          : `Monthly limit reached. You have used all ${SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT} total GPT questions for this month across Paper_Talk Vision GPT and all Specialist GPTs. Your quota will reset automatically next month.`,
+        error: isGuest ? `You have used all 3 free guest questions today. Please sign up for free with Google to continue with ${SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT} total GPT questions per month.` : `Monthly limit reached. You have used all ${SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT} total GPT questions for this month across Paper_Talk Vision GPT and all Specialist GPTs. Your quota will reset automatically next month.`,
         quota: {
           used: quotaBefore.used,
           limit: quotaBefore.limit,
@@ -8354,21 +6080,19 @@ async function gptChat(request, env) {
         }
       }, 429);
     }
-
     if (!isGuest) {
       if (!threadId) {
         threadId = crypto.randomUUID();
         await env.DB.prepare(`
           INSERT INTO gpt_threads (id, user_id, title, gpt_key, created_at, updated_at)
           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        `).bind(threadId, user.id, message.slice(0, 60) || 'New chat', gptKey).run();
+        `).bind(threadId, user.id, message.slice(0, 60) || "New chat", gptKey).run();
       } else {
         const thread = await env.DB.prepare(`
           SELECT id FROM gpt_threads WHERE id = ? AND user_id = ? AND COALESCE(gpt_key, 'paper_talk') = ?
         `).bind(threadId, user.id, gptKey).first();
         if (!thread) return json({ ok: false, error: "Thread not found." }, 404);
       }
-
       await env.DB.prepare(`
         INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
         VALUES (?, ?, ?, 'user', ?, ?, CURRENT_TIMESTAMP)
@@ -8376,11 +6100,9 @@ async function gptChat(request, env) {
     } else {
       threadId = "guest";
     }
-
     let recentMessagesForContinuation = [];
     let effectiveMessage = message;
     let forcedOutputStyle = "";
-
     if (!isGuest && isContextualThreadFollowUpRequest(message)) {
       recentMessagesForContinuation = await getRecentThreadMessagesForContinuation({
         threadId,
@@ -8388,23 +6110,12 @@ async function gptChat(request, env) {
         env,
         limit: 8
       });
-
       effectiveMessage = buildContinuationQuestionFromHistory({
         currentMessage: message,
         recentMessages: recentMessagesForContinuation
       });
-
-      const previousTopic = recentMessagesForContinuation
-        .filter(m => m.role === "user")
-        .map(m => String(m.content || "").trim())
-        .reverse()
-        .find(v => v && v !== message && !isContextualThreadFollowUpRequest(v) && !isExplicitSourceTraceRequest(v)) || "";
-
-      const previousAssistant = recentMessagesForContinuation
-        .filter(m => m.role === "assistant")
-        .map(m => String(m.content || "").trim())
-        .reverse()[0] || "";
-
+      const previousTopic = recentMessagesForContinuation.filter((m) => m.role === "user").map((m) => String(m.content || "").trim()).reverse().find((v) => v && v !== message && !isContextualThreadFollowUpRequest(v) && !isExplicitSourceTraceRequest(v)) || "";
+      const previousAssistant = recentMessagesForContinuation.filter((m) => m.role === "assistant").map((m) => String(m.content || "").trim()).reverse()[0] || "";
       forcedOutputStyle = inferContinuationOutputStyle({
         currentMessage: message,
         previousTopic,
@@ -8412,41 +6123,35 @@ async function gptChat(request, env) {
         fallbackStyle: ""
       });
     }
-
-
     if (!isGuest && isSupportingPaperFollowUp(message)) {
       const rows = await getLastSupportingPapersForThread({ threadId, userId: user.id, env });
       const sourceAnswer = formatStoredSupportingPapersAnswer(rows, message);
       const assistantMessageId = crypto.randomUUID();
-
       await env.DB.prepare(`
         INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
         VALUES (?, ?, ?, 'assistant', ?, ?, CURRENT_TIMESTAMP)
       `).bind(assistantMessageId, threadId, user.id, sourceAnswer, gptKey).run();
-
       await env.DB.prepare(`
         UPDATE gpt_threads
         SET updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND user_id = ?
       `).bind(threadId, user.id).run();
-
-      const quotaAfter = await incrementMonthlyGptUsage(user.id, env);
-
+      const quotaAfter2 = await incrementMonthlyGptUsage(user.id, env);
       return json({
         ok: true,
         guest: false,
         threadId,
         answer: sourceAnswer,
         quota: {
-          used: quotaAfter.used,
-          limit: quotaAfter.limit,
-          remaining: quotaAfter.remaining,
-          monthKey: quotaAfter.monthKey || null,
+          used: quotaAfter2.used,
+          limit: quotaAfter2.limit,
+          remaining: quotaAfter2.remaining,
+          monthKey: quotaAfter2.monthKey || null,
           date: null,
-          resetsAt: quotaAfter.resetsAt
+          resetsAt: quotaAfter2.resetsAt
         },
         sources: rows.map((item, index) => ({
-          paper_label: item.paper_label || `논문 ${String.fromCharCode(65 + index)}`,
+          paper_label: item.paper_label || `\uB17C\uBB38 ${String.fromCharCode(65 + index)}`,
           title: item.title,
           source_url: item.source_url,
           pdf_link: item.pdf_link,
@@ -8454,17 +6159,11 @@ async function gptChat(request, env) {
         }))
       });
     }
-
     await cancelRuntime.throwIfCanceled();
     const inferredIntent = await inferPaperTalkResearchIntentForChat(effectiveMessage, env, cancelRuntime);
-
-    // If the current message is an automatically detected follow-up, do not let
-    // the intent planner downgrade it to a generic question. The target is the
-    // previous paper/topic stored in effectiveMessage.
     if (forcedOutputStyle) {
       inferredIntent.is_research_related = true;
       inferredIntent.should_use_db_evidence = true;
-
       if (forcedOutputStyle === "PAPER_SUMMARY") {
         inferredIntent.paper_talk_intent = "PAPER_SUMMARY";
         inferredIntent.question_type = "LITERATURE";
@@ -8480,29 +6179,22 @@ async function gptChat(request, env) {
         inferredIntent.answer_style = "actionable_project_ideas";
       }
     }
-
     await cancelRuntime.throwIfCanceled();
-
     let strictActivePaperState = makeEmptyStrictActivePaperContext();
     if (!isGuest) {
-      const activePaperRecentMessages = recentMessagesForContinuation.length
-        ? recentMessagesForContinuation
-        : await getRecentThreadMessagesForContinuation({
-            threadId,
-            userId: user.id,
-            env,
-            limit: 8
-          }).catch(() => []);
-
+      const activePaperRecentMessages = recentMessagesForContinuation.length ? recentMessagesForContinuation : await getRecentThreadMessagesForContinuation({
+        threadId,
+        userId: user.id,
+        env,
+        limit: 8
+      }).catch(() => []);
       strictActivePaperState = await getStrictActivePaperContext({
         message: effectiveMessage,
         recentMessages: activePaperRecentMessages,
         env
       }).catch(() => makeEmptyStrictActivePaperContext());
     }
-
     const relatedPaperMode = isRelatedPaperDiscoveryRequest(message, inferredIntent);
-
     if (relatedPaperMode) {
       inferredIntent.is_research_related = true;
       inferredIntent.should_use_db_evidence = true;
@@ -8511,52 +6203,35 @@ async function gptChat(request, env) {
       inferredIntent.answer_style = "paper_recommendation_by_active_paper";
       inferredIntent.interpreted_intent = "The user is asking for papers similar or related to the active paper in the current thread.";
     }
-
-
     const wantsSemanticCodeFirst = shouldUseCodeFirstMode({
       inferredIntent,
       forcedOutputStyle,
       relatedPaperMode,
       strictActivePaperState
     });
-
     if (wantsSemanticCodeFirst) {
       await cancelRuntime.throwIfCanceled();
-
       const codeRows = await retrievePipelineCodeContext({
-        userMessage: `${message}\n${effectiveMessage}`,
+        userMessage: `${message}
+${effectiveMessage}`,
         gptKey,
         env
       }).catch(() => []);
-
       let codeAnswer = await callOpenAIForPipelineCode({
         userMessage: message,
         effectiveMessage,
         codeRows,
         gptProfile
       }, env, cancelRuntime);
-
       if (isUserCanceledText(codeAnswer)) {
         await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
         return canceledChatJson();
       }
-
-      codeAnswer = String(codeAnswer || "")
-        .replace(/^먼저 찾은 관련 pipeline 논문[\s\S]*?(?=```|$)/i, "")
-        .trim();
-
+      codeAnswer = String(codeAnswer || "").replace(/^먼저 찾은 관련 pipeline 논문[\s\S]*?(?=```|$)/i, "").trim();
       if (!codeAnswer) {
-        codeAnswer = "코드 생성에 실패했습니다. 다시 한 번 더 구체적인 데이터 타입과 원하는 언어를 적어주세요.";
+        codeAnswer = "\uCF54\uB4DC \uC0DD\uC131\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uD55C \uBC88 \uB354 \uAD6C\uCCB4\uC801\uC778 \uB370\uC774\uD130 \uD0C0\uC785\uACFC \uC6D0\uD558\uB294 \uC5B8\uC5B4\uB97C \uC801\uC5B4\uC8FC\uC138\uC694.";
       }
-
-      const codeAssistantFailed =
-        /^OpenAI API error:/i.test(codeAnswer) ||
-        /^OpenAI API timeout/i.test(codeAnswer) ||
-        /^OpenAI API request failed/i.test(codeAnswer) ||
-        /^OpenAI pipeline-code request failed/i.test(codeAnswer) ||
-        /^Cloudflare Workers AI/i.test(codeAnswer) ||
-        /returned non-JSON response/i.test(codeAnswer);
-
+      const codeAssistantFailed = /^OpenAI API error:/i.test(codeAnswer) || /^OpenAI API timeout/i.test(codeAnswer) || /^OpenAI API request failed/i.test(codeAnswer) || /^OpenAI pipeline-code request failed/i.test(codeAnswer) || /returned non-JSON response/i.test(codeAnswer);
       if (codeAssistantFailed) {
         await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
         return json({
@@ -8575,14 +6250,12 @@ async function gptChat(request, env) {
           sources: []
         }, 502);
       }
-
       if (!isGuest) {
         const assistantMessageId = crypto.randomUUID();
         await env.DB.prepare(`
           INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
           VALUES (?, ?, ?, 'assistant', ?, ?, CURRENT_TIMESTAMP)
         `).bind(assistantMessageId, threadId, user.id, codeAnswer, gptKey).run();
-
         await env.DB.prepare(`
           UPDATE gpt_threads
           SET updated_at = CURRENT_TIMESTAMP,
@@ -8590,30 +6263,25 @@ async function gptChat(request, env) {
           WHERE id = ? AND user_id = ? AND COALESCE(gpt_key, 'paper_talk') = ?
         `).bind(message.slice(0, 60), threadId, user.id, gptKey).run();
       }
-
-      const quotaAfter = isGuest
-        ? await incrementGuestGptUsage(request, env)
-        : await incrementMonthlyGptUsage(user.id, env);
-
+      const quotaAfter2 = isGuest ? await incrementGuestGptUsage(request, env) : await incrementMonthlyGptUsage(user.id, env);
       await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
-
       return json({
         ok: true,
         guest: isGuest,
         threadId,
         answer: codeAnswer,
         quota: {
-          used: quotaAfter.used,
-          limit: quotaAfter.limit,
-          remaining: quotaAfter.remaining,
-          monthKey: quotaAfter.monthKey || null,
-          date: quotaAfter.todayKey || null,
-          resetsAt: quotaAfter.resetsAt
+          used: quotaAfter2.used,
+          limit: quotaAfter2.limit,
+          remaining: quotaAfter2.remaining,
+          monthKey: quotaAfter2.monthKey || null,
+          date: quotaAfter2.todayKey || null,
+          resetsAt: quotaAfter2.resetsAt
         },
         gptKey,
         gptTitle: gptProfile.title,
         sources: codeRows.map((item, index) => ({
-          paper_label: index < 10 ? `코드 ${index + 1}` : null,
+          paper_label: index < 10 ? `\uCF54\uB4DC ${index + 1}` : null,
           title: item.title,
           source_url: item.source_url,
           pdf_link: item.pdf_link,
@@ -8623,20 +6291,9 @@ async function gptChat(request, env) {
         }))
       });
     }
-
-    const retrievalMessageForDb = relatedPaperMode && strictActivePaperState.activePaperLocked
-      ? buildRelatedPaperDiscoveryQuery(strictActivePaperState.activePaperContext, message, inferredIntent)
-      : effectiveMessage;
-
-    const generalOrBroad = relatedPaperMode ? false : (forcedOutputStyle ? false : (isLikelyGeneralQuestionFast(effectiveMessage) && !inferredIntent.is_research_related));
+    const retrievalMessageForDb = relatedPaperMode && strictActivePaperState.activePaperLocked ? buildRelatedPaperDiscoveryQuery(strictActivePaperState.activePaperContext, message, inferredIntent) : effectiveMessage;
+    const generalOrBroad = relatedPaperMode ? false : forcedOutputStyle ? false : isLikelyGeneralQuestionFast(effectiveMessage) && !inferredIntent.is_research_related;
     let context = [];
-
-    // v56 research-purpose GPT policy:
-    // Research/literature/validation/paper-related questions must search Paper_Talk DB.
-    // The user should not have to type exact DB keywords. We infer biomedical concepts and retrieval
-    // queries from the whole question, then search the DB with those inferred concepts.
-    // If DB retrieval returns nothing, the answer remains truthful and says no matching DB source
-    // was retrieved instead of answering from outside literature.
     if (!generalOrBroad || inferredIntent.should_use_db_evidence) {
       try {
         context = await retrievePaperTalkDbForResearchIntent(retrievalMessageForDb, inferredIntent, env, gptKey, cancelRuntime);
@@ -8648,8 +6305,6 @@ async function gptChat(request, env) {
         context = [];
       }
     }
-
-    // Extra exact-title retry for multilingual instruction wrappers.
     if (!context.length && !generalOrBroad) {
       try {
         const titleCandidate = extractLikelyPaperTitleForSafeLookup(effectiveMessage);
@@ -8664,65 +6319,42 @@ async function gptChat(request, env) {
         context = [];
       }
     }
-
     if (!relatedPaperMode && strictActivePaperState.activePaperLocked && forcedOutputStyle === "PAPER_SUMMARY") {
       context = strictActivePaperState.activePaperContext;
     }
-
     if (relatedPaperMode && strictActivePaperState.activePaperLocked) {
-      context = (context || []).filter(item =>
-        !strictActivePaperState.activePaperContext.some(active => isSameKnowledgePaper(item, active))
+      context = (context || []).filter(
+        (item) => !strictActivePaperState.activePaperContext.some((active) => isSameKnowledgePaper(item, active))
       );
     }
-
-    const outputStyleForSelection = relatedPaperMode
-      ? "LITERATURE_REVIEW"
-      : (forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: inferredIntent, hasContext: context.length > 0 }));
+    const outputStyleForSelection = relatedPaperMode ? "LITERATURE_REVIEW" : forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: inferredIntent, hasContext: context.length > 0 });
     context = selectTopSupportingPapersForAnswer(context, null, outputStyleForSelection);
-
     const autoIntent = inferredIntent || makeFallbackResearchIntent(message);
     const thinkingLogicFrameworks = await retrieveThinkingLogicFrameworks({
       userMessage: effectiveMessage
     }, env).catch(() => []);
-
-    let assistantText = relatedPaperMode
-      ? buildRelatedPaperAnswerFromContext({
-          context,
-          activePaperContext: strictActivePaperState.activePaperContext,
-          userMessage: message
-        })
-      : (generalOrBroad && !context.length)
-        ? await callOpenAIGeneralNoRetrieval(message, env, cancelRuntime)
-        : await callOpenAIForPaperTalk({
-            userMessage: `${gptProfile.title} context. User question: ${effectiveMessage}`,
-            context,
-            thinkingLogicFrameworks,
-            pastFrameworks: [],
-            generatedFramework: "",
-            recentMessages: recentMessagesForContinuation,
-            autoIntent,
-            // v92: Do not let an old active-paper lock leak into independent new-topic questions.
-            // Active-paper lock is only needed for explicit/automatic paper-summary follow-ups.
-            strictActivePaperLocked: strictActivePaperState.activePaperLocked && !relatedPaperMode && forcedOutputStyle === "PAPER_SUMMARY"
-          }, env, cancelRuntime);
-
+    let assistantText = relatedPaperMode ? buildRelatedPaperAnswerFromContext({
+      context,
+      activePaperContext: strictActivePaperState.activePaperContext,
+      userMessage: message
+    }) : generalOrBroad && !context.length ? await callOpenAIGeneralNoRetrieval(message, env, cancelRuntime) : await callOpenAIForPaperTalk({
+      userMessage: `${gptProfile.title} context. User question: ${effectiveMessage}`,
+      context,
+      thinkingLogicFrameworks,
+      pastFrameworks: [],
+      generatedFramework: "",
+      recentMessages: recentMessagesForContinuation,
+      autoIntent,
+      // v92: Do not let an old active-paper lock leak into independent new-topic questions.
+      // Active-paper lock is only needed for explicit/automatic paper-summary follow-ups.
+      strictActivePaperLocked: strictActivePaperState.activePaperLocked && !relatedPaperMode && forcedOutputStyle === "PAPER_SUMMARY"
+    }, env, cancelRuntime);
     if (isUserCanceledText(assistantText)) {
       await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
       return canceledChatJson();
     }
-
     await cancelRuntime.throwIfCanceled();
-
-    const assistantFailed =
-      /^OpenAI API error:/i.test(assistantText) ||
-      /^OpenAI API timeout/i.test(assistantText) ||
-      /^OpenAI API request failed/i.test(assistantText) ||
-      /^OpenAI general request failed/i.test(assistantText) ||
-      /^OpenAI answer-generation request/i.test(assistantText) ||
-      /^OpenAI pipeline-code request failed/i.test(assistantText) ||
-      /^Cloudflare Workers AI/i.test(assistantText) ||
-      /returned non-JSON response/i.test(assistantText);
-
+    const assistantFailed = /^OpenAI API error:/i.test(assistantText) || /^OpenAI API timeout/i.test(assistantText) || /^OpenAI API request failed/i.test(assistantText) || /^OpenAI general request failed/i.test(assistantText) || /^OpenAI answer-generation request/i.test(assistantText) || /^OpenAI pipeline-code request failed/i.test(assistantText) || /returned non-JSON response/i.test(assistantText);
     if (assistantFailed) {
       await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
       return json({
@@ -8741,23 +6373,12 @@ async function gptChat(request, env) {
         sources: []
       }, 502);
     }
-
-    assistantText = String(assistantText || '')
-      .replace(/\*\*/g, "")
-      .replace(/__/g, "")
-      .replace(/#/g, "")
-      .replace(/\*/g, "");
-
-    const finalOutputStyle = relatedPaperMode
-      ? "LITERATURE_REVIEW"
-      : (forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: autoIntent, hasContext: context.length > 0 }));
-
+    assistantText = String(assistantText || "").replace(/\*\*/g, "").replace(/__/g, "").replace(/#/g, "").replace(/\*/g, "");
+    const finalOutputStyle = relatedPaperMode ? "LITERATURE_REVIEW" : forcedOutputStyle || determinePaperTalkOutputStyle({ userMessage: effectiveMessage, intent: autoIntent, hasContext: context.length > 0 });
     if (!isSupportingPaperFollowUp(message) && !["LITERATURE_REVIEW", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW", "RESEARCH_INSIGHT", "RESEARCH_SYNTHESIS"].includes(finalOutputStyle)) {
       assistantText = hideAccidentalPaperListFromNormalAnswer(assistantText);
       assistantText = hideInternalEvidenceLeaksFromNormalAnswer(assistantText);
     }
-
-
     if (!isSupportingPaperFollowUp(message)) {
       assistantText = await normalizeFinalAnswerToUserIntentStyle({
         answer: assistantText,
@@ -8768,19 +6389,14 @@ async function gptChat(request, env) {
     } else {
       assistantText = formatAnswerForReadability(assistantText, finalOutputStyle);
     }
-
     assistantText = enforceStrictUserOutputFormat(assistantText, message);
-
     await cancelRuntime.throwIfCanceled();
-
     if (!isGuest) {
       const assistantMessageId = crypto.randomUUID();
-
       await env.DB.prepare(`
         INSERT INTO gpt_messages (id, thread_id, user_id, role, content, gpt_key, created_at)
         VALUES (?, ?, ?, 'assistant', ?, ?, CURRENT_TIMESTAMP)
       `).bind(assistantMessageId, threadId, user.id, assistantText, gptKey).run();
-
       await saveSupportingPapersForAssistantMessage({
         assistantMessageId,
         threadId,
@@ -8788,7 +6404,6 @@ async function gptChat(request, env) {
         context,
         env
       });
-
       await env.DB.prepare(`
         UPDATE gpt_threads
         SET updated_at = CURRENT_TIMESTAMP,
@@ -8796,15 +6411,9 @@ async function gptChat(request, env) {
         WHERE id = ? AND user_id = ? AND COALESCE(gpt_key, 'paper_talk') = ?
       `).bind(message.slice(0, 60), threadId, user.id, gptKey).run();
     }
-
     await cancelRuntime.throwIfCanceled();
-
-    const quotaAfter = isGuest
-      ? await incrementGuestGptUsage(request, env)
-      : await incrementMonthlyGptUsage(user.id, env);
-
+    const quotaAfter = isGuest ? await incrementGuestGptUsage(request, env) : await incrementMonthlyGptUsage(user.id, env);
     await markGptCancellableRequestFinished({ env, cancelId, ownerKey: cancelOwnerKey });
-
     return json({
       ok: true,
       guest: isGuest,
@@ -8821,7 +6430,7 @@ async function gptChat(request, env) {
       gptKey,
       gptTitle: gptProfile.title,
       sources: context.map((item, index) => ({
-        paper_label: index < 10 ? `논문 ${String.fromCharCode(65 + index)}` : null,
+        paper_label: index < 10 ? `\uB17C\uBB38 ${String.fromCharCode(65 + index)}` : null,
         title: item.title,
         source_url: item.source_url,
         pdf_link: item.pdf_link,
@@ -8832,27 +6441,27 @@ async function gptChat(request, env) {
     if (isUserCanceledError(error) || isUserCanceledText(error?.message)) {
       try {
         await markGptCancellableRequestFinished({ env, cancelId: activeCancelId, ownerKey: activeCancelOwnerKey });
-      } catch {}
+      } catch {
+      }
       return canceledChatJson();
     }
-
     return json({
       ok: false,
       error: `GPT chat failed safely: ${error?.message || error}`
     }, 500);
   }
 }
-
-function getCurrentMonthKey(date = new Date()) {
+__name(gptChat, "gptChat");
+function getCurrentMonthKey(date = /* @__PURE__ */ new Date()) {
   return date.toISOString().slice(0, 7);
 }
-
-function getNextMonthResetIso(date = new Date()) {
+__name(getCurrentMonthKey, "getCurrentMonthKey");
+function getNextMonthResetIso(date = /* @__PURE__ */ new Date()) {
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth();
   return new Date(Date.UTC(year, month + 1, 1, 0, 0, 0)).toISOString();
 }
-
+__name(getNextMonthResetIso, "getNextMonthResetIso");
 async function ensureGptMonthlyUsageTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS gpt_monthly_usage (
@@ -8864,23 +6473,21 @@ async function ensureGptMonthlyUsageTable(env) {
     )
   `).run();
 }
-
+__name(ensureGptMonthlyUsageTable, "ensureGptMonthlyUsageTable");
 async function ensureUserGptQuotaColumns(env) {
   const statements = [
     "ALTER TABLE users ADD COLUMN monthly_gpt_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE users ADD COLUMN monthly_gpt_limit INTEGER NOT NULL DEFAULT 50",
     "ALTER TABLE users ADD COLUMN monthly_reset_at TEXT"
   ];
-
   for (const sql of statements) {
     try {
       await env.DB.prepare(sql).run();
     } catch {
-      // Column already exists or the current DB already has these quota fields.
     }
   }
 }
-
+__name(ensureUserGptQuotaColumns, "ensureUserGptQuotaColumns");
 async function getLegacyMonthlyMessageCount(userId, monthKey, env) {
   const result = await env.DB.prepare(`
     SELECT COUNT(*) AS used
@@ -8889,13 +6496,11 @@ async function getLegacyMonthlyMessageCount(userId, monthKey, env) {
       AND role = 'user'
       AND substr(created_at, 1, 7) = ?
   `).bind(userId, monthKey).first();
-
   return result ? Number(result.used || 0) : 0;
 }
-
+__name(getLegacyMonthlyMessageCount, "getLegacyMonthlyMessageCount");
 async function getUserGptQuotaRow(userId, env) {
   await ensureUserGptQuotaColumns(env);
-
   return env.DB.prepare(`
     SELECT
       id,
@@ -8908,10 +6513,9 @@ async function getUserGptQuotaRow(userId, env) {
     LIMIT 1
   `).bind(userId).first();
 }
-
+__name(getUserGptQuotaRow, "getUserGptQuotaRow");
 async function syncMonthlyUsageMirror(userId, monthKey, used, env) {
   await ensureGptMonthlyUsageTable(env);
-
   await env.DB.prepare(`
     INSERT INTO gpt_monthly_usage (
       user_id,
@@ -8925,23 +6529,17 @@ async function syncMonthlyUsageMirror(userId, monthKey, used, env) {
       updated_at = CURRENT_TIMESTAMP
   `).bind(userId, monthKey, used).run();
 }
-
+__name(syncMonthlyUsageMirror, "syncMonthlyUsageMirror");
 async function getMonthlyGptQuota(userId, env, user = null) {
-  const now = new Date();
+  const now = /* @__PURE__ */ new Date();
   const monthKey = getCurrentMonthKey(now);
-
   await ensureGptMonthlyUsageTable(env);
   await ensureUserGptQuotaColumns(env);
-
   const userRow = await getUserGptQuotaRow(userId, env);
-
-  // Fallback for unexpected missing user rows.
   if (!userRow) {
     const legacyUsed = await getLegacyMonthlyMessageCount(userId, monthKey, env);
     const fallbackLimit = SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT;
-
     await syncMonthlyUsageMirror(userId, monthKey, legacyUsed, env);
-
     return {
       used: legacyUsed,
       limit: fallbackLimit,
@@ -8950,30 +6548,20 @@ async function getMonthlyGptQuota(userId, env, user = null) {
       resetsAt: getNextMonthResetIso(now)
     };
   }
-
   let limit = Number(userRow.monthly_gpt_limit);
-
   if (!Number.isFinite(limit) || limit <= 0) {
     limit = SIGNED_IN_TOTAL_GPT_MONTHLY_LIMIT;
   }
-
   limit = Math.floor(limit);
-
   let used = Number(userRow.monthly_gpt_count || 0);
-
   if (!Number.isFinite(used) || used < 0) {
     used = 0;
   }
-
   used = Math.floor(used);
-
   const resetAt = String(userRow.monthly_reset_at || "");
   const resetMonth = resetAt.slice(0, 7);
-
-  // New month: reset this user's GPT usage counter in users.
   if (resetMonth && resetMonth !== monthKey) {
     used = 0;
-
     await env.DB.prepare(`
       UPDATE users
       SET
@@ -8982,8 +6570,6 @@ async function getMonthlyGptQuota(userId, env, user = null) {
       WHERE id = ?
     `).bind(userId).run();
   }
-
-  // First quota read: initialize reset timestamp without changing usage.
   if (!resetAt) {
     await env.DB.prepare(`
       UPDATE users
@@ -8992,9 +6578,7 @@ async function getMonthlyGptQuota(userId, env, user = null) {
         AND (monthly_reset_at IS NULL OR monthly_reset_at = '')
     `).bind(userId).run();
   }
-
   await syncMonthlyUsageMirror(userId, monthKey, used, env);
-
   return {
     used,
     limit,
@@ -9003,19 +6587,15 @@ async function getMonthlyGptQuota(userId, env, user = null) {
     resetsAt: getNextMonthResetIso(now)
   };
 }
-
+__name(getMonthlyGptQuota, "getMonthlyGptQuota");
 async function incrementMonthlyGptUsage(userId, env) {
-  const now = new Date();
+  const now = /* @__PURE__ */ new Date();
   const monthKey = getCurrentMonthKey(now);
-
   await ensureGptMonthlyUsageTable(env);
   await ensureUserGptQuotaColumns(env);
-
-  // This call also resets monthly_gpt_count to 0 when the saved reset month is old.
   const quotaBefore = await getMonthlyGptQuota(userId, env);
   const usedBefore = Number(quotaBefore.used || 0);
   const usedAfter = usedBefore + 1;
-
   await env.DB.prepare(`
     UPDATE users
     SET
@@ -9023,19 +6603,17 @@ async function incrementMonthlyGptUsage(userId, env) {
       monthly_reset_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).bind(usedAfter, userId).run();
-
   await syncMonthlyUsageMirror(userId, monthKey, usedAfter, env);
-
   return getMonthlyGptQuota(userId, env);
 }
-
-function getNextDayResetIso(date = new Date()) {
+__name(incrementMonthlyGptUsage, "incrementMonthlyGptUsage");
+function getNextDayResetIso(date = /* @__PURE__ */ new Date()) {
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth();
   const day = date.getUTCDate();
   return new Date(Date.UTC(year, month, day + 1, 0, 0, 0)).toISOString();
 }
-
+__name(getNextDayResetIso, "getNextDayResetIso");
 async function ensureGuestGptDailyUsageTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS guest_gpt_daily_usage (
@@ -9047,25 +6625,21 @@ async function ensureGuestGptDailyUsageTable(env) {
     )
   `).run();
 }
-
+__name(ensureGuestGptDailyUsageTable, "ensureGuestGptDailyUsageTable");
 async function getGuestGptQuota(request, env) {
-  const now = new Date();
+  const now = /* @__PURE__ */ new Date();
   const todayKey = getTodayKey(now);
   const visitorIp = getVisitorIp(request);
   const ipHash = await sha256Hex(`${todayKey}:${visitorIp}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`);
   const guestLimit = GUEST_GPT_DAILY_LIMIT;
-
   await ensureGuestGptDailyUsageTable(env);
-
   const row = await env.DB.prepare(`
     SELECT used
     FROM guest_gpt_daily_usage
     WHERE visit_date = ?
       AND ip_hash = ?
   `).bind(todayKey, ipHash).first();
-
   const used = row ? Number(row.used || 0) : 0;
-
   return {
     used,
     limit: guestLimit,
@@ -9074,10 +6648,9 @@ async function getGuestGptQuota(request, env) {
     resetsAt: getNextDayResetIso(now)
   };
 }
-
+__name(getGuestGptQuota, "getGuestGptQuota");
 async function incrementGuestGptUsage(request, env) {
   const quota = await getGuestGptQuota(request, env);
-
   await env.DB.prepare(`
     INSERT INTO guest_gpt_daily_usage (
       visit_date,
@@ -9090,28 +6663,21 @@ async function incrementGuestGptUsage(request, env) {
       used = used + 1,
       updated_at = CURRENT_TIMESTAMP
   `).bind(quota.todayKey, await sha256Hex(`${quota.todayKey}:${getVisitorIp(request)}:${env.SESSION_SECRET || "paper-talk"}:guest-gpt`)).run();
-
   return getGuestGptQuota(request, env);
 }
-
+__name(incrementGuestGptUsage, "incrementGuestGptUsage");
 async function deleteGptThread(request, env) {
   const user = await getSession(request, env);
-
   if (!user) {
     return json({ ok: false, error: "Please sign in first." }, 401);
   }
-
   const url = new URL(request.url);
   const threadId = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() || "");
-
   if (!threadId) {
     return json({ ok: false, error: "threadId is required." }, 400);
   }
-
   await ensureSpecialistGptTables(env);
-
   const gptKey = normalizeGptKey(url.searchParams.get("gptKey") || url.searchParams.get("gpt") || url.searchParams.get("domain"));
-
   const thread = await env.DB.prepare(`
     SELECT *
     FROM gpt_threads
@@ -9119,212 +6685,134 @@ async function deleteGptThread(request, env) {
       AND user_id = ?
       AND COALESCE(gpt_key, 'paper_talk') = ?
   `).bind(threadId, user.id, gptKey).first();
-
   if (!thread) {
     return json({ ok: false, error: "Thread not found." }, 404);
   }
-
   await env.DB.prepare(`
     DELETE FROM gpt_messages
     WHERE thread_id = ?
       AND user_id = ?
   `).bind(threadId, user.id).run();
-
   await env.DB.prepare(`
     DELETE FROM gpt_threads
     WHERE id = ?
       AND user_id = ?
   `).bind(threadId, user.id).run();
-
   return json({ ok: true });
 }
-
-
+__name(deleteGptThread, "deleteGptThread");
 function buildRobustFullTextSearchTerms(query) {
-  // v53 multilingual automatic retrieval.
-  // Principle: do NOT rely on a Korean-only or English-only stopword list.
-  // The retrieval layer extracts scientific/title-like signals and lets scoring
-  // decide relevance. Instruction words in any language rarely appear in titles
-  // or chunks, so they naturally get low/no score.
-  const raw = String(query || "")
-    .replace(/https?:\/\/\S+/gi, " ")
-    .replace(/\.pdf\b/gi, " ")
-    .replace(/[_]+/g, " ")
-    .replace(/[‐‑‒–—]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
-
+  const raw = String(query || "").replace(/https?:\/\/\S+/gi, " ").replace(/\.pdf\b/gi, " ").replace(/[_]+/g, " ").replace(/[‐‑‒–—]/g, "-").replace(/\s+/g, " ").trim();
   const terms = [];
-  const seen = new Set();
-
+  const seen = /* @__PURE__ */ new Set();
   function addTerm(value, maxLen = 110) {
-    let term = String(value || "")
-      .toLowerCase()
-      .replace(/[“”"'`]/g, " ")
-      .replace(/[‐‑‒–—]/g, "-")
-      .replace(/[%_]/g, " ")
-      .replace(/[^\p{L}\p{N}+\-\s:/()]/gu, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
+    let term = String(value || "").toLowerCase().replace(/[“”"'`]/g, " ").replace(/[‐‑‒–—]/g, "-").replace(/[%_]/g, " ").replace(/[^\p{L}\p{N}+\-\s:/()]/gu, " ").replace(/\s+/g, " ").trim();
     if (!term) return;
     if (term.length < 2) return;
-
-    // Avoid a whole pasted paragraph as one LIKE pattern.
     if (term.length > maxLen) term = term.slice(0, maxLen).trim();
     if (!term || seen.has(term)) return;
-
     seen.add(term);
     terms.push(term);
   }
-
-  // 1) The most likely paper-title span.
+  __name(addTerm, "addTerm");
   addTerm(extractLikelyPaperTitleForSafeLookup(raw), 130);
-
-  // 2) Quoted phrases across languages.
   const quoted = raw.match(/["“”'`「『《](.{4,180}?)[“”"'`」』》]/g) || [];
   for (const q of quoted) addTerm(q.replace(/^["“”'`「『《]|["“”'`」』》]$/g, ""), 120);
-
-  // 3) Long scientific English/Latin spans. Most biomedical titles are here,
-  // even when the surrounding request is Korean/French/Spanish/Japanese/etc.
   const titleSpans = raw.match(/[A-Za-z0-9][A-Za-z0-9+\-:;,/() ]{8,220}[A-Za-z0-9)]/g) || [];
   for (const span of titleSpans) {
     const scientificTokens = span.match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || [];
     if (scientificTokens.length >= 2) addTerm(span, 130);
   }
-
-  // 4) Scientific symbols and biomedical abbreviations.
   const symbols = raw.match(/\b(?:[A-Z]{2,}[A-Z0-9-]*|[A-Za-z]+-?\d+[A-Za-z]*|\d+[A-Za-z]+|CD\d+\+?|PD-?1|CTLA-?4|TCR|Treg|IFN-?\w*|TNF|IL-?\d+|RNA|DNA|scRNA-?seq|snRNA-?seq|ATAC|CNV|GWAS|SPP1|SOCS1|MHC|HLA)\b/gi) || [];
   for (const symbol of symbols) addTerm(symbol, 40);
-
-  // 5) Unicode tokens from any language. No language-specific stopword list:
-  // short generic words simply will not score unless they appear in DB text.
   const unicodeTokens = raw.match(/[\p{L}\p{N}]+(?:[-+][\p{L}\p{N}]+)*/gu) || [];
-  const usefulTokens = unicodeTokens
-    .map(v => v.toLowerCase().trim())
-    .filter(Boolean)
-    .filter(v => {
-      if (/\d/.test(v)) return true;
-      if (/[A-Za-z]/.test(v) && v.length >= 3) return true;
-      if (!/[A-Za-z]/.test(v) && v.length >= 2) return true;
-      return false;
-    })
-    .slice(0, 28);
-
-  // Adjacent n-grams make title retrieval robust:
-  // "inhibitory pd-1 axis", "stem-like cd8", "spatial transcriptomics", etc.
+  const usefulTokens = unicodeTokens.map((v) => v.toLowerCase().trim()).filter(Boolean).filter((v) => {
+    if (/\d/.test(v)) return true;
+    if (/[A-Za-z]/.test(v) && v.length >= 3) return true;
+    if (!/[A-Za-z]/.test(v) && v.length >= 2) return true;
+    return false;
+  }).slice(0, 28);
   for (let n = Math.min(6, usefulTokens.length); n >= 2; n--) {
     for (let i = 0; i <= usefulTokens.length - n; i++) {
       const phrase = usefulTokens.slice(i, i + n).join(" ");
       if (phrase.length >= 5 && phrase.length <= 110) addTerm(phrase, 110);
     }
   }
-
   for (const token of usefulTokens) addTerm(token, 40);
-
-  // 6) Existing domain-specific expanders if present.
   try {
     for (const phrase of extractScientificKeyPhrases(raw)) addTerm(phrase, 90);
-  } catch {}
+  } catch {
+  }
   try {
     for (const phrase of extractAutoResearchKeywords(raw)) addTerm(phrase, 90);
-  } catch {}
-
-  return terms
-    .sort((a, b) => {
-      const aHasDigit = /\d/.test(a) ? 15 : 0;
-      const bHasDigit = /\d/.test(b) ? 15 : 0;
-      const aSci = /[A-Za-z]/.test(a) ? 8 : 0;
-      const bSci = /[A-Za-z]/.test(b) ? 8 : 0;
-      return (b.length + bHasDigit + bSci) - (a.length + aHasDigit + aSci);
-    })
-    .slice(0, 16);
+  } catch {
+  }
+  return terms.sort((a, b) => {
+    const aHasDigit = /\d/.test(a) ? 15 : 0;
+    const bHasDigit = /\d/.test(b) ? 15 : 0;
+    const aSci = /[A-Za-z]/.test(a) ? 8 : 0;
+    const bSci = /[A-Za-z]/.test(b) ? 8 : 0;
+    return b.length + bHasDigit + bSci - (a.length + aHasDigit + aSci);
+  }).slice(0, 16);
 }
-
-
+__name(buildRobustFullTextSearchTerms, "buildRobustFullTextSearchTerms");
 function scoreFullTextChunkRow(row, terms) {
   const title = String(row.title || "").toLowerCase();
   const fileName = String(row.file_name || "").toLowerCase();
   const text = String(row.text || "").toLowerCase();
   const chunkIndex = Number(row.chunk_index || 0);
-
   let score = 0;
-
   for (const term of terms) {
     const t = String(term || "").toLowerCase();
     if (!t) continue;
-
     if (title.includes(t)) score += Math.min(120, 40 + t.length);
     if (fileName.includes(t)) score += Math.min(100, 32 + t.length);
     if (text.includes(t)) score += Math.min(40, 8 + Math.min(t.length, 24));
-
     const pieces = t.split(/\s+/).filter(Boolean);
     if (pieces.length >= 2) {
-      const titleHits = pieces.filter(p => title.includes(p)).length;
-      const fileHits = pieces.filter(p => fileName.includes(p)).length;
-      const textHits = pieces.filter(p => text.includes(p)).length;
+      const titleHits = pieces.filter((p) => title.includes(p)).length;
+      const fileHits = pieces.filter((p) => fileName.includes(p)).length;
+      const textHits = pieces.filter((p) => text.includes(p)).length;
       score += titleHits * 10 + fileHits * 8 + textHits * 2;
     }
   }
-
   if (chunkIndex === 0) score += 8;
   if (chunkIndex > 0 && chunkIndex <= 3) score += 4;
-
   return score;
 }
-
+__name(scoreFullTextChunkRow, "scoreFullTextChunkRow");
 async function searchPaperFullTextChunks(query, env, limit = 6, gptKey = DEFAULT_GPT_KEY) {
   gptKey = normalizeGptKey(gptKey);
   const userQuery = String(query || "").trim();
   if (!userQuery) return [];
-
   try {
     await ensurePaperFullTextTables(env);
   } catch {
     return [];
   }
-
   const terms = buildRobustFullTextSearchTerms(userQuery);
   const titleCandidate = extractLikelyPaperTitleForSafeLookup(userQuery);
-
   const exactTitleVariants = [];
-  const addVariant = (value) => {
-    const v = String(value || "")
-      .toLowerCase()
-      .replace(/https?:\/\/\S+/gi, " ")
-      .replace(/\.pdf\b/gi, " ")
-      .replace(/[“”"'`]/g, " ")
-      .replace(/[‐‑‒–—]/g, "-")
-      .replace(/[%_]/g, " ")
-      .replace(/[^\p{L}\p{N}+\-\s:/()]/gu, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  const addVariant = /* @__PURE__ */ __name((value) => {
+    const v = String(value || "").toLowerCase().replace(/https?:\/\/\S+/gi, " ").replace(/\.pdf\b/gi, " ").replace(/[“”"'`]/g, " ").replace(/[‐‑‒–—]/g, "-").replace(/[%_]/g, " ").replace(/[^\p{L}\p{N}+\-\s:/()]/gu, " ").replace(/\s+/g, " ").trim();
     if (v.length >= 6 && !exactTitleVariants.includes(v)) exactTitleVariants.push(v.slice(0, 160));
-  };
-
+  }, "addVariant");
   addVariant(titleCandidate);
-
-  // Prefix title variants are the key fix for multilingual instructions.
-  // Example: "Inhibitory PD-1 axis ... T cells 을 읽고 요약해줘".
-  // We search the scientific/title prefix rather than the whole user sentence.
   const latinTokens = String(titleCandidate || userQuery).match(/[A-Za-z0-9]+(?:[-+][A-Za-z0-9]+)*/g) || [];
   for (let n of [10, 8, 6, 5, 4, 3]) {
     if (latinTokens.length >= n) addVariant(latinTokens.slice(0, n).join(" "));
   }
-
   const rows = [];
-  const seenRows = new Set();
-
+  const seenRows = /* @__PURE__ */ new Set();
   async function addRowsFromResult(result) {
-    for (const row of (result?.results || [])) {
+    for (const row of result?.results || []) {
       const key = `${row.post_id || ""}:${row.file_name || ""}:${row.chunk_index || 0}:${String(row.title || "").slice(0, 80)}`;
       if (seenRows.has(key)) continue;
       seenRows.add(key);
       rows.push(row);
     }
   }
-
-  // 1) Exact/partial title and file-name retrieval first. This is cheap and high precision.
+  __name(addRowsFromResult, "addRowsFromResult");
   for (const variant of exactTitleVariants.slice(0, 8)) {
     try {
       const like = `%${variant}%`;
@@ -9356,27 +6844,21 @@ async function searchPaperFullTextChunks(query, env, limit = 6, gptKey = DEFAULT
       `).bind(gptKey, like, like, like, like).all();
       await addRowsFromResult(result);
     } catch {
-      // Continue to token search.
     }
   }
-
-  // 2) Token/n-gram fallback across title, file name, and bounded text.
   if (terms.length) {
     const sqlTerms = terms.slice(0, 12);
     const clauses = [];
     const params = [];
-
     for (const term of sqlTerms) {
       clauses.push(`(
         LOWER(title) LIKE ?
         OR LOWER(file_name) LIKE ?
         OR LOWER(text) LIKE ?
       )`);
-
       const like = `%${String(term || "").toLowerCase()}%`;
       params.push(like, like, like);
     }
-
     try {
       const result = await env.DB.prepare(`
         SELECT
@@ -9397,45 +6879,32 @@ async function searchPaperFullTextChunks(query, env, limit = 6, gptKey = DEFAULT
       `).bind(gptKey, ...params).all();
       await addRowsFromResult(result);
     } catch {
-      // Continue with whatever exact title retrieval found.
     }
   }
-
   if (!rows.length) return [];
-
   const allScoringTerms = [...exactTitleVariants, ...terms];
-
-  const scoredRows = rows
-    .map(row => {
-      let score = scoreFullTextChunkRow(row, allScoringTerms);
-      const title = String(row.title || "").toLowerCase();
-      const file = String(row.file_name || "").toLowerCase();
-
-      for (const variant of exactTitleVariants) {
-        if (!variant) continue;
-        if (title.includes(variant)) score += 260 + Math.min(80, variant.length);
-        if (file.includes(variant)) score += 180 + Math.min(60, variant.length);
-
-        const parts = variant.split(/\s+/).filter(v => v.length >= 2);
-        const titleHits = parts.filter(p => title.includes(p)).length;
-        const fileHits = parts.filter(p => file.includes(p)).length;
-        if (parts.length >= 3) {
-          score += (titleHits / parts.length) * 180;
-          score += (fileHits / parts.length) * 120;
-        }
+  const scoredRows = rows.map((row) => {
+    let score = scoreFullTextChunkRow(row, allScoringTerms);
+    const title = String(row.title || "").toLowerCase();
+    const file = String(row.file_name || "").toLowerCase();
+    for (const variant of exactTitleVariants) {
+      if (!variant) continue;
+      if (title.includes(variant)) score += 260 + Math.min(80, variant.length);
+      if (file.includes(variant)) score += 180 + Math.min(60, variant.length);
+      const parts = variant.split(/\s+/).filter((v) => v.length >= 2);
+      const titleHits = parts.filter((p) => title.includes(p)).length;
+      const fileHits = parts.filter((p) => file.includes(p)).length;
+      if (parts.length >= 3) {
+        score += titleHits / parts.length * 180;
+        score += fileHits / parts.length * 120;
       }
-
-      return { row, score };
-    })
-    .filter(item => item.score > 0)
-    .sort((a, b) => b.score - a.score || Number(a.row.chunk_index || 0) - Number(b.row.chunk_index || 0));
-
-  const grouped = new Map();
-
+    }
+    return { row, score };
+  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || Number(a.row.chunk_index || 0) - Number(b.row.chunk_index || 0));
+  const grouped = /* @__PURE__ */ new Map();
   for (const { row, score } of scoredRows) {
     const key = row.post_id || normalizeSearchText(row.title || row.file_name || "");
     if (!key) continue;
-
     if (!grouped.has(key)) {
       grouped.set(key, {
         post_id: row.post_id || "",
@@ -9447,72 +6916,55 @@ async function searchPaperFullTextChunks(query, env, limit = 6, gptKey = DEFAULT
         score: 0
       });
     }
-
     const group = grouped.get(key);
     if (group.chunks.length < 4) {
       group.chunks.push(row);
       group.score += score;
     }
   }
-
-  return Array.from(grouped.values())
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(group => {
-      const chunkText = group.chunks
-        .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0))
-        .map(row => [
-          `Chunk index: ${row.chunk_index}`,
-          String(row.text || "").slice(0, 2300)
-        ].join("\n"))
-        .join("\n\n--- Full-text chunk ---\n\n");
-
-      return {
-        post_id: group.post_id,
-        title: group.title,
-        source_url: group.source_url,
-        pdf_link: group.pdf_link,
-        content: [
-          "Paper_Talk DB Research Paper",
-          "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
-          `Title: ${group.title}`,
-          group.file_name ? `Full text file: ${group.file_name}` : "",
-          "",
-          chunkText
-        ].filter(Boolean).join("\n").slice(0, 10000),
-        matched_chunk: cleanBibtexText(chunkText).slice(0, 7000),
-        similarity_score: Math.round(group.score),
-        from_fulltext_chunk_search: true,
-        from_direct_db_search: true,
-        from_explicit_title_search: true
-      };
-    });
+  return Array.from(grouped.values()).sort((a, b) => b.score - a.score).slice(0, limit).map((group) => {
+    const chunkText = group.chunks.sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0)).map((row) => [
+      `Chunk index: ${row.chunk_index}`,
+      String(row.text || "").slice(0, 2300)
+    ].join("\n")).join("\n\n--- Full-text chunk ---\n\n");
+    return {
+      post_id: group.post_id,
+      title: group.title,
+      source_url: group.source_url,
+      pdf_link: group.pdf_link,
+      content: [
+        "Paper_Talk DB Research Paper",
+        "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
+        `Title: ${group.title}`,
+        group.file_name ? `Full text file: ${group.file_name}` : "",
+        "",
+        chunkText
+      ].filter(Boolean).join("\n").slice(0, 1e4),
+      matched_chunk: cleanBibtexText(chunkText).slice(0, 7e3),
+      similarity_score: Math.round(group.score),
+      from_fulltext_chunk_search: true,
+      from_direct_db_search: true,
+      from_explicit_title_search: true
+    };
+  });
 }
-
-
+__name(searchPaperFullTextChunks, "searchPaperFullTextChunks");
 async function getBestFullTextChunksForPaper({ postId, title, query, env, limit = 3, gptKey = DEFAULT_GPT_KEY }) {
   try {
     await ensurePaperFullTextTables(env);
   } catch {
     return [];
   }
-
   gptKey = normalizeGptKey(gptKey);
   const safePostId = String(postId || "").trim();
   const safeTitle = cleanBibtexText(title || "").trim();
   const userQuery = String(query || "").trim();
-
   const tokens = [
     ...getImportantSearchTokens(userQuery),
     ...getImportantSearchTokens(safeTitle)
-  ]
-    .map(v => String(v || "").toLowerCase())
-    .filter(v => v.length >= 4);
-
+  ].map((v) => String(v || "").toLowerCase()).filter((v) => v.length >= 4);
   const uniqueTokens = [...new Set(tokens)].slice(0, 10);
-
   let rows = [];
-
   try {
     if (safePostId) {
       const result = await env.DB.prepare(`
@@ -9528,20 +6980,17 @@ async function getBestFullTextChunksForPaper({ postId, title, query, env, limit 
           chunk_index ASC
         LIMIT ?
       `).bind(safePostId, gptKey, Math.max(limit * 2, 6)).all();
-
       rows = result.results || [];
     }
   } catch {
     rows = [];
   }
-
   if (!rows.length && safeTitle) {
     try {
       const titleTokens = getImportantSearchTokens(safeTitle).slice(0, 8);
       if (titleTokens.length >= 3) {
         const clauses = titleTokens.map(() => `LOWER(title) LIKE ?`).join(" AND ");
-        const params = titleTokens.map(t => `%${t.toLowerCase()}%`);
-
+        const params = titleTokens.map((t) => `%${t.toLowerCase()}%`);
         const result = await env.DB.prepare(`
           SELECT post_id, title, source_url, pdf_link, file_name, chunk_index, text, text_length, created_at
           FROM paper_fulltext_chunks
@@ -9550,26 +6999,18 @@ async function getBestFullTextChunksForPaper({ postId, title, query, env, limit 
           ORDER BY chunk_index ASC
           LIMIT ?
         `).bind(gptKey, ...params, Math.max(limit * 2, 6)).all();
-
         rows = result.results || [];
       }
     } catch {
       rows = [];
     }
   }
-
   if (!rows.length) return [];
-
-  const scored = rows.map(row => {
+  const scored = rows.map((row) => {
     const hay = normalizeSearchText(`${row.title || ""} ${row.file_name || ""} ${row.text || ""}`);
-    const score =
-      uniqueTokens.reduce((sum, token) => sum + (hay.includes(token) ? 3 : 0), 0) +
-      (Number(row.chunk_index || 0) <= 3 ? 4 : 0) +
-      (/abstract|introduction|result|discussion|conclusion|malignan|tumou?r|cancer|pancreatic|ductal|carcinoma|epithelial/i.test(row.text || "") ? 3 : 0);
-
+    const score = uniqueTokens.reduce((sum, token) => sum + (hay.includes(token) ? 3 : 0), 0) + (Number(row.chunk_index || 0) <= 3 ? 4 : 0) + (/abstract|introduction|result|discussion|conclusion|malignan|tumou?r|cancer|pancreatic|ductal|carcinoma|epithelial/i.test(row.text || "") ? 3 : 0);
     return { row, score };
   }).sort((a, b) => b.score - a.score || Number(a.row.chunk_index || 0) - Number(b.row.chunk_index || 0));
-
   return scored.slice(0, limit).map(({ row }) => ({
     post_id: row.post_id,
     title: cleanBibtexText(row.title),
@@ -9589,18 +7030,15 @@ async function getBestFullTextChunksForPaper({ postId, title, query, env, limit 
     from_direct_db_search: true
   }));
 }
-
+__name(getBestFullTextChunksForPaper, "getBestFullTextChunksForPaper");
 async function enrichKnowledgeItemsWithFullTextChunks(items, query, env, gptKey = DEFAULT_GPT_KEY) {
   const output = [];
-
-  for (const item of (items || [])) {
+  for (const item of items || []) {
     if (!item) continue;
-
     if (item.from_fulltext_chunk_search) {
       output.push(item);
       continue;
     }
-
     const chunks = await getBestFullTextChunksForPaper({
       postId: item.post_id || "",
       title: item.title || "",
@@ -9609,13 +7047,8 @@ async function enrichKnowledgeItemsWithFullTextChunks(items, query, env, gptKey 
       limit: 2,
       gptKey
     });
-
     if (chunks.length) {
-      const chunkText = chunks
-        .map(chunk => chunk.matched_chunk || "")
-        .filter(Boolean)
-        .join("\n\n--- Full-text chunk ---\n\n");
-
+      const chunkText = chunks.map((chunk) => chunk.matched_chunk || "").filter(Boolean).join("\n\n--- Full-text chunk ---\n\n");
       output.push({
         ...item,
         content: [
@@ -9623,237 +7056,94 @@ async function enrichKnowledgeItemsWithFullTextChunks(items, query, env, gptKey 
           "",
           "Paper_Talk retrieved uploaded full-text chunks for this paper:",
           chunkText
-        ].filter(Boolean).join("\n\n").slice(0, 14000),
-        matched_chunk: chunkText.slice(0, 4000),
+        ].filter(Boolean).join("\n\n").slice(0, 14e3),
+        matched_chunk: chunkText.slice(0, 4e3),
         from_fulltext_chunk_enriched: true
       });
-
       output.push(...chunks);
     } else {
       output.push(item);
     }
   }
-
   return output;
 }
-
-async function searchResearchKnowledge(query, env) {
-  const userQuery = String(query || "").trim();
-
-  if (!userQuery) {
-    const latestKnowledge = await latestResearchKnowledge(env, 12);
-    if (latestKnowledge.length > 0) return latestKnowledge;
-    return latestResearchPostsAsKnowledge(env, 12);
-  }
-
-  // v35 explicit paper lookup:
-  // If the user provides a paper URL, DOI, PMID/PII-like identifier, or full title,
-  // first retrieve that exact Paper_Talk DB row by source_url/pdf_link/title/content.
-  // If the row has a stored source_url, fetch that publisher page/metadata once and
-  // merge the readable abstract/page text with the stored admin abstract/content.
-  // This fixes cases where the DB contains the title/url but natural-language retrieval misses it.
-  try {
-    const explicitMatches = await findExplicitPaperMatchesFromQuestion(userQuery, env);
-    if (explicitMatches.length > 0) {
-      const enriched = await enrichExplicitPaperMatchesWithStoredUrls(explicitMatches, env);
-      const enrichedWithFullText = await enrichKnowledgeItemsWithFullTextChunks(enriched, userQuery, env);
-      return mergeKnowledgeResults(enrichedWithFullText).slice(0, 12);
-    }
-  } catch {
-    // Continue with normal retrieval.
-  }
-
-  const allResults = [];
-
-  // v24 retrieval fix:
-  // The user should not need to type the exact stored DB wording.
-  // We automatically extract scientific keywords from the question, expand common biomedical synonyms,
-  // then search research_knowledge by title/content before and after Vectorize.
-  const keyPhrases = extractScientificKeyPhrases(userQuery);
-  const autoKeywords = extractAutoResearchKeywords(userQuery);
-
-  // v44 chunked full-text search:
-  // Search uploaded PDF/TXT chunks separately from research_knowledge.content.
-  // This lets Paper_Talk scale to 1000+ PDFs without putting full text into one DB row.
-  try {
-    allResults.push(...await searchPaperFullTextChunks(userQuery, env, 12));
-  } catch {
-    // Continue.
-  }
-
-  // A) Exact phrase/entity D1 search first. This catches terms like:
-  // RNA velocity, scVelo, velocyto, spatial transcriptomics, single-cell RNA-seq, TFvelo, SIRV, Visium.
-  for (const phrase of [...keyPhrases, ...autoKeywords]) {
-    try {
-      allResults.push(...await exactPhraseKnowledgeSearch(phrase, env));
-    } catch {
-      // Continue.
-    }
-  }
-
-  // A-2) Strong automatic keyword OR-search across title/content.
-  // This is the main safety net when Vectorize misses papers or the DB uses related wording.
-  try {
-    allResults.push(...await smartKeywordKnowledgeSearch(userQuery, env));
-  } catch {
-    // Continue.
-  }
-
-  // B) Expand/translate the user's natural question into English scientific retrieval text.
-  const retrievalQueries = await buildRetrievalQueries(userQuery, env);
-
-  // C) Deterministic DB fallback with extracted key phrases, auto keywords, and expanded queries.
-  for (const retrievalQuery of [...keyPhrases, ...autoKeywords, ...retrievalQueries]) {
-    try {
-      allResults.push(...await directResearchKnowledgeSearch(retrievalQuery, env));
-    } catch {
-      // Continue.
-    }
-
-    try {
-      allResults.push(...await keywordFallbackSearch(retrievalQuery, env));
-    } catch {
-      // Continue.
-    }
-
-    try {
-      allResults.push(...await searchResearchPostsAsKnowledge(retrievalQuery, env));
-    } catch {
-      // Continue.
-    }
-  }
-
-  // D) Semantic Vectorize search is still useful, but it should not block D1 exact matches.
-  for (const retrievalQuery of retrievalQueries) {
-    try {
-      allResults.push(...await vectorSemanticSearch(retrievalQuery, env));
-    } catch {
-      // Continue with other retrieval methods.
-    }
-  }
-
-  const merged = mergeKnowledgeResults(allResults).slice(0, 12);
-  if (merged.length > 0) {
-    // v36:
-    // For broad research-idea questions such as "요즘 싱글셀 연구를 뭘 하면 좋을까?",
-    // first select relevant Paper_Talk DB papers, then try to read each stored source_url/pdf_link.
-    // Publisher pages can block Workers, so this live fetch only augments the stored DB abstract/content.
-    // If live fetch fails, GPT still answers from the saved Paper_Talk DB evidence.
-    if (shouldLiveEnrichSelectedDbPapers(userQuery)) {
-      const enriched = await enrichSelectedResearchPapersWithStoredUrls(merged, env);
-      return mergeKnowledgeResults(enriched).slice(0, 12);
-    }
-
-    return merged;
-  }
-
-  return [];
-}
-
-
+__name(enrichKnowledgeItemsWithFullTextChunks, "enrichKnowledgeItemsWithFullTextChunks");
 function extractUrlsFromQuestion(value) {
   const text = String(value || "");
   const matches = text.match(/https?:\/\/[^\s<>"']+/gi) || [];
-  return [...new Set(matches.map(url => url.replace(/[\]\).,;]+$/g, "").trim()).filter(Boolean))];
+  return [...new Set(matches.map((url) => url.replace(/[\]\).,;]+$/g, "").trim()).filter(Boolean))];
 }
-
+__name(extractUrlsFromQuestion, "extractUrlsFromQuestion");
 function makeUrlSearchVariants(url) {
-  const variants = new Set();
+  const variants = /* @__PURE__ */ new Set();
   const raw = String(url || "").trim();
   if (!raw) return [];
-
   variants.add(raw);
-
   try {
     variants.add(decodeURIComponent(raw));
   } catch {
-    // ignore malformed percent encoding
   }
-
   try {
     variants.add(encodeURI(decodeURIComponent(raw)));
   } catch {
-    // ignore malformed percent encoding
   }
-
   const noQuery = raw.split("?")[0].split("#")[0];
   if (noQuery) variants.add(noQuery);
-
   try {
     const decodedNoQuery = decodeURIComponent(noQuery);
     if (decodedNoQuery) variants.add(decodedNoQuery);
   } catch {
-    // ignore
   }
-
   const doi = extractDoiFromTextOrUrl(raw);
   if (doi) {
     variants.add(doi);
     variants.add(`https://doi.org/${doi}`);
   }
-
   const pii = raw.match(/S\d{4}-\d{4}(?:%28|\()\d{2}(?:%29|\))\d{5}-\d/i);
   if (pii) {
     variants.add(pii[0]);
-    try { variants.add(decodeURIComponent(pii[0])); } catch {}
+    try {
+      variants.add(decodeURIComponent(pii[0]));
+    } catch {
+    }
     variants.add(pii[0].replace(/%28/gi, "(").replace(/%29/gi, ")"));
   }
-
-  return [...variants].filter(v => v && v.length >= 6).slice(0, 12);
+  return [...variants].filter((v) => v && v.length >= 6).slice(0, 12);
 }
-
+__name(makeUrlSearchVariants, "makeUrlSearchVariants");
 function extractLikelyPaperTitlesFromQuestion(value) {
-  const text = String(value || "")
-    .replace(/https?:\/\/[^\s<>"']+/gi, "\n")
-    .replace(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/gi, "\n");
-
-  const lines = text
-    .split(/[\n\r]+/)
-    .map(v => v.trim())
-    .filter(Boolean);
-
+  const text = String(value || "").replace(/https?:\/\/[^\s<>"']+/gi, "\n").replace(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/gi, "\n");
+  const lines = text.split(/[\n\r]+/).map((v) => v.trim()).filter(Boolean);
   const titles = [];
-
   for (const line of lines) {
-    const cleaned = line
-      .replace(/^(title|paper|논문|제목)\s*[:：]\s*/i, "")
-      .replace(/(이\s*논문을|이\s*논문|논문에서|논문을|논문|읽고|요약|정리|중요|부분|하이라이트|핵심|한\s*줄|한줄|영어로|한국어로|번역|답변|해주세요|해줘|찾아|줘|기반으로|abstract|초록|summary|summari[sz]e|highlight|takeaway|one[-\s]?line|one\s*sentence|translate|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要)/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
+    const cleaned = line.replace(/^(title|paper|논문|제목)\s*[:：]\s*/i, "").replace(/(이\s*논문을|이\s*논문|논문에서|논문을|논문|읽고|요약|정리|중요|부분|하이라이트|핵심|한\s*줄|한줄|영어로|한국어로|번역|답변|해주세요|해줘|찾아|줘|기반으로|abstract|초록|summary|summari[sz]e|highlight|takeaway|one[-\s]?line|one\s*sentence|translate|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要)/gi, " ").replace(/\s+/g, " ").trim();
     const englishWords = (cleaned.match(/[A-Za-z][A-Za-z\-]+/g) || []).length;
     if (cleaned.length >= 25 && englishWords >= 4) {
       titles.push(cleaned);
     }
   }
-
-  // Sometimes the user pastes title + request in one line. Keep a phrase before Korean request words.
   const single = text.replace(/\s+/g, " ").trim();
   const beforeKoreanRequest = single.split(/이\s*논문|논문에서|논문을|논문|읽고|요약|정리|중요|하이라이트|핵심|한\s*줄|한줄|영어로|한국어로|해줘|해주세요|답해|분석|summary|summari[sz]e|highlight|takeaway|one[-\s]?line|one\s*sentence|translate|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要/i)[0]?.trim();
   if (beforeKoreanRequest) {
     const englishWords = (beforeKoreanRequest.match(/[A-Za-z][A-Za-z\-]+/g) || []).length;
     if (beforeKoreanRequest.length >= 25 && englishWords >= 4) titles.push(beforeKoreanRequest);
   }
-
-  return [...new Set(titles.map(cleanBibtexText).filter(v => v.length >= 20))].slice(0, 5);
+  return [...new Set(titles.map(cleanBibtexText).filter((v) => v.length >= 20))].slice(0, 5);
 }
-
+__name(extractLikelyPaperTitlesFromQuestion, "extractLikelyPaperTitlesFromQuestion");
 async function findExplicitPaperMatchesFromQuestion(query, env, gptKey = DEFAULT_GPT_KEY) {
   gptKey = normalizeGptKey(gptKey);
   const text = String(query || "").trim();
   if (!text) return [];
-
   const results = [];
   const urlVariants = extractUrlsFromQuestion(text).flatMap(makeUrlSearchVariants);
   const doi = extractDoiFromTextOrUrl(text);
   const titles = extractLikelyPaperTitlesFromQuestion(text);
-
   const identifierVariants = [...new Set([
     ...urlVariants,
     doi,
     doi ? `https://doi.org/${doi}` : ""
-  ].filter(v => v && v.length >= 6))].slice(0, 16);
-
+  ].filter((v) => v && v.length >= 6))].slice(0, 16);
   for (const value of identifierVariants) {
     const like = `%${value.toLowerCase()}%`;
     try {
@@ -9880,8 +7170,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env, gptKey = DEFAULT
           datetime(updated_at) DESC
         LIMIT 6
       `).bind(gptKey, like, like, like, like, like, like, like).all();
-
-      results.push(...(found.results || []).map(item => ({
+      results.push(...(found.results || []).map((item) => ({
         ...item,
         title: cleanBibtexText(item.title),
         content: cleanBibtexText(item.content),
@@ -9890,14 +7179,11 @@ async function findExplicitPaperMatchesFromQuestion(query, env, gptKey = DEFAULT
         from_explicit_url_or_identifier_search: true
       })));
     } catch {
-      // Continue.
     }
   }
-
   for (const title of titles) {
     const normalizedTitle = normalizeSearchText(title);
     if (!normalizedTitle || normalizedTitle.length < 15) continue;
-
     const tokens = getImportantSearchTokens(title).slice(0, 8);
     try {
       const exactLike = `%${normalizedTitle.slice(0, 180)}%`;
@@ -9917,8 +7203,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env, gptKey = DEFAULT
           datetime(updated_at) DESC
         LIMIT 6
       `).bind(gptKey, exactLike, exactLike, exactLike).all();
-
-      results.push(...(found.results || []).map(item => ({
+      results.push(...(found.results || []).map((item) => ({
         ...item,
         title: cleanBibtexText(item.title),
         content: cleanBibtexText(item.content),
@@ -9926,15 +7211,13 @@ async function findExplicitPaperMatchesFromQuestion(query, env, gptKey = DEFAULT
         similarity_score: null,
         from_explicit_title_search: true
       })));
-
       if (tokens.length >= 4) {
         const titleClauses = tokens.map(() => `LOWER(title) LIKE ?`).join(" AND ");
         const contentClauses = tokens.slice(0, 5).map(() => `LOWER(content) LIKE ?`).join(" AND ");
         const params = [
-          ...tokens.map(t => `%${t}%`),
-          ...tokens.slice(0, 5).map(t => `%${t}%`)
+          ...tokens.map((t) => `%${t}%`),
+          ...tokens.slice(0, 5).map((t) => `%${t}%`)
         ];
-
         found = await env.DB.prepare(`
           SELECT post_id, title, source_url, pdf_link, content, updated_at
           FROM research_knowledge
@@ -9946,8 +7229,7 @@ async function findExplicitPaperMatchesFromQuestion(query, env, gptKey = DEFAULT
           ORDER BY datetime(updated_at) DESC
           LIMIT 6
         `).bind(gptKey, ...params).all();
-
-        results.push(...(found.results || []).map(item => ({
+        results.push(...(found.results || []).map((item) => ({
           ...item,
           title: cleanBibtexText(item.title),
           content: cleanBibtexText(item.content),
@@ -9957,14 +7239,10 @@ async function findExplicitPaperMatchesFromQuestion(query, env, gptKey = DEFAULT
         })));
       }
     } catch {
-      // Continue.
     }
   }
-
-  // If the user provides a URL that is not in DB, still try to read that URL directly.
-  // This supports "사용자가 논문 URL을 주면 그것도 찾아서 답" while keeping DB as priority.
   if (!results.length && urlVariants.length) {
-    const url = urlVariants.find(v => /^https?:\/\//i.test(v)) || "";
+    const url = urlVariants.find((v) => /^https?:\/\//i.test(v)) || "";
     if (url) {
       try {
         const fetched = await fetchReadableArticleText(url, "");
@@ -9973,142 +7251,73 @@ async function findExplicitPaperMatchesFromQuestion(query, env, gptKey = DEFAULT
             title: extractTitleFromFetchedText(fetched) || url,
             source_url: url,
             pdf_link: "",
-            content: `User-provided URL live fetch result:\n${fetched}`,
+            content: `User-provided URL live fetch result:
+${fetched}`,
             matched_chunk: makeBestEvidenceExcerpt(fetched),
             similarity_score: null,
             from_user_provided_url_fetch: true
           });
         }
       } catch {
-        // If live fetch fails, no explicit fallback here.
       }
     }
   }
-
   return mergeKnowledgeResults(results);
 }
-
+__name(findExplicitPaperMatchesFromQuestion, "findExplicitPaperMatchesFromQuestion");
 function extractTitleFromFetchedText(value) {
   const text = String(value || "");
-  const titleLine = text.split(/\n+/).find(line => /^Title:\s*/i.test(line.trim()));
+  const titleLine = text.split(/\n+/).find((line) => /^Title:\s*/i.test(line.trim()));
   if (titleLine) return cleanBibtexText(titleLine.replace(/^Title:\s*/i, "")).slice(0, 220);
   return "";
 }
-
+__name(extractTitleFromFetchedText, "extractTitleFromFetchedText");
 async function enrichExplicitPaperMatchesWithStoredUrls(items, env) {
   const output = [];
   for (const item of (items || []).slice(0, 4)) {
     const sourceUrl = String(item.source_url || item.pdf_link || "").trim();
     let enriched = { ...item };
-
-    // Always keep stored DB abstract/content as fallback. Live fetch only augments it.
     if (sourceUrl && /^https?:\/\//i.test(sourceUrl)) {
       try {
         const fetched = await fetchReadableArticleText(sourceUrl, item.title || "");
         if (fetched && containsExternalArticleData(fetched)) {
           const combined = [
-            `Paper_Talk DB stored evidence and admin abstract/content:\n${item.content || ""}`,
-            `Live source page / metadata fetched from stored URL (${sourceUrl}):\n${fetched}`
+            `Paper_Talk DB stored evidence and admin abstract/content:
+${item.content || ""}`,
+            `Live source page / metadata fetched from stored URL (${sourceUrl}):
+${fetched}`
           ].join("\n\n---\n\n");
-
           enriched = {
             ...item,
-            content: cleanFetchedArticleText(combined).slice(0, 52000),
+            content: cleanFetchedArticleText(combined).slice(0, 52e3),
             matched_chunk: makeBestEvidenceExcerpt(combined),
             from_stored_url_live_fetch: true
           };
         }
       } catch {
-        // Publisher pages often block Workers. If so, stored abstract/content remains the answer basis.
       }
     }
-
     output.push(enriched);
   }
-
   return output.length ? output : items;
 }
-
-
-function shouldLiveEnrichSelectedDbPapers(query) {
-  const value = String(query || "").toLowerCase();
-
-  // Direct title/URL matching is already handled earlier, but broad research-idea
-  // questions should also enrich selected DB papers using their stored URLs.
-  return (
-    /https?:\/\//i.test(value) ||
-    /doi\s*:|10\.\d{4,9}\//i.test(value) ||
-    /요즘|최근|최신|트렌드|뭘 하면 좋|무엇을 하면|연구를.*하면|아이디어|주제|방향|추천|research idea|trend|recent|latest|what.*research|topic|hypothesis/i.test(value) ||
-    /single[- ]?cell|싱글셀|scRNA|scrna|spatial|공간전사체|trajectory|rna velocity|visium|tumor microenvironment|tme|cancer genomics/i.test(value)
-  );
-}
-
-async function enrichSelectedResearchPapersWithStoredUrls(items, env) {
-  const selected = (items || [])
-    .filter(item => !isThinkingLogicKnowledgeItem(item))
-    .filter(item => String(item.source_url || item.pdf_link || "").trim())
-    .slice(0, 5);
-
-  if (!selected.length) return items || [];
-
-  const enrichedByKey = new Map();
-
-  for (const item of selected) {
-    const key = String(item.source_url || item.pdf_link || item.title || "").trim();
-    let enriched = { ...item };
-    const sourceUrl = String(item.source_url || item.pdf_link || "").trim();
-
-    if (sourceUrl && /^https?:\/\//i.test(sourceUrl)) {
-      try {
-        const fetched = await fetchReadableArticleText(sourceUrl, item.title || "");
-
-        if (fetched && containsExternalArticleData(fetched)) {
-          const combined = [
-            `Paper_Talk DB stored evidence and admin abstract/content:\n${item.content || ""}`,
-            `Live source page / metadata fetched from stored URL (${sourceUrl}):\n${fetched}`
-          ].join("\n\n---\n\n");
-
-          enriched = {
-            ...item,
-            content: cleanFetchedArticleText(combined).slice(0, 52000),
-            matched_chunk: makeBestEvidenceExcerpt(combined),
-            from_selected_db_url_live_fetch: true
-          };
-        }
-      } catch {
-        // Many publisher pages block server-side fetch. Keep DB abstract/content fallback.
-      }
-    }
-
-    if (key) enrichedByKey.set(key, enriched);
-  }
-
-  return (items || []).map(item => {
-    const key = String(item.source_url || item.pdf_link || item.title || "").trim();
-    return enrichedByKey.get(key) || item;
-  });
-}
-
+__name(enrichExplicitPaperMatchesWithStoredUrls, "enrichExplicitPaperMatchesWithStoredUrls");
 function extractAutoResearchKeywords(query) {
   const original = String(query || "");
   const lower = original.toLowerCase();
   const normalized = normalizeSearchText(original);
-  const keywords = new Set();
-
+  const keywords = /* @__PURE__ */ new Set();
   function addMany(values) {
     for (const value of values || []) {
       const cleaned = cleanRetrievalPhrase(value);
       if (cleaned && cleaned.length >= 3) keywords.add(cleaned);
     }
   }
-
-  // 1) Keep meaningful English phrases already present in the question.
+  __name(addMany, "addMany");
   addMany(extractScientificKeyPhrases(original));
-
-  // 2) Domain synonym expansion. Add more topics here as Paper_Talk grows.
   const synonymRules = [
     {
-      triggers: ["rna velocity", "velocity", "scvelo", "velocyto", "tfvelo", "sirv", "spliced", "unspliced", "전사 동역학", "세포 상태", "세포 운명", "궤적"],
+      triggers: ["rna velocity", "velocity", "scvelo", "velocyto", "tfvelo", "sirv", "spliced", "unspliced", "\uC804\uC0AC \uB3D9\uC5ED\uD559", "\uC138\uD3EC \uC0C1\uD0DC", "\uC138\uD3EC \uC6B4\uBA85", "\uADA4\uC801"],
       terms: [
         "RNA velocity",
         "scVelo",
@@ -10128,7 +7337,7 @@ function extractAutoResearchKeywords(query) {
       ]
     },
     {
-      triggers: ["single cell", "single-cell", "scrna", "scrna-seq", "single cell rna", "단일세포", "싱글셀"],
+      triggers: ["single cell", "single-cell", "scrna", "scrna-seq", "single cell rna", "\uB2E8\uC77C\uC138\uD3EC", "\uC2F1\uAE00\uC140"],
       terms: [
         "single-cell",
         "single cell",
@@ -10140,7 +7349,7 @@ function extractAutoResearchKeywords(query) {
       ]
     },
     {
-      triggers: ["spatial", "visium", "xenium", "cosmx", "merfish", "stereo-seq", "spatial transcript", "공간전사", "공간 전사"],
+      triggers: ["spatial", "visium", "xenium", "cosmx", "merfish", "stereo-seq", "spatial transcript", "\uACF5\uAC04\uC804\uC0AC", "\uACF5\uAC04 \uC804\uC0AC"],
       terms: [
         "spatial transcriptomics",
         "spatial transcriptome",
@@ -10154,7 +7363,7 @@ function extractAutoResearchKeywords(query) {
       ]
     },
     {
-      triggers: ["cancer", "tumor", "tumour", "암", "종양"],
+      triggers: ["cancer", "tumor", "tumour", "\uC554", "\uC885\uC591"],
       terms: [
         "cancer",
         "tumor",
@@ -10167,7 +7376,7 @@ function extractAutoResearchKeywords(query) {
       ]
     },
     {
-      triggers: ["immune", "immun", "t cell", "b cell", "macrophage", "면역"],
+      triggers: ["immune", "immun", "t cell", "b cell", "macrophage", "\uBA74\uC5ED"],
       terms: [
         "immune",
         "immunology",
@@ -10180,7 +7389,7 @@ function extractAutoResearchKeywords(query) {
       ]
     },
     {
-      triggers: ["mutation", "variant", "snv", "cnv", "copy number", "변이"],
+      triggers: ["mutation", "variant", "snv", "cnv", "copy number", "\uBCC0\uC774"],
       terms: [
         "mutation",
         "variant",
@@ -10192,111 +7401,33 @@ function extractAutoResearchKeywords(query) {
       ]
     }
   ];
-
   for (const rule of synonymRules) {
-    const hit = rule.triggers.some(trigger => {
+    const hit = rule.triggers.some((trigger) => {
       const t = String(trigger || "").toLowerCase();
       return lower.includes(t) || normalized.includes(normalizeSearchText(t));
     });
-
     if (hit) addMany(rule.terms);
   }
-
-  // 3) Extract biomedical-looking tokens and short phrases from the question.
-  const englishPhrases = original
-    .replace(/[\n\r]+/g, " ")
-    .match(/[A-Za-z][A-Za-z0-9+\-]*([\s\-/]+[A-Za-z][A-Za-z0-9+\-]*){0,3}/g) || [];
-
+  const englishPhrases = original.replace(/[\n\r]+/g, " ").match(/[A-Za-z][A-Za-z0-9+\-]*([\s\-/]+[A-Za-z][A-Za-z0-9+\-]*){0,3}/g) || [];
   for (const phrase of englishPhrases) {
     const cleaned = cleanRetrievalPhrase(phrase);
     if (cleaned && cleaned.length >= 3) keywords.add(cleaned);
   }
-
   for (const token of getImportantSearchTokens(original)) {
     if (token && token.length >= 3) keywords.add(token);
   }
-
-  // 4) Prefer specific phrases over generic words.
-  return Array.from(keywords)
-    .map(v => cleanRetrievalPhrase(v))
-    .filter(v => v.length >= 3)
-    .sort((a, b) => {
-      const aWords = a.split(/\s+/).length;
-      const bWords = b.split(/\s+/).length;
-      if (bWords !== aWords) return bWords - aWords;
-      return b.length - a.length;
-    })
-    .slice(0, 24);
+  return Array.from(keywords).map((v) => cleanRetrievalPhrase(v)).filter((v) => v.length >= 3).sort((a, b) => {
+    const aWords = a.split(/\s+/).length;
+    const bWords = b.split(/\s+/).length;
+    if (bWords !== aWords) return bWords - aWords;
+    return b.length - a.length;
+  }).slice(0, 24);
 }
-
-async function smartKeywordKnowledgeSearch(query, env, limit = 14) {
-  const keywords = extractAutoResearchKeywords(query)
-    .map(v => cleanRetrievalPhrase(v))
-    .filter(v => v.length >= 3)
-    .slice(0, 18);
-
-  if (!keywords.length) return [];
-
-  const clauses = [];
-  const params = [];
-
-  for (const keyword of keywords) {
-    clauses.push(`(
-      LOWER(title) LIKE ?
-      OR LOWER(content) LIKE ?
-      OR LOWER(source_url) LIKE ?
-      OR LOWER(pdf_link) LIKE ?
-      OR LOWER(REPLACE(REPLACE(REPLACE(title, '{', ''), '}', ''), 'title =', '')) LIKE ?
-      OR LOWER(REPLACE(REPLACE(REPLACE(content, '{', ''), '}', ''), 'title =', '')) LIKE ?
-    )`);
-    const like = `%${keyword}%`;
-    params.push(like, like, like, like, like, like);
-  }
-
-  const result = await env.DB.prepare(`
-    SELECT title, source_url, pdf_link, content, updated_at
-    FROM research_knowledge
-    WHERE status = 'indexed'
-      AND post_id NOT LIKE 'thinking_logic_%'
-      AND title NOT LIKE '[Thinking Logic]%'
-      AND (${clauses.join(" OR ")})
-    ORDER BY
-      CASE
-        WHEN LOWER(title) LIKE ? THEN 0
-        WHEN LOWER(content) LIKE ? THEN 1
-        ELSE 2
-      END,
-      datetime(updated_at) DESC
-    LIMIT ?
-  `).bind(
-    ...params,
-    `%${keywords[0]}%`,
-    `%${keywords[0]}%`,
-    limit
-  ).all();
-
-  return (result.results || []).map(item => {
-    const matchedKeyword = keywords.find(keyword =>
-      String(item.title || "").toLowerCase().includes(keyword) ||
-      String(item.content || "").toLowerCase().includes(keyword)
-    ) || keywords[0];
-
-    return {
-      ...item,
-      title: cleanBibtexText(item.title),
-      content: cleanBibtexText(item.content),
-      matched_chunk: makeMatchedChunk(item.content || "", matchedKeyword),
-      similarity_score: null,
-      from_auto_keyword_search: true
-    };
-  });
-}
-
+__name(extractAutoResearchKeywords, "extractAutoResearchKeywords");
 function extractScientificKeyPhrases(query) {
   const original = String(query || "");
   const lower = original.toLowerCase();
   const phrases = [];
-
   const knownPatterns = [
     "rna velocity",
     "single-cell rna-seq",
@@ -10340,16 +7471,10 @@ function extractScientificKeyPhrases(query) {
     "eqtl",
     "locuscompare"
   ];
-
   for (const pattern of knownPatterns) {
     if (lower.includes(pattern)) phrases.push(pattern);
   }
-
-  // Capture biomedical-looking English phrases around important words.
-  const english = original
-    .replace(/[\n\r]+/g, " ")
-    .match(/[A-Za-z][A-Za-z0-9+\-]*([\s\-/]+[A-Za-z][A-Za-z0-9+\-]*){0,4}/g) || [];
-
+  const english = original.replace(/[\n\r]+/g, " ").match(/[A-Za-z][A-Za-z0-9+\-]*([\s\-/]+[A-Za-z][A-Za-z0-9+\-]*){0,4}/g) || [];
   for (const item of english) {
     const cleaned = cleanRetrievalPhrase(item);
     if (!cleaned) continue;
@@ -10357,410 +7482,112 @@ function extractScientificKeyPhrases(query) {
       phrases.push(cleaned.toLowerCase());
     }
   }
-
-  // If the query includes Korean plus an English term, the English term is often the most important retrieval key.
   const compact = normalizeSearchText(original);
   if (compact.includes("rna velocity")) phrases.push("rna velocity");
   if (compact.includes("spatial")) phrases.push("spatial");
   if (compact.includes("velocity")) phrases.push("velocity");
-
   return [...new Set(
-    phrases
-      .map(cleanRetrievalPhrase)
-      .filter(v => v.length >= 3)
+    phrases.map(cleanRetrievalPhrase).filter((v) => v.length >= 3)
   )].slice(0, 10);
 }
-
+__name(extractScientificKeyPhrases, "extractScientificKeyPhrases");
 function cleanRetrievalPhrase(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/paper_talk/g, " ")
-    .replace(/\b(db|paper|papers|article|articles|study|studies|research|related|compare|analysis|analyze|explain|only|based|basis|common|difference|gap|future|direction)\b/g, " ")
-    .replace(/논문|연구|관련|비교|분석|공통점|차이점|현재|향후|발전|방향|설명|기준|저장된|만|으로|해줘/g, " ")
-    .replace(/[^a-z0-9+\-\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(value || "").toLowerCase().replace(/paper_talk/g, " ").replace(/\b(db|paper|papers|article|articles|study|studies|research|related|compare|analysis|analyze|explain|only|based|basis|common|difference|gap|future|direction)\b/g, " ").replace(/논문|연구|관련|비교|분석|공통점|차이점|현재|향후|발전|방향|설명|기준|저장된|만|으로|해줘/g, " ").replace(/[^a-z0-9+\-\s]/g, " ").replace(/\s+/g, " ").trim();
 }
-
-async function exactPhraseKnowledgeSearch(phrase, env) {
-  const cleaned = cleanRetrievalPhrase(phrase);
-  if (!cleaned || cleaned.length < 3) return [];
-
-  const like = `%${cleaned}%`;
-
-  const result = await env.DB.prepare(`
-    SELECT title, source_url, pdf_link, content
-    FROM research_knowledge
-    WHERE status = 'indexed'
-      AND post_id NOT LIKE 'thinking_logic_%'
-      AND title NOT LIKE '[Thinking Logic]%'
-      AND (
-        LOWER(title) LIKE ?
-        OR LOWER(content) LIKE ?
-        OR LOWER(source_url) LIKE ?
-        OR LOWER(pdf_link) LIKE ?
-      )
-    ORDER BY
-      CASE
-        WHEN LOWER(title) LIKE ? THEN 0
-        WHEN LOWER(source_url) LIKE ? THEN 1
-        WHEN LOWER(pdf_link) LIKE ? THEN 2
-        WHEN LOWER(content) LIKE ? THEN 3
-        ELSE 4
-      END,
-      datetime(updated_at) DESC
-    LIMIT 12
-  `).bind(like, like, like, like, like, like, like, like).all();
-
-  return (result.results || []).map(item => ({
-    ...item,
-    title: cleanBibtexText(item.title),
-    content: cleanBibtexText(item.content),
-    matched_chunk: makeMatchedChunk(item.content || "", cleaned),
-    similarity_score: null,
-    from_exact_phrase_search: true
-  }));
-}
-
-function makeMatchedChunk(content, phrase) {
-  const text = cleanBibtexText(content || "");
-  const lower = text.toLowerCase();
-  const key = String(phrase || "").toLowerCase();
-  const index = key ? lower.indexOf(key) : -1;
-
-  if (index < 0) return text.slice(0, 1600);
-
-  const start = Math.max(0, index - 500);
-  const end = Math.min(text.length, index + 1500);
-  return text.slice(start, end);
-}
-
-async function buildRetrievalQueries(userQuery, env) {
-  const queries = [String(userQuery || "").trim()].filter(Boolean);
-
-  // Add a cheap normalization pass.
-  const normalized = normalizeSearchText(userQuery);
-  if (normalized && normalized !== userQuery.toLowerCase()) {
-    queries.push(normalized);
-  }
-
-  // Use the OpenAI model as a query translator/expander.
-  // This is not keyword mapping. It lets any natural-language question become
-  // a scientific retrieval query for English abstracts/full text.
-  const expanded = await expandQuestionForResearchRetrieval(userQuery, env);
-  if (expanded) queries.push(expanded);
-
-  // If the model returns comma-separated terms, also add a compact space-joined query.
-  if (expanded && expanded.includes(",")) {
-    queries.push(expanded.split(",").map(v => v.trim()).filter(Boolean).join(" "));
-  }
-
-  return [...new Set(queries.map(v => String(v || "").trim()).filter(Boolean))].slice(0, 4);
-}
-
-async function expandQuestionForResearchRetrieval(userQuery, env) {
-  if (!env.AI) return "";
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const res = await fetchChatCompletionWithWorkersAI(env, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: [
-              "You convert user questions into concise English scientific retrieval queries for a biomedical paper RAG system.",
-              "Return only search terms and short phrases, no explanation.",
-              "Include likely English biomedical synonyms, disease names, methods, cell types, molecules, and concepts.",
-              "Do not answer the question.",
-              "Example: 알츠하이머 연구가 뭐가 있지? -> Alzheimer disease, amyloid plaque, neurodegeneration, brain, spatial transcriptomics"
-            ].join(" ")
-          },
-          {
-            role: "user",
-            content: String(userQuery || "").slice(0, 1000)
-          }
-        ],
-        temperature: 0
-      })
-    });
-
-    const data = await readJsonResponseSafely(res, "OpenAI retrieval expansion request");
-    const value = extractOpenAIText(data);
-
-    return cleanFetchedArticleText(value)
-      .replace(/^["']|["']$/g, "")
-      .slice(0, 500);
-  } catch {
-    return "";
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function vectorSemanticSearch(query, env) {
-  if (!env.AI || !env.VECTORIZE) return [];
-
-  const queryEmbedding = await createEmbedding(query, env);
-
-  const vectorResult = await env.VECTORIZE.query(queryEmbedding, {
-    topK: 24,
-    returnMetadata: "all"
-  });
-
-  const matches = vectorResult.matches || [];
-  const seen = new Set();
-  const results = [];
-
-  for (const match of matches) {
-    const metadata = match.metadata || {};
-    const postId = metadata.post_id;
-    const sourceType = metadata.source_type || "";
-
-    if (!postId) continue;
-
-    if (sourceType === "full_text_chunk") {
-      const key = `${postId}:fulltext:${metadata.content_hash || ""}:${metadata.chunk_index || ""}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      results.push({
-        post_id: postId,
-        title: cleanBibtexText(metadata.title || ""),
-        source_url: metadata.source_url || "",
-        pdf_link: metadata.pdf_link || "",
-        content: [
-          "Paper_Talk DB Research Paper",
-          "Knowledge source: FULL_TEXT_CHUNKED_UPLOAD",
-          `Title: ${metadata.title || ""}`,
-          metadata.file_name ? `Full text file: ${metadata.file_name}` : "",
-          `Chunk index: ${metadata.chunk_index ?? ""}`,
-          "",
-          metadata.text || ""
-        ].filter(Boolean).join("\n"),
-        matched_chunk: cleanBibtexText(metadata.text || ""),
-        similarity_score: match.score || 0,
-        from_vector_search: true,
-        from_fulltext_chunk_search: true
-      });
-
-      continue;
-    }
-
-    if (seen.has(postId)) continue;
-    seen.add(postId);
-
-    const paper = await env.DB.prepare(`
-      SELECT post_id, title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE post_id = ?
-        AND status = 'indexed'
-        AND post_id NOT LIKE 'thinking_logic_%'
-        AND title NOT LIKE '[Thinking Logic]%'
-    `).bind(postId).first();
-
-    if (paper) {
-      results.push({
-        ...paper,
-        matched_chunk: metadata.text || paper.content || "",
-        similarity_score: match.score || 0,
-        from_vector_search: true
-      });
-    }
-  }
-
-  return results;
-}
-
-
-async function directResearchKnowledgeSearch(query, env) {
-  const tokens = getImportantSearchTokens(query);
-  const cleaned = stripQuestionIntentWords(normalizeSearchText(query));
-  const results = [];
-
-  // A) Try a broad cleaned phrase against title/content.
-  if (cleaned && cleaned.length >= 8) {
-    try {
-      const phrase = cleaned.slice(0, 160);
-      const phraseResult = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-          AND post_id NOT LIKE 'thinking_logic_%'
-          AND title NOT LIKE '[Thinking Logic]%'
-          AND (
-            LOWER(title) LIKE ?
-            OR LOWER(content) LIKE ?
-          )
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 8
-      `).bind(`%${phrase}%`, `%${phrase}%`).all();
-
-      results.push(...(phraseResult.results || []));
-    } catch {
-      // Continue.
-    }
-  }
-
-  if (!tokens.length) {
-    return results.map(item => ({
-      ...item,
-      title: cleanBibtexText(item.title),
-      content: cleanBibtexText(item.content),
-      matched_chunk: cleanBibtexText(item.content || "")
-    }));
-  }
-
-  // B) Strong title match: require multiple important tokens in the title.
-  const titleTokens = tokens.slice(0, Math.min(tokens.length, 6));
-  if (titleTokens.length >= 2) {
-    try {
-      const titleClauses = titleTokens.map(() => `LOWER(title) LIKE ?`).join(" AND ");
-      const titleParams = titleTokens.map(token => `%${token}%`);
-
-      const titleResult = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-          AND post_id NOT LIKE 'thinking_logic_%'
-          AND title NOT LIKE '[Thinking Logic]%'
-          AND (${titleClauses})
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 8
-      `).bind(...titleParams).all();
-
-      results.push(...(titleResult.results || []));
-    } catch {
-      // Continue.
-    }
-  }
-
-  // C) Strong content match: require at least two important tokens in content.
-  const contentTokens = tokens.slice(0, Math.min(tokens.length, 5));
-  if (contentTokens.length >= 2) {
-    try {
-      const contentClauses = contentTokens.map(() => `LOWER(content) LIKE ?`).join(" AND ");
-      const contentParams = contentTokens.map(token => `%${token}%`);
-
-      const contentResult = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-          AND post_id NOT LIKE 'thinking_logic_%'
-          AND title NOT LIKE '[Thinking Logic]%'
-          AND (${contentClauses})
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 8
-      `).bind(...contentParams).all();
-
-      results.push(...(contentResult.results || []));
-    } catch {
-      // Continue.
-    }
-  }
-
-  // D) Broad OR fallback across title AND content.
-  // This is important for expanded queries such as:
-  // "Alzheimer disease, amyloid plaque, neurodegeneration, brain, spatial transcriptomics".
-  try {
-    const broadTokens = tokens.slice(0, 10);
-    if (broadTokens.length > 0) {
-      const orClauses = broadTokens
-        .map(() => `(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)`)
-        .join(" OR ");
-
-      const orParams = [];
-      for (const token of broadTokens) {
-        orParams.push(`%${token}%`, `%${token}%`);
-      }
-
-      const broadResult = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-          AND post_id NOT LIKE 'thinking_logic_%'
-          AND title NOT LIKE '[Thinking Logic]%'
-          AND (${orClauses})
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 12
-      `).bind(...orParams).all();
-
-      results.push(...(broadResult.results || []));
-    }
-  } catch {
-    // Continue.
-  }
-
-  return mergeKnowledgeResults((results || []).map(item => ({
-    ...item,
-    title: cleanBibtexText(item.title),
-    content: cleanBibtexText(item.content),
-    matched_chunk: cleanBibtexText(item.content || ""),
-    similarity_score: null,
-    from_direct_db_search: true
-  })));
-}
-
+__name(cleanRetrievalPhrase, "cleanRetrievalPhrase");
 function getImportantSearchTokens(query) {
-  const stopWords = new Set([
-    "the", "and", "for", "with", "from", "into", "onto", "this", "that", "these", "those",
-    "paper", "article", "study", "research", "please", "summary", "summarize", "summarise", "résumé", "résume", "résumer", "resumen", "resumir", "sumario", "zusammenfassung", "riassunto", "sintesi", "about",
-    "what", "which", "where", "when", "how", "why", "can", "could", "would", "should",
-    "논문", "연구", "관련", "자료", "정보", "뭐가", "무엇", "어떤", "있지", "있어", "있나요",
-    "요약", "요약해줘", "요약해주세요", "정리", "정리해줘", "알려줘", "해주세요", "要約", "总结", "總結", "摘要",
-    "있는", "대한", "해당", "그", "이", "저", "좀"
+  const stopWords = /* @__PURE__ */ new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "into",
+    "onto",
+    "this",
+    "that",
+    "these",
+    "those",
+    "paper",
+    "article",
+    "study",
+    "research",
+    "please",
+    "summary",
+    "summarize",
+    "summarise",
+    "r\xE9sum\xE9",
+    "r\xE9sume",
+    "r\xE9sumer",
+    "resumen",
+    "resumir",
+    "sumario",
+    "zusammenfassung",
+    "riassunto",
+    "sintesi",
+    "about",
+    "what",
+    "which",
+    "where",
+    "when",
+    "how",
+    "why",
+    "can",
+    "could",
+    "would",
+    "should",
+    "\uB17C\uBB38",
+    "\uC5F0\uAD6C",
+    "\uAD00\uB828",
+    "\uC790\uB8CC",
+    "\uC815\uBCF4",
+    "\uBB50\uAC00",
+    "\uBB34\uC5C7",
+    "\uC5B4\uB5A4",
+    "\uC788\uC9C0",
+    "\uC788\uC5B4",
+    "\uC788\uB098\uC694",
+    "\uC694\uC57D",
+    "\uC694\uC57D\uD574\uC918",
+    "\uC694\uC57D\uD574\uC8FC\uC138\uC694",
+    "\uC815\uB9AC",
+    "\uC815\uB9AC\uD574\uC918",
+    "\uC54C\uB824\uC918",
+    "\uD574\uC8FC\uC138\uC694",
+    "\u8981\u7D04",
+    "\u603B\u7ED3",
+    "\u7E3D\u7D50",
+    "\u6458\u8981",
+    "\uC788\uB294",
+    "\uB300\uD55C",
+    "\uD574\uB2F9",
+    "\uADF8",
+    "\uC774",
+    "\uC800",
+    "\uC880"
   ]);
-
   const cleaned = normalizeSearchText(query);
-  return cleaned
-    .split(/\s+/)
-    .map(token => token.trim())
-    .filter(token => token.length >= 3)
-    .filter(token => !stopWords.has(token))
-    .slice(0, 16);
+  return cleaned.split(/\s+/).map((token) => token.trim()).filter((token) => token.length >= 3).filter((token) => !stopWords.has(token)).slice(0, 16);
 }
-
-function stripQuestionIntentWords(value) {
-  return String(value || "")
-    .replace(/\b(paper|article|study|research|please|summary|summarize|summarise|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|about)\b/gi, " ")
-    .replace(/논문|연구|관련|자료|정보|뭐가|무엇|어떤|있지|있어|있나요|요약해주세요|요약해줘|요약|정리해줘|정리|알려줘|해주세요|要約|总结|總結|摘要/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
+__name(getImportantSearchTokens, "getImportantSearchTokens");
 function mergeKnowledgeResults(items) {
-  const seen = new Set();
+  const seen = /* @__PURE__ */ new Set();
   const merged = [];
-
   for (const rawItem of items || []) {
     const item = normalizeKnowledgeItem(rawItem);
     if (!item) continue;
-
-    const key = item.from_fulltext_chunk_search
-      ? normalizeSearchText(`${item.post_id || ""}:${item.title || ""}:${item.matched_chunk || item.content || ""}`.slice(0, 260))
-      : (
-        normalizeSearchText(item.title || "") ||
-        normalizeSearchText(item.source_url || item.pdf_link || item.post_id || "")
-      );
-
+    const key = item.from_fulltext_chunk_search ? normalizeSearchText(`${item.post_id || ""}:${item.title || ""}:${item.matched_chunk || item.content || ""}`.slice(0, 260)) : normalizeSearchText(item.title || "") || normalizeSearchText(item.source_url || item.pdf_link || item.post_id || "");
     if (!key || seen.has(key)) continue;
-
     seen.add(key);
     merged.push(item);
   }
-
   return merged.sort((a, b) => {
-    const aContent = `${a?.title || ""}\n${a?.content || ""}\n${a?.matched_chunk || ""}`;
-    const bContent = `${b?.title || ""}\n${b?.content || ""}\n${b?.matched_chunk || ""}`;
-
+    const aContent = `${a?.title || ""}
+${a?.content || ""}
+${a?.matched_chunk || ""}`;
+    const bContent = `${b?.title || ""}
+${b?.content || ""}
+${b?.matched_chunk || ""}`;
     const aExact = (a?.from_explicit_url_or_identifier_search ? 120 : 0) + (a?.from_explicit_title_search ? 90 : 0) + (a?.from_explicit_title_token_search ? 60 : 0) + (a?.from_user_provided_url_fetch ? 50 : 0) + (a?.from_exact_phrase_search ? 20 : 0);
     const bExact = (b?.from_explicit_url_or_identifier_search ? 120 : 0) + (b?.from_explicit_title_search ? 90 : 0) + (b?.from_explicit_title_token_search ? 60 : 0) + (b?.from_user_provided_url_fetch ? 50 : 0) + (b?.from_exact_phrase_search ? 20 : 0);
     const aAuto = a?.from_auto_keyword_search ? 16 : 0;
@@ -10771,87 +7598,39 @@ function mergeKnowledgeResults(items) {
     const bPosts = b?.from_posts_fallback ? 6 : 0;
     const aVector = a?.from_vector_search ? 3 : 0;
     const bVector = b?.from_vector_search ? 3 : 0;
-
-    const aScore =
-      aExact +
-      aAuto +
-      aDirect +
-      aPosts +
-      aVector +
-      (hasScientificContent(aContent) ? 10 : 0) +
-      Math.min(String(aContent).length / 1000, 5);
-
-    const bScore =
-      bExact +
-      bAuto +
-      bDirect +
-      bPosts +
-      bVector +
-      (hasScientificContent(bContent) ? 10 : 0) +
-      Math.min(String(bContent).length / 1000, 5);
-
+    const aScore = aExact + aAuto + aDirect + aPosts + aVector + (hasScientificContent(aContent) ? 10 : 0) + Math.min(String(aContent).length / 1e3, 5);
+    const bScore = bExact + bAuto + bDirect + bPosts + bVector + (hasScientificContent(bContent) ? 10 : 0) + Math.min(String(bContent).length / 1e3, 5);
     return bScore - aScore;
   });
 }
-
+__name(mergeKnowledgeResults, "mergeKnowledgeResults");
 function hasScientificContent(value) {
   const text = String(value || "").toLowerCase();
-
   if (text.length < 80) return false;
-
   const compact = text.replace(/\s+/g, " ").trim();
   if (/^(author|authors|journal|year|volume|number|pages|publisher|doi|url|pmid|pmcid|issn|isbn|keywords|month|note|booktitle|editor)\s*[=:]/.test(compact)) {
     return false;
   }
-
   return /title:|abstract|admin abstract|description|admin description|result|discussion|method|conclusion|fetched article text|crossref|europe pmc|pubmed|pmc full text|rna velocity|spatial|single-cell|single cell|genomics|cancer|tumor|논문|초록|결과|방법|요약/.test(text);
 }
-
+__name(hasScientificContent, "hasScientificContent");
 async function createEmbedding(text, env) {
-  const input = String(text || "").slice(0, 8000);
-
-  if (!env.AI) {
-    throw new Error("AI binding is missing.");
-  }
-
-  const response = await env.AI.run("@cf/baai/bge-m3", {
-    text: input
-  });
-
-  if (Array.isArray(response?.data) && Array.isArray(response.data[0])) {
-    return response.data[0];
-  }
-
-  if (Array.isArray(response?.data)) {
-    return response.data;
-  }
-
-  if (Array.isArray(response)) {
-    return response;
-  }
-
-  throw new Error("Failed to create embedding.");
+  throw new Error("Embedding is disabled in this OpenAI-only deployment.");
 }
-
+__name(createEmbedding, "createEmbedding");
 function chunkTextForEmbedding(text, maxLength = 1800) {
   const value = String(text || "").trim();
-
   if (!value) return [];
-
-  const paragraphs = value
-    .split(/\n{2,}/)
-    .map(v => v.trim())
-    .filter(Boolean);
-
+  const paragraphs = value.split(/\n{2,}/).map((v) => v.trim()).filter(Boolean);
   const chunks = [];
   let current = "";
-
   for (const paragraph of paragraphs) {
     if ((current + "\n\n" + paragraph).length <= maxLength) {
-      current = current ? `${current}\n\n${paragraph}` : paragraph;
+      current = current ? `${current}
+
+${paragraph}` : paragraph;
     } else {
       if (current) chunks.push(current);
-
       if (paragraph.length > maxLength) {
         for (let i = 0; i < paragraph.length; i += maxLength) {
           chunks.push(paragraph.slice(i, i + maxLength));
@@ -10862,236 +7641,73 @@ function chunkTextForEmbedding(text, maxLength = 1800) {
       }
     }
   }
-
   if (current) chunks.push(current);
-
   return chunks;
 }
-
-async function keywordFallbackSearch(query, env) {
-  const rawQuery = String(query || "").trim();
-  if (!rawQuery) return [];
-
-  const cleanedQuery = normalizeSearchText(rawQuery);
-  if (!cleanedQuery) return [];
-
-  const words = cleanedQuery
-    .split(/\s+/)
-    .filter(word => word.length >= 3);
-
-  const phrases = [];
-  phrases.push(cleanedQuery.slice(0, 120));
-  if (words.length >= 1) phrases.push(words[0]);
-  if (words.length >= 2) phrases.push(words.slice(0, 2).join(" "));
-  if (words.length >= 3) phrases.push(words.slice(0, 3).join(" "));
-  if (words.length >= 4) phrases.push(words.slice(0, 4).join(" "));
-  if (words.length >= 5) phrases.push(words.slice(0, 5).join(" "));
-
-  const knownPhrases = [
-    "rna velocity",
-    "velocity",
-    "tfvelo",
-    "sirv",
-    "trajectory inference",
-    "pseudotime",
-    "cellrank",
-    "scvelo",
-    "dynamo",
-    "single-cell spatial atlas",
-    "high-grade serous ovarian cancer",
-    "spatial tumor ecosystems",
-    "stereo-cell",
-    "stereo cell",
-    "streo-cell",
-    "streo cell",
-    "spado",
-    "spatial transcriptome",
-    "spatial transcriptomics",
-    "visium",
-    "mhc1",
-    "mhc",
-    "class ii"
-  ];
-
-  for (const phrase of knownPhrases) {
-    if (cleanedQuery.includes(normalizeSearchText(phrase))) {
-      phrases.push(phrase);
-    }
-  }
-
-  const uniquePhrases = [...new Set(
-    phrases
-      .map(v => normalizeSearchText(v))
-      .filter(v => v.length >= 3)
-  )].slice(0, 10);
-
-  if (!uniquePhrases.length) return [];
-
-  const clauses = [];
-  const params = [];
-
-  for (const phrase of uniquePhrases) {
-    clauses.push(`
-      LOWER(
-        REPLACE(
-          REPLACE(
-            REPLACE(
-              REPLACE(title, 'title = {', ''),
-            'title={', ''),
-          '{', ''),
-        '}', '')
-      ) LIKE ?
-    `);
-    params.push(`%${phrase}%`);
-  }
-
-  clauses.push(`
-    LOWER(
-      REPLACE(
-        REPLACE(
-          REPLACE(content, '{', ''),
-        '}', ''),
-      'title =', '')
-    ) LIKE ?
-  `);
-  params.push(`%${uniquePhrases[0]}%`);
-
-  try {
-    const result = await env.DB.prepare(`
-      SELECT title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE status = 'indexed'
-        AND post_id NOT LIKE 'thinking_logic_%'
-        AND title NOT LIKE '[Thinking Logic]%'
-        AND (${clauses.join(" OR ")})
-      ORDER BY datetime(updated_at) DESC
-      LIMIT 8
-    `).bind(...params).all();
-
-    return (result.results || []).map(item => ({
-      ...item,
-      title: cleanBibtexText(item.title),
-      content: cleanBibtexText(item.content)
-    }));
-  } catch {
-    try {
-      const fallbackPhrase = uniquePhrases.find(v => v.length <= 80) || uniquePhrases[0];
-
-      const fallback = await env.DB.prepare(`
-        SELECT title, source_url, pdf_link, content
-        FROM research_knowledge
-        WHERE status = 'indexed'
-          AND post_id NOT LIKE 'thinking_logic_%'
-          AND title NOT LIKE '[Thinking Logic]%'
-          AND LOWER(title) LIKE ?
-        ORDER BY datetime(updated_at) DESC
-        LIMIT 8
-      `).bind(`%${fallbackPhrase}%`).all();
-
-      return (fallback.results || []).map(item => ({
-        ...item,
-        title: cleanBibtexText(item.title),
-        content: cleanBibtexText(item.content)
-      }));
-    } catch {
-      return [];
-    }
-  }
-}
-
+__name(chunkTextForEmbedding, "chunkTextForEmbedding");
 function cleanBibtexText(value) {
-  return String(value || "")
-    .replace(/title\s*=\s*\{/gi, "")
-    .replace(/title\s*=\s*/gi, "")
-    .replace(/[{}]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(value || "").replace(/title\s*=\s*\{/gi, "").replace(/title\s*=\s*/gi, "").replace(/[{}]/g, "").replace(/\s+/g, " ").trim();
 }
-
-
+__name(cleanBibtexText, "cleanBibtexText");
 function isMetadataOnlyTitle(value) {
   const title = cleanBibtexText(value || "").trim().toLowerCase();
-
   if (!title) return true;
-
-  // These are not paper titles. They usually appear when a BibTeX entry was
-  // split into metadata lines and inserted as separate knowledge rows.
   if (/^(author|authors|journal|year|volume|number|pages|publisher|doi|url|pmid|pmcid|issn|isbn|abstract|keywords|month|note|booktitle|editor)\s*=/.test(title)) {
     return true;
   }
-
   if (/^(author|authors|journal|year|volume|number|pages|publisher|doi|url|pmid|pmcid|issn|isbn|abstract|keywords|month|note|booktitle|editor)\s*:/.test(title)) {
     return true;
   }
-
   if (title.length < 3) return true;
-
   return false;
 }
-
-
+__name(isMetadataOnlyTitle, "isMetadataOnlyTitle");
 function stripUserRequestTailFromPaperTitle(value) {
   let title = cleanBibtexText(value || "").trim();
   if (!title) return "";
-
-  // Sometimes the active paper title is stored together with the user's follow-up
-  // sentence, e.g. "ecPICK: ... 논문이랑 비슷한 논문...". Keep only the paper title.
   const cutPatterns = [
     /\s+논문(?:이랑|과|와|하고|이나|이나요|은|는)?\s*(?:비슷|유사|관련|후속|추천|참고|이\s*연구)[\s\S]*$/i,
     /\s+이\s*연구\s*(?:후속|관련|참고|비슷|유사|추천)[\s\S]*$/i,
     /\s+(?:papers?\s+similar|similar\s+papers?|related\s+papers?|recommend(?:ed)?\s+papers?|follow[-\s]?up\s+stud(?:y|ies)|follow[-\s]?up\s+papers?|references?\s+for\s+this\s+study)[\s\S]*$/i,
     /\s+(?:can\s+be\s+read\s+as\s+follows|영어로|영문으로|in\s+english|answer\s+in\s+english|english\s+only)[\s\S]*$/i
   ];
-
   for (const pattern of cutPatterns) {
     title = title.replace(pattern, "").trim();
   }
-
   return title.replace(/["“”]+$/g, "").trim();
 }
-
+__name(stripUserRequestTailFromPaperTitle, "stripUserRequestTailFromPaperTitle");
 function isLowInformationPaperTitle(value) {
   const title = stripUserRequestTailFromPaperTitle(value || "");
   const lower = title.toLowerCase();
-
   if (!title || isMetadataOnlyTitle(title)) return true;
   if (/^untitled(?:\s+paper)?$/i.test(title)) return true;
   if (/^main$/i.test(title)) return true;
-
-  // Common broken titles caused by imported ScienceDirect/Elsevier IDs being
-  // stored as the title field, e.g. "r s2.0 S221112471831636X main".
   if (/^(?:r\s*)?s2\.0\s+s?\d{8,}[a-z0-9]*\s*(?:main)?$/i.test(title)) return true;
   if (/^(?:r\s*)?s?\d{10,}[a-z0-9]*\s*(?:main)?$/i.test(title)) return true;
-
-  // Too short and mostly identifier-like strings are not useful paper titles.
   const alpha = (title.match(/[A-Za-z]/g) || []).length;
   const digits = (title.match(/\d/g) || []).length;
   if (title.length < 12 && digits >= alpha) return true;
-
   return false;
 }
-
+__name(isLowInformationPaperTitle, "isLowInformationPaperTitle");
 function bestDisplayPaperTitleFromItem(item) {
   const rawTitle = stripUserRequestTailFromPaperTitle(item?.title || "");
   if (!isLowInformationPaperTitle(rawTitle)) return rawTitle;
-
   const content = [item?.content || "", item?.matched_chunk || ""].filter(Boolean).join("\n");
   const extracted = stripUserRequestTailFromPaperTitle(extractTitleFromKnowledgeContent(content));
   if (!isLowInformationPaperTitle(extracted)) return extracted;
-
   return "";
 }
-
+__name(bestDisplayPaperTitleFromItem, "bestDisplayPaperTitleFromItem");
 function extractTitleFromKnowledgeContent(content) {
   const text = String(content || "");
-
   const patterns = [
     /(?:^|\n)\s*Title:\s*([^\n]{3,240})/i,
     /(?:^|\n)\s*title\s*=\s*\{?([^\n}]{3,240})\}?/i,
     /(?:^|\n)\s*citation_title:\s*([^\n]{3,240})/i,
     /(?:^|\n)\s*dc\.title:\s*([^\n]{3,240})/i
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match && match[1]) {
@@ -11099,17 +7715,14 @@ function extractTitleFromKnowledgeContent(content) {
       if (!isMetadataOnlyTitle(title)) return title;
     }
   }
-
   return "";
 }
-
+__name(extractTitleFromKnowledgeContent, "extractTitleFromKnowledgeContent");
 function makeBestEvidenceExcerpt(content) {
   const text = cleanBibtexText(content || "");
   if (!text) return "";
-
   const fullTextPreferred = makeFullTextPreferredExcerpt(text);
   if (fullTextPreferred) return fullTextPreferred;
-
   const markers = [
     "Admin abstract:",
     "Abstract:",
@@ -11124,9 +7737,7 @@ function makeBestEvidenceExcerpt(content) {
     "Conclusion",
     "Method"
   ];
-
   const lower = text.toLowerCase();
-
   for (const marker of markers) {
     const index = lower.indexOf(marker.toLowerCase());
     if (index >= 0) {
@@ -11135,38 +7746,26 @@ function makeBestEvidenceExcerpt(content) {
       return text.slice(start, end);
     }
   }
-
   return text.slice(0, 1800);
 }
-
+__name(makeBestEvidenceExcerpt, "makeBestEvidenceExcerpt");
 function normalizeKnowledgeItem(item) {
   if (!item) return null;
-
   const content = cleanBibtexText(item.content || item.matched_chunk || "");
   let title = cleanBibtexText(item.title || "");
-
-  // Thinking-logic uploads are retrieved separately as reasoning frameworks.
-  // They must not appear as Paper_Talk DB paper evidence.
-  if (
-    String(item.post_id || "").startsWith("thinking_logic_") ||
-    /^\[Thinking Logic\]/i.test(title) ||
-    /Knowledge role:\s*THINKING_FRAMEWORK_ONLY|Paper_Talk Scientific Thinking Logic/i.test(content)
-  ) {
+  if (String(item.post_id || "").startsWith("thinking_logic_") || /^\[Thinking Logic\]/i.test(title) || /Knowledge role:\s*THINKING_FRAMEWORK_ONLY|Paper_Talk Scientific Thinking Logic/i.test(content)) {
     return null;
   }
-
   if (isMetadataOnlyTitle(title)) {
     const extractedTitle = extractTitleFromKnowledgeContent(content);
     if (extractedTitle) title = extractedTitle;
   }
-
   if (isMetadataOnlyTitle(title)) return null;
-
   const matchedChunk = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(content));
-
-  const evidenceText = `${title}\n${content}\n${matchedChunk}`;
+  const evidenceText = `${title}
+${content}
+${matchedChunk}`;
   if (!hasScientificContent(evidenceText)) return null;
-
   return {
     ...item,
     title,
@@ -11174,188 +7773,21 @@ function normalizeKnowledgeItem(item) {
     matched_chunk: matchedChunk || content.slice(0, 2600)
   };
 }
-
-function isUsefulPaperKnowledgeItem(item) {
-  return !!normalizeKnowledgeItem(item);
-}
-
-
+__name(normalizeKnowledgeItem, "normalizeKnowledgeItem");
 function normalizeSearchText(value) {
-  return cleanBibtexText(value)
-    .toLowerCase()
-    .replace(/streo/g, "stereo")
-    .replace(/[‐‑‒–—]/g, "-")
-    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
-    .replace(/-/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return cleanBibtexText(value).toLowerCase().replace(/streo/g, "stereo").replace(/[‐‑‒–—]/g, "-").replace(/[^\p{L}\p{N}\s-]/gu, " ").replace(/-/g, " ").replace(/\s+/g, " ").trim();
 }
-
-function parseResearchPostBody(body) {
-  try {
-    const parsed = JSON.parse(body || "{}");
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function postToKnowledgeItem(post) {
-  const researchData = parseResearchPostBody(post.body || "{}");
-  const sourceUrl = post.link || "";
-  const pdfLink = researchData.pdfLink || "";
-
-  const content = [
-    `Title: ${post.title || ""}`,
-    researchData.year ? `Year: ${researchData.year}` : "",
-    researchData.authors ? `Authors: ${researchData.authors}` : "",
-    researchData.journal ? `Journal: ${researchData.journal}` : "",
-    researchData.category ? `Category: ${researchData.category}` : "",
-    researchData.tags ? `Tags: ${researchData.tags}` : "",
-    researchData.abstract ? `Abstract: ${researchData.abstract}` : "",
-    researchData.description ? `Description: ${researchData.description}` : "",
-    researchData.figures ? `Figures: ${researchData.figures}` : "",
-    researchData.note ? `Note: ${researchData.note}` : "",
-    sourceUrl ? `Article link: ${sourceUrl}` : "",
-    pdfLink ? `PDF link: ${pdfLink}` : ""
-  ].filter(Boolean).join("\n\n");
-
-  return {
-    title: cleanBibtexText(post.title || ""),
-    source_url: sourceUrl,
-    pdf_link: pdfLink,
-    content,
-    matched_chunk: content,
-    similarity_score: null,
-    from_posts_fallback: true
-  };
-}
-
-async function latestResearchKnowledge(env, limit = 8) {
-  try {
-    const latest = await env.DB.prepare(`
-      SELECT title, source_url, pdf_link, content
-      FROM research_knowledge
-      WHERE status = 'indexed'
-        AND post_id NOT LIKE 'thinking_logic_%'
-        AND title NOT LIKE '[Thinking Logic]%'
-      ORDER BY datetime(updated_at) DESC
-      LIMIT ?
-    `).bind(limit).all();
-
-    return mergeKnowledgeResults(latest.results || []);
-  } catch {
-    return [];
-  }
-}
-
-async function latestResearchPostsAsKnowledge(env, limit = 8) {
-  try {
-    const result = await env.DB.prepare(`
-      SELECT *
-      FROM posts
-      WHERE section = 'research'
-        AND type = 'paper'
-        AND status = 'published'
-      ORDER BY datetime(created_at) DESC
-      LIMIT ?
-    `).bind(limit).all();
-
-    return (result.results || []).map(postToKnowledgeItem);
-  } catch {
-    return [];
-  }
-}
-
-async function searchResearchPostsAsKnowledge(query, env) {
-  const cleanedQuery = normalizeSearchText(query);
-  if (!cleanedQuery) return latestResearchPostsAsKnowledge(env, 8);
-
-  const tokens = getImportantSearchTokens(query);
-  const clauses = [];
-  const params = [];
-
-  const cleanedPhrase = stripQuestionIntentWords(cleanedQuery).slice(0, 160);
-  if (cleanedPhrase.length >= 8) {
-    clauses.push(`LOWER(title) LIKE ?`);
-    params.push(`%${cleanedPhrase}%`);
-    clauses.push(`LOWER(body) LIKE ?`);
-    params.push(`%${cleanedPhrase}%`);
-  }
-
-  if (tokens.length >= 2) {
-    const titleAnd = tokens.slice(0, Math.min(tokens.length, 6)).map(() => `LOWER(title) LIKE ?`).join(" AND ");
-    clauses.push(`(${titleAnd})`);
-    params.push(...tokens.slice(0, Math.min(tokens.length, 6)).map(token => `%${token}%`));
-
-    const bodyAnd = tokens.slice(0, Math.min(tokens.length, 5)).map(() => `LOWER(body) LIKE ?`).join(" AND ");
-    clauses.push(`(${bodyAnd})`);
-    params.push(...tokens.slice(0, Math.min(tokens.length, 5)).map(token => `%${token}%`));
-  }
-
-  for (const token of tokens.slice(0, 8)) {
-    clauses.push(`LOWER(title) LIKE ?`);
-    params.push(`%${token}%`);
-    clauses.push(`LOWER(body) LIKE ?`);
-    params.push(`%${token}%`);
-  }
-
-  if (!clauses.length) return [];
-
-  try {
-    const result = await env.DB.prepare(`
-      SELECT *
-      FROM posts
-      WHERE section = 'research'
-        AND type = 'paper'
-        AND status = 'published'
-        AND (${clauses.join(" OR ")})
-      ORDER BY datetime(created_at) DESC
-      LIMIT 8
-    `).bind(...params).all();
-
-    return (result.results || []).map(postToKnowledgeItem);
-  } catch {
-    return [];
-  }
-}
-
-async function getRecentThreadMessages(threadId, userId, env) {
-  const result = await env.DB.prepare(`
-    SELECT role, content
-    FROM gpt_messages
-    WHERE thread_id = ?
-      AND user_id = ?
-    ORDER BY datetime(created_at) DESC
-    LIMIT 10
-  `).bind(threadId, userId).all();
-
-  return (result.results || []).reverse();
-}
-
-
+__name(normalizeSearchText, "normalizeSearchText");
 function isThinkingLogicKnowledgeItem(item) {
   const postId = String(item?.post_id || item?.postId || "").toLowerCase();
   const title = String(item?.title || "").toLowerCase();
   const content = String(item?.content || item?.matched_chunk || "").toLowerCase();
-
-  return (
-    postId.startsWith("thinking_logic_") ||
-    title.includes("[thinking logic]".toLowerCase()) ||
-    content.includes("knowledge role: thinking_framework_only") ||
-    content.includes("paper_talk scientific thinking logic") ||
-    content.includes("thinking framework only")
-  );
+  return postId.startsWith("thinking_logic_") || title.includes("[thinking logic]".toLowerCase()) || content.includes("knowledge role: thinking_framework_only") || content.includes("paper_talk scientific thinking logic") || content.includes("thinking framework only");
 }
-
+__name(isThinkingLogicKnowledgeItem, "isThinkingLogicKnowledgeItem");
 async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
-  // CPU-safe v33:
-  // Thinking Logic PDF/TXT is summarized at import time.
-  // During chat, NEVER scan the full PDF text and NEVER run keyword LIKE over content.
-  // Load several latest compact distilled frameworks so multiple books can guide reasoning together.
   try {
     if (!env.DB) return [];
-
     const result = await env.DB.prepare(`
       SELECT title, content, updated_at
       FROM research_knowledge
@@ -11364,15 +7796,12 @@ async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
       ORDER BY datetime(updated_at) DESC
       LIMIT 4
     `).all();
-
     const rows = result.results || [];
-
-    return rows.map(row => {
+    return rows.map((row) => {
       const full = cleanBibtexText(row.content || "");
       const marker = "Distilled scientific reasoning framework:";
       const idx = full.toLowerCase().indexOf(marker.toLowerCase());
       const distilled = idx >= 0 ? full.slice(idx + marker.length) : full;
-
       return {
         title: cleanBibtexText(row.title || "Scientific Thinking Logic").slice(0, 240),
         content: distilled.slice(0, 2500),
@@ -11383,305 +7812,22 @@ async function retrieveThinkingLogicFrameworks({ userMessage }, env) {
     return [];
   }
 }
-
+__name(retrieveThinkingLogicFrameworks, "retrieveThinkingLogicFrameworks");
 function buildThinkingLogicContext(thinkingLogicFrameworks = []) {
   if (!Array.isArray(thinkingLogicFrameworks) || thinkingLogicFrameworks.length === 0) {
     return "No admin-uploaded distilled thinking logic was retrieved. Use only the built-in Paper_Talk scientific thinking logic.";
   }
-
   return thinkingLogicFrameworks.slice(0, 4).map((item, index) => {
     return [
       `THINKING_LOGIC_SOURCE_${index + 1}`,
       `TITLE: ${cleanBibtexText(item.title || "Scientific Thinking Logic")}`,
       `ROLE: Silent reasoning framework only. Not biological evidence. Never summarize this to the user.`,
-      `DISTILLED_RULES:\n${cleanBibtexText(item.content || "").slice(0, 1400)}`
+      `DISTILLED_RULES:
+${cleanBibtexText(item.content || "").slice(0, 1400)}`
     ].join("\n");
   }).join("\n\n---\n\n");
 }
-
-async function retrievePastFrameworks({ userMessage, context }, env) {
-  // Retrieve previous Paper_Talk reasoning patterns so the system can behave more like a research twin.
-  // This is fail-safe: if the log table does not exist yet, chat still works.
-  try {
-    if (!env.DB) return [];
-
-    const queryText = [
-      String(userMessage || ""),
-      ...(Array.isArray(context)
-        ? context.slice(0, 5).map(item => [item.title, item.matched_chunk, item.content].filter(Boolean).join(" "))
-        : [])
-    ].join(" ");
-
-    const tokens = getImportantSearchTokens(queryText)
-      .filter(token => token.length >= 4)
-      .slice(0, 8);
-
-    let rows = [];
-
-    if (tokens.length > 0) {
-      const clauses = tokens.map(() => `(LOWER(user_message) LIKE ? OR LOWER(framework) LIKE ?)`).join(" OR ");
-      const params = tokens.flatMap(token => [`%${token}%`, `%${token}%`]);
-
-      const result = await env.DB.prepare(`
-        SELECT user_message, framework, created_at
-        FROM gpt_framework_logs
-        WHERE ${clauses}
-        ORDER BY datetime(created_at) DESC
-        LIMIT 8
-      `).bind(...params).all();
-
-      rows = result.results || [];
-    }
-
-    if (!rows.length) {
-      const recent = await env.DB.prepare(`
-        SELECT user_message, framework, created_at
-        FROM gpt_framework_logs
-        ORDER BY datetime(created_at) DESC
-        LIMIT 5
-      `).all();
-
-      rows = recent.results || [];
-    }
-
-    return rows.map(row => ({
-      user_message: String(row.user_message || "").slice(0, 1000),
-      framework: String(row.framework || "").slice(0, 5000),
-      created_at: row.created_at || ""
-    }));
-  } catch {
-    return [];
-  }
-}
-
-async function saveGeneratedFrameworkLog({ threadId, userId, userMessage, framework, context }, env) {
-  // Store the generated framework so Paper_Talk can accumulate its research reasoning patterns over time.
-  // This is optional and fail-safe: if the table has not been created yet, chat will still work.
-  try {
-    if (!env.DB || !framework) return false;
-
-    const sourceSummary = Array.isArray(context)
-      ? context.slice(0, 8).map((item, index) => ({
-          index: index + 1,
-          title: item.title || "",
-          source_url: item.source_url || "",
-          pdf_link: item.pdf_link || "",
-          similarity_score: item.similarity_score || null
-        }))
-      : [];
-
-    const frameworkWithSources = [
-      String(framework || "").trim(),
-      sourceSummary.length
-        ? "\n\nRetrieved Paper_Talk sources used for this framework:\n" + JSON.stringify(sourceSummary, null, 2)
-        : ""
-    ].filter(Boolean).join("");
-
-    await env.DB.prepare(`
-      INSERT INTO gpt_framework_logs (
-        id,
-        thread_id,
-        user_id,
-        user_message,
-        framework,
-        created_at
-      )
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `).bind(
-      crypto.randomUUID(),
-      threadId,
-      userId,
-      String(userMessage || "").slice(0, 4000),
-      frameworkWithSources.slice(0, 24000)
-    ).run();
-
-    return true;
-  } catch (error) {
-    // Do not block the chat if framework logging fails.
-    return false;
-  }
-}
-
-async function generateResearchFramework({ userMessage, context, pastFrameworks = [] }, env) {
-  const hasContext = Array.isArray(context) && context.length > 0;
-
-  const sourceMap = hasContext
-    ? context.slice(0, 12).map((item, index) => {
-        const sourceText = cleanBibtexText(item.matched_chunk || item.content || "");
-        return [
-          `Source ${index + 1}: ${cleanBibtexText(item.title || "Untitled source")}`,
-          item.source_url ? `Article: ${item.source_url}` : "",
-          item.pdf_link ? `PDF: ${item.pdf_link}` : "",
-          item.similarity_score ? `Similarity score: ${item.similarity_score}` : "",
-          `Available evidence excerpt: ${sourceText.slice(0, 900)}`
-        ].filter(Boolean).join("\n");
-      }).join("\n\n---\n\n")
-    : "No matching Paper_Talk DB context was found.";
-
-  const previousPattern = Array.isArray(pastFrameworks) && pastFrameworks.length > 0
-    ? pastFrameworks.slice(0, 3).map((item, index) => {
-        return [
-          `Previous reasoning pattern ${index + 1}`,
-          item.user_message ? `Previous question: ${String(item.user_message).slice(0, 400)}` : "",
-          String(item.framework || "").slice(0, 900)
-        ].filter(Boolean).join("\n");
-      }).join("\n\n---\n\n")
-    : "No previous reasoning pattern was retrieved.";
-
-  return `
-Paper_Talk DB-grounded Hypothesis Engine Framework
-
-User research intent:
-${String(userMessage || "").slice(0, 1000)}
-
-Retrieved DB source map:
-${sourceMap}
-
-Previous Paper_Talk reasoning style memory:
-${previousPattern}
-
-Required reasoning sequence for the final answer:
-1. Infer the user's likely research interest.
-2. Use retrieved Paper_Talk DB papers as evidence.
-3. Extract DB-supported known findings.
-4. Identify knowledge gaps inside the retrieved DB evidence.
-5. Generate cautious, testable hypotheses.
-6. Propose computational and experimental validation strategies.
-7. Rank hypotheses by novelty, feasibility, and risk.
-8. Do not invent external papers, sample sizes, datasets, mechanisms, or biomarkers not present in the DB context.
-9. If evidence is weak, explicitly say what is weak.
-10. Answer in the same language as the user.
-  `.trim();
-}
-
-
-async function inferUserResearchIntent({ userMessage, recentMessages = [] }, env) {
-  const fallback = makeFallbackResearchIntent(userMessage);
-
-  if (!env.AI) return fallback;
-
-  const recentText = Array.isArray(recentMessages)
-    ? recentMessages
-        .slice(-4)
-        .map(m => `${m.role || "user"}: ${String(m.content || "").slice(0, 500)}`)
-        .join("\n")
-    : "";
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const res = await fetchChatCompletionWithWorkersAI(env, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: `
-You are the automatic question-type and research-intent interpreter for Paper_Talk Vision GPT.
-
-First classify the user's actual intent. Do not force every question into hypothesis generation.
-
-Return only valid JSON.
-
-Required JSON keys:
-- question_type: one of CONCEPT, RESEARCH, VALIDATION, LITERATURE, GENERAL.
-- should_generate_hypotheses: boolean.
-- should_use_db_evidence: boolean.
-- interpreted_intent: one sentence explaining what the user is actually asking for.
-- primary_domain: short field name, for example spatial omics, cancer genomics, immuno-oncology, neurodegeneration, single-cell analysis.
-- key_entities: array of important diseases, methods, genes, cell types, technologies, or biological concepts.
-- retrieval_query: concise English search query for Paper_Talk DB retrieval. Include synonyms and biomedical terms.
-- gap_axes: array of gap types to check only if the user wants research directions.
-- hypothesis_angle: one sentence only if hypotheses are appropriate; otherwise empty string.
-- validation_angle: one sentence only if validation planning is appropriate; otherwise empty string.
-- answer_style: one of educational_overview, hypothesis_generation, validation_plan, literature_review, concise_answer.
-
-Classification rules:
-CONCEPT:
-- The user asks "what is", "define", "meaning", "overview", "explain", "개념", "정의", "무슨 뜻", "뭐야", "뭐지".
-- Answer with definition, overview, types, why it matters, examples, limitations.
-- Do NOT generate research gaps, hypotheses, novelty scores, or validation strategies unless the user explicitly asks for research ideas.
-
-RESEARCH:
-- The user asks for research ideas, gaps, hypotheses, future directions, "what should I study", "연구 주제", "가설", "gap", "future work".
-- Generate DB-grounded gaps, hypotheses, and validation strategies.
-
-VALIDATION:
-- The user asks how to test, validate, design experiments, analyze datasets, controls, statistics, protocol.
-- Focus on validation strategy. Generate hypotheses only if needed.
-
-LITERATURE:
-- The user asks for papers, DB sources, summaries, related studies, literature review.
-- Focus on retrieved papers and findings. Do not invent hypotheses unless asked.
-
-GENERAL:
-- Use a direct concise answer.
-
-Do not answer the user's question.
-Do not cite papers.
-Do not use markdown.
-            `.trim()
-          },
-          {
-            role: "user",
-            content: `
-Recent conversation:
-${recentText || "No recent conversation."}
-
-Current user message:
-${String(userMessage || "").slice(0, 1200)}
-            `.trim()
-          }
-        ],
-        temperature: 0,
-        max_completion_tokens: 800
-      })
-    });
-
-    const data = await readJsonResponseSafely(res, "OpenAI intent-classification request");
-
-    const content = extractOpenAIText(data);
-    const parsed = parseJsonObjectFromText(content);
-
-    if (!parsed || typeof parsed !== "object") return fallback;
-
-    const questionType = normalizeQuestionType(parsed.question_type || fallback.question_type);
-    const shouldGenerateHypotheses =
-      typeof parsed.should_generate_hypotheses === "boolean"
-        ? parsed.should_generate_hypotheses
-        : questionType === "RESEARCH";
-
-    const shouldUseDbEvidence =
-      typeof parsed.should_use_db_evidence === "boolean"
-        ? parsed.should_use_db_evidence
-        : ["RESEARCH", "VALIDATION", "LITERATURE", "METHOD", "PIPELINE"].includes(questionType);
-
-    return {
-      question_type: questionType,
-      should_generate_hypotheses: shouldGenerateHypotheses,
-      should_use_db_evidence: shouldUseDbEvidence,
-      interpreted_intent: String(parsed.interpreted_intent || fallback.interpreted_intent).slice(0, 600),
-      primary_domain: String(parsed.primary_domain || fallback.primary_domain).slice(0, 160),
-      key_entities: Array.isArray(parsed.key_entities) ? parsed.key_entities.map(v => String(v).slice(0, 100)).slice(0, 12) : fallback.key_entities,
-      retrieval_query: String(parsed.retrieval_query || fallback.retrieval_query).slice(0, 700),
-      gap_axes: Array.isArray(parsed.gap_axes) ? parsed.gap_axes.map(v => String(v).slice(0, 120)).slice(0, 10) : fallback.gap_axes,
-      hypothesis_angle: shouldGenerateHypotheses ? String(parsed.hypothesis_angle || fallback.hypothesis_angle).slice(0, 500) : "",
-      validation_angle: String(parsed.validation_angle || fallback.validation_angle).slice(0, 500),
-      answer_style: normalizeAnswerStyle(parsed.answer_style || fallback.answer_style)
-    };
-  } catch {
-    return fallback;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
+__name(buildThinkingLogicContext, "buildThinkingLogicContext");
 function normalizeQuestionType(value) {
   const label = String(value || "").trim().toUpperCase();
   if (["CONCEPT", "RESEARCH", "METHOD", "PIPELINE", "VALIDATION", "LITERATURE", "GENERAL"].includes(label)) return label;
@@ -11689,23 +7835,21 @@ function normalizeQuestionType(value) {
   if (["METHODS", "METHODOLOGY", "ANALYSIS_METHOD", "ANALYSIS_METHODS", "PRACTICAL_METHOD"].includes(label)) return "METHOD";
   return "GENERAL";
 }
-
+__name(normalizeQuestionType, "normalizeQuestionType");
 function normalizeAnswerStyle(value) {
   const label = String(value || "").trim().toLowerCase();
   if (["educational_overview", "hypothesis_generation", "validation_plan", "literature_review", "end_to_end_workflow", "pipeline_workflow", "paper_grounded_workflow", "practical_method_table", "method_extraction", "concise_answer"].includes(label)) return label;
   return "concise_answer";
 }
-
+__name(normalizeAnswerStyle, "normalizeAnswerStyle");
 function inferQuestionTypeHeuristically(userMessage) {
   const message = String(userMessage || "").toLowerCase();
-
   const conceptPattern = /(what is|what are|define|definition|meaning|overview|explain|introduction to|개념|정의|뜻|무슨 뜻|뭐야|뭐지|무엇|설명|개요)/i;
   const researchPattern = /(research idea|hypothesis|hypotheses|knowledge gap|gap|future direction|what should i study|study idea|project idea|연구 주제|연구 아이디어|가설|연구 방향|뭘 연구|무슨 연구|future work)/i;
   const validationPattern = /(validate|validation|experiment|experimental design|protocol|control|statistic|analysis plan|test this|검증|실험|프로토콜|대조군|분석 방법|어떻게 확인)/i;
   const pipelinePattern = /(pipeline|workflow|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step|analysis\s+order|procedure|파이프라인|워크플로우|분석\s*순서|분석\s*단계|단계별|전체\s*분석|처음부터)/i;
   const methodPattern = /(package|packages|software|tool|tools|method|methods|algorithm|implementation|model|패키지|툴|도구|방법론|분석법|알고리즘|구현|모델)/i;
   const literaturePattern = /(paper|papers|article|literature|review|summary|summari[sz]e|résumé|résume|résumer|resumen|resumir|sumario|zusammenfassung|riassunto|sintesi|要約|总结|總結|摘要|related studies|논문|문헌|리뷰|요약|관련 연구)/i;
-
   if (researchPattern.test(message)) return "RESEARCH";
   if (pipelinePattern.test(message)) return "PIPELINE";
   if (validationPattern.test(message)) return "VALIDATION";
@@ -11714,394 +7858,100 @@ function inferQuestionTypeHeuristically(userMessage) {
   if (conceptPattern.test(message)) return "CONCEPT";
   return "GENERAL";
 }
-
-function parseJsonObjectFromText(value) {
-  const text = String(value || "").trim();
-  if (!text) return null;
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
-  }
-}
-
+__name(inferQuestionTypeHeuristically, "inferQuestionTypeHeuristically");
 function makeFallbackResearchIntent(userMessage) {
   const message = String(userMessage || "").trim();
   const normalized = normalizeSearchText(message);
   const questionType = inferQuestionTypeHeuristically(message);
-
-  const entities = normalized
-    .split(/\s+/)
-    .filter(v => v.length >= 3)
-    .slice(0, 8);
-
+  const entities = normalized.split(/\s+/).filter((v) => v.length >= 3).slice(0, 8);
   const shouldGenerateHypotheses = questionType === "RESEARCH";
   const shouldUseDbEvidence = ["RESEARCH", "VALIDATION", "LITERATURE", "METHOD", "PIPELINE"].includes(questionType);
-
-  const answerStyle =
-    questionType === "CONCEPT" ? "educational_overview" :
-    questionType === "RESEARCH" ? "hypothesis_generation" :
-    questionType === "METHOD" ? "practical_method_table" :
-    questionType === "PIPELINE" ? "paper_grounded_workflow" :
-    questionType === "VALIDATION" ? "validation_plan" :
-    questionType === "LITERATURE" ? "literature_review" :
-    "concise_answer";
-
+  const answerStyle = questionType === "CONCEPT" ? "educational_overview" : questionType === "RESEARCH" ? "hypothesis_generation" : questionType === "METHOD" ? "practical_method_table" : questionType === "PIPELINE" ? "paper_grounded_workflow" : questionType === "VALIDATION" ? "validation_plan" : questionType === "LITERATURE" ? "literature_review" : "concise_answer";
   return {
     question_type: questionType,
     should_generate_hypotheses: shouldGenerateHypotheses,
     should_use_db_evidence: shouldUseDbEvidence,
-    interpreted_intent: message
-      ? questionType === "CONCEPT"
-        ? `The user is asking for a definition or overview of "${message}", not for hypothesis generation.`
-        : `The user is asking about "${message}" with question type ${questionType}.`
-      : "The user did not provide a specific topic.",
+    interpreted_intent: message ? questionType === "CONCEPT" ? `The user is asking for a definition or overview of "${message}", not for hypothesis generation.` : `The user is asking about "${message}" with question type ${questionType}.` : "The user did not provide a specific topic.",
     primary_domain: "biomedical research",
     key_entities: entities,
     retrieval_query: [message, normalized, "biomedical research cancer genomics spatial omics single-cell multi-omics"].filter(Boolean).join(", ").slice(0, 700),
-    gap_axes: shouldGenerateHypotheses
-      ? [
-          "mechanism",
-          "cell type",
-          "spatial niche",
-          "disease or cancer context",
-          "multi-omics integration",
-          "cohort validation",
-          "experimental perturbation"
-        ]
-      : [],
-    hypothesis_angle: shouldGenerateHypotheses
-      ? "Generate cautious, testable hypotheses by connecting DB-supported findings and unresolved gaps."
-      : "",
-    validation_angle: questionType === "VALIDATION"
-      ? "Propose computational and experimental validation steps with controls and limitations."
-      : "",
+    gap_axes: shouldGenerateHypotheses ? [
+      "mechanism",
+      "cell type",
+      "spatial niche",
+      "disease or cancer context",
+      "multi-omics integration",
+      "cohort validation",
+      "experimental perturbation"
+    ] : [],
+    hypothesis_angle: shouldGenerateHypotheses ? "Generate cautious, testable hypotheses by connecting DB-supported findings and unresolved gaps." : "",
+    validation_angle: questionType === "VALIDATION" ? "Propose computational and experimental validation steps with controls and limitations." : "",
     answer_style: answerStyle
   };
 }
-
-
+__name(makeFallbackResearchIntent, "makeFallbackResearchIntent");
 function hideInternalEvidenceLeaksFromNormalAnswer(answer) {
   let text = String(answer || "");
   text = text.replace(/\s*\/\s*retrieval score:\s*[0-9.]+/gi, "").replace(/retrieval score:\s*[0-9.]+/gi, "");
   if (!text.trim()) return text;
-
-  // Remove parenthetical source leaks like (논문 A: Title...) or (Paper B: Title...).
   text = text.replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J]\s*[:：][^\)\]\n]{0,1000}[\)\]]/gi, "");
-
-  // Remove visible retrieved title chains, often English biomedical titles separated by colons.
-  text = text.replace(/검색된\s+[A-Z][A-Za-z0-9\s,\-–—:;'"“”()\/]{40,700}(?=\n|###|1\.|2\.|3\.|4\.|5\.)/g, "검색된 Paper_Talk DB 근거들을 종합하면,\n현재 이 주제는 몇 가지 연구 축으로 정리할 수 있습니다.\n\n");
-
-  // Remove direct source labels or inline paper labels.
-  text = text
-    .replace(/(?:논문|paper)\s*[A-J]\s*[:：][^\n]{0,1000}/gi, "")
-    .replace(/(?:예를\s*들어\s*)?(?:논문|paper)\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|shows|suggests|indicates|reports|demonstrates|reveals|finds)\s*/gi, "")
-    .replace(/(?:\(|\[)?\s*(?:논문|paper)\s*[A-J]\s*(?:\)|\])?/gi, "");
-
+  text = text.replace(/검색된\s+[A-Z][A-Za-z0-9\s,\-–—:;'"“”()\/]{40,700}(?=\n|###|1\.|2\.|3\.|4\.|5\.)/g, "\uAC80\uC0C9\uB41C Paper_Talk DB \uADFC\uAC70\uB4E4\uC744 \uC885\uD569\uD558\uBA74,\n\uD604\uC7AC \uC774 \uC8FC\uC81C\uB294 \uBA87 \uAC00\uC9C0 \uC5F0\uAD6C \uCD95\uC73C\uB85C \uC815\uB9AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.\n\n");
+  text = text.replace(/(?:논문|paper)\s*[A-J]\s*[:：][^\n]{0,1000}/gi, "").replace(/(?:예를\s*들어\s*)?(?:논문|paper)\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|shows|suggests|indicates|reports|demonstrates|reveals|finds)\s*/gi, "").replace(/(?:\(|\[)?\s*(?:논문|paper)\s*[A-J]\s*(?:\)|\])?/gi, "");
   const lines = text.split(/\r?\n/);
   const kept = [];
-
   for (let rawLine of lines) {
     let line = rawLine.trim();
-
     if (!line) {
       kept.push("");
       continue;
     }
-
     if (/^(근거\s*논문|참고\s*논문|사용한\s*논문|supporting papers?|references?|sources?|relevant papers?)\s*[:：]?$/i.test(line)) continue;
     if (/^(?:article|pdf|doi|pmid|journal|authors?)\s*[:：]/i.test(line)) continue;
-
     const colonCount = (line.match(/:/g) || []).length;
     const englishTitleLike = /[A-Za-z]{8,}/.test(line) && line.length > 80;
     if (colonCount >= 2 && englishTitleLike) continue;
-
-    // Remove a single title-looking line at the top.
     if (/^[A-Z][A-Za-z0-9\s,\-–—:;'"“”()\/]{70,}$/.test(line) && !/[가-힣]/.test(line)) continue;
-
-    line = line
-      .replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J][^\)\]]{0,800}[\)\]]/gi, "")
-      .replace(/^(첫째|둘째|셋째|넷째|다섯째)\s*,?\s*(?:논문|paper)?\s*[A-J]?\s*(?:에서는|은|는|에서)?\s*/i, "")
-      .replace(/^논문\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|은\/는)\s*/i, "")
-      .replace(/^Paper\s*[A-J]\s*(?:shows|suggests|indicates|reports|demonstrates|reveals|finds|에서는|은|는)?\s*/i, "");
-
+    line = line.replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J][^\)\]]{0,800}[\)\]]/gi, "").replace(/^(첫째|둘째|셋째|넷째|다섯째)\s*,?\s*(?:논문|paper)?\s*[A-J]?\s*(?:에서는|은|는|에서)?\s*/i, "").replace(/^논문\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|은\/는)\s*/i, "").replace(/^Paper\s*[A-J]\s*(?:shows|suggests|indicates|reports|demonstrates|reveals|finds|에서는|은|는)?\s*/i, "");
     if (line.trim()) kept.push(line);
   }
-
-  text = kept.join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/(?:아래|다음)\s*(?:논문|문헌|Paper_Talk DB 논문|근거)\s*(?:들을|을)?\s*(?:기반으로|토대로|참고해서)?\s*(?:답변|종합)?(?:했습니다|합니다|드리겠습니다)?\s*[:：]?\s*/gi, "")
-    .replace(/검색된\s*Paper_Talk\s*DB\s*근거들을\s*종합하면,\s*다음과\s*같은\s*연구\s*방향이\s*특히\s*유망할\s*것으로\s*보입니다\s*[:：]\s*/gi, "검색된 Paper_Talk DB 근거들을 종합하면,\n현재 이 주제는 몇 가지 연구 축으로 정리할 수 있습니다.\n\n")
-    .replace(/\s+\./g, ".")
-    .replace(/\s+,/g, ",")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
+  text = kept.join("\n").replace(/\n{3,}/g, "\n\n").replace(/(?:아래|다음)\s*(?:논문|문헌|Paper_Talk DB 논문|근거)\s*(?:들을|을)?\s*(?:기반으로|토대로|참고해서)?\s*(?:답변|종합)?(?:했습니다|합니다|드리겠습니다)?\s*[:：]?\s*/gi, "").replace(/검색된\s*Paper_Talk\s*DB\s*근거들을\s*종합하면,\s*다음과\s*같은\s*연구\s*방향이\s*특히\s*유망할\s*것으로\s*보입니다\s*[:：]\s*/gi, "\uAC80\uC0C9\uB41C Paper_Talk DB \uADFC\uAC70\uB4E4\uC744 \uC885\uD569\uD558\uBA74,\n\uD604\uC7AC \uC774 \uC8FC\uC81C\uB294 \uBA87 \uAC00\uC9C0 \uC5F0\uAD6C \uCD95\uC73C\uB85C \uC815\uB9AC\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.\n\n").replace(/\s+\./g, ".").replace(/\s+,/g, ",").replace(/\n{3,}/g, "\n\n").trim();
   return text || String(answer || "");
 }
-
+__name(hideInternalEvidenceLeaksFromNormalAnswer, "hideInternalEvidenceLeaksFromNormalAnswer");
 function hideAccidentalPaperListFromNormalAnswer(answer) {
   const original = String(answer || "");
   if (!original.trim()) return original;
-
   let text = original;
-
-  // Remove parenthetical source leaks like:
-  // (논문 A: Title...), (논문 B: Title...), (Paper C: Title...)
   text = text.replace(/\s*[\(\[]\s*(?:논문|paper)\s*[A-J]\s*[:：][^\)\]\n]{0,500}[\)\]]/gi, "");
-
-  // Remove inline source labels while keeping the biological sentence readable.
-  text = text
-    .replace(/(?:예를\s*들어\s*)?(?:논문|paper)\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|shows|suggests|indicates|reports|demonstrates|reveals|finds)\s*/gi, "")
-    .replace(/(?:\(|\[)?\s*(?:논문|paper)\s*[A-J]\s*(?:\)|\])?/gi, "");
-
+  text = text.replace(/(?:예를\s*들어\s*)?(?:논문|paper)\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|shows|suggests|indicates|reports|demonstrates|reveals|finds)\s*/gi, "").replace(/(?:\(|\[)?\s*(?:논문|paper)\s*[A-J]\s*(?:\)|\])?/gi, "");
   const lines = text.split(/\r?\n/);
   const kept = [];
-
   for (const rawLine of lines) {
     let line = rawLine.trim();
-
-    // Hide internal retrieval labels, title dumps, and source-list headings in normal answers.
     if (/^(논문|paper)\s*[A-J]\s*[:：-]/i.test(line)) continue;
     if (/^\d+\.\s*(논문|paper)\s*[A-J]\s*[:：-]/i.test(line)) continue;
     if (/^(근거\s*논문|참고\s*논문|사용한\s*논문|supporting papers?|references?|sources?|relevant papers?)\s*[:：]?$/i.test(line)) continue;
-
-    line = line
-      .replace(/^(첫째|둘째|셋째|넷째|다섯째|여섯째|일곱째|여덟째|아홉째|열째)\s*,?\s*(?:에서는|은|는)?\s*/i, match => {
-        // Keep ordinal only if it is not immediately tied to a paper label.
-        return match.replace(/(?:에서는|은|는)/g, "").trim() ? match : "";
-      })
-      .replace(/^논문\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|은\/는)\s*/i, "")
-      .replace(/^Paper\s*[A-J]\s*(?:shows|suggests|indicates|reports|demonstrates|reveals|finds|에서는|은|는)?\s*/i, "");
-
+    line = line.replace(/^(첫째|둘째|셋째|넷째|다섯째|여섯째|일곱째|여덟째|아홉째|열째)\s*,?\s*(?:에서는|은|는)?\s*/i, (match) => {
+      return match.replace(/(?:에서는|은|는)/g, "").trim() ? match : "";
+    }).replace(/^논문\s*[A-J]\s*(?:에서는|은|는|에서|에 따르면|를 통해|은\/는)\s*/i, "").replace(/^Paper\s*[A-J]\s*(?:shows|suggests|indicates|reports|demonstrates|reveals|finds|에서는|은|는)?\s*/i, "");
     if (!line.trim()) continue;
     kept.push(line);
   }
-
-  let cleaned = kept.join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  // Remove dangling source-intro or literature-review sentences.
-  cleaned = cleaned
-    .replace(/(?:아래|다음|이)\s*(?:논문|문헌|Paper_Talk DB 논문|근거)\s*(?:들을|을)?\s*(?:기반으로|토대로|참고해서)?\s*(?:답변|종합)?(?:했습니다|합니다|드리겠습니다|얻을 수 있습니다)?\s*[:：]?\s*$/i, "")
-    .replace(/이\s*(?:세|여러|몇\s*가지)\s*(?:논문|연구)\s*을?\s*통해[^\n.。]*[.。]?/gi, "")
-    .replace(/이\s*논문들을\s*통해[^\n.。]*[.。]?/gi, "")
-    .replace(/이\s*연구들은[^\n.。]*기초를\s*제공하며[^\n.。]*[.。]?/gi, "")
-    .replace(/\s+\./g, ".")
-    .replace(/\s+,/g, ",")
-    .trim();
-
+  let cleaned = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  cleaned = cleaned.replace(/(?:아래|다음|이)\s*(?:논문|문헌|Paper_Talk DB 논문|근거)\s*(?:들을|을)?\s*(?:기반으로|토대로|참고해서)?\s*(?:답변|종합)?(?:했습니다|합니다|드리겠습니다|얻을 수 있습니다)?\s*[:：]?\s*$/i, "").replace(/이\s*(?:세|여러|몇\s*가지)\s*(?:논문|연구)\s*을?\s*통해[^\n.。]*[.。]?/gi, "").replace(/이\s*논문들을\s*통해[^\n.。]*[.。]?/gi, "").replace(/이\s*연구들은[^\n.。]*기초를\s*제공하며[^\n.。]*[.。]?/gi, "").replace(/\s+\./g, ".").replace(/\s+,/g, ",").trim();
   return cleaned || original;
 }
-
-function containsReportStyleHeadings(answer) {
-  const text = String(answer || "");
-
-  const forbiddenPatterns = [
-    /^\s*\d+\.\s*Direct answer/im,
-    /^\s*\d+\.\s*Relevant\s+(Paper_Talk\s+DB\s+)?papers/im,
-    /^\s*\d+\.\s*Retrieved papers/im,
-    /^\s*\d+\.\s*Paper-by-paper findings/im,
-    /^\s*\d+\.\s*Agreements/im,
-    /^\s*\d+\.\s*Differences or contradictions/im,
-    /^\s*\d+\.\s*Contradictions/im,
-    /^\s*\d+\.\s*Knowledge gaps/im,
-    /^\s*\d+\.\s*Paper_Talk research interpretation/im,
-    /^\s*\d+\.\s*Suggested next study/im,
-    /Relevant Paper_Talk DB papers/i,
-    /Paper-by-paper findings/i,
-    /Agreements across retrieved papers/i,
-    /Differences or contradictions/i,
-    /Suggested next study or validation/i
-  ];
-
-  return forbiddenPatterns.some(pattern => pattern.test(text));
-}
-
-async function rewriteReportStyleAnswerIfNeeded({ originalAnswer, userMessage, context, env }) {
-  const answer = String(originalAnswer || "");
-
-  if (!answer.trim()) return answer;
-  if (!containsReportStyleHeadings(answer)) return answer;
-
-  if (!env.AI) {
-    return convertReportStyleAnswerLocally(answer);
-  }
-
-  const contextTitles = Array.isArray(context)
-    ? [...new Set(context.map(item => cleanBibtexText(item?.title || "").trim()).filter(Boolean))]
-    : [];
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
-
-  try {
-    const res = await fetchChatCompletionWithWorkersAI(env, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: `
-You are rewriting a Paper_Talk GPT answer.
-
-Goal:
-Rewrite the answer into calm explanatory research prose.
-
-The user wants this style:
-"Spatial 연구를 새로 시작한다면, 단순히 세포의 위치를 설명하는 연구보다는 공간 정보와 세포 상태 변화를 연결하는 방향이 더 흥미로워 보입니다.
-
-최근 spatial transcriptomics 연구들을 보면 조직 내 세포 분포나 niche 구조를 정교하게 설명하는 연구는 상당히 많이 축적되어 있습니다. 반면, 세포가 특정 공간에서 어떤 방향으로 분화하거나 상태 전이를 겪는지까지 설명하는 연구는 상대적으로 적습니다.
-
-그래서 Spatial + RNA velocity, 또는 Spatial + longitudinal sample 분석 같은 접근이 좋은 연구 주제가 될 수 있습니다."
-
-Strict rewriting rules:
-- Do NOT add new scientific claims.
-- Do NOT add new papers.
-- Preserve the useful meaning from the original answer.
-- Remove these report headings completely:
-  Direct answer, Relevant papers, Retrieved papers, Paper-by-paper findings, Agreements, Contradictions, Knowledge gaps, Paper_Talk research interpretation, Suggested next study or validation.
-- Do not list papers as bullets.
-- If a paper title is useful, weave it naturally into a sentence as supporting evidence.
-- Prefer connected Korean paragraphs.
-- Use bullets only for concrete research questions or candidate project ideas.
-- Do not sound casual like "음..." or "저는요".
-- Do not sound like a report.
-- Answer in the same language as the user's question.
-- Return only the rewritten answer.
-            `.trim()
-          },
-          {
-            role: "system",
-            content: contextTitles.length
-              ? `Allowed Paper_Talk DB titles only:\n${contextTitles.map((title, i) => `${i + 1}. ${title}`).join("\n")}`
-              : "No Paper_Talk DB titles were provided."
-          },
-          {
-            role: "user",
-            content: [
-              `User question:`,
-              String(userMessage || "").slice(0, 1200),
-              ``,
-              `Original report-style answer to rewrite:`,
-              answer.slice(0, 7000)
-            ].join("\n")
-          }
-        ],
-        temperature: 0,
-        max_completion_tokens: 1800
-      })
-    });
-
-    const raw = await res.text();
-    let data = {};
-
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      return convertReportStyleAnswerLocally(answer);
-    }
-
-    if (!res.ok) {
-      return convertReportStyleAnswerLocally(answer);
-    }
-
-    const rewritten = extractOpenAIText(data);
-
-    if (!rewritten) return convertReportStyleAnswerLocally(answer);
-
-    // If the rewrite somehow still contains the forbidden template, fall back to local cleanup.
-    if (containsReportStyleHeadings(rewritten)) {
-      return convertReportStyleAnswerLocally(rewritten);
-    }
-
-    return rewritten;
-  } catch {
-    return convertReportStyleAnswerLocally(answer);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function convertReportStyleAnswerLocally(answer) {
-  const text = String(answer || "");
-
-  const lines = text.split(/\r?\n/);
-  const cleaned = [];
-  let skipPaperListMode = false;
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-
-    if (/^\d+\.\s*(Direct answer|Relevant\s+(Paper_Talk\s+DB\s+)?papers|Retrieved papers|Paper-by-paper findings|Agreements|Differences or contradictions|Contradictions|Knowledge gaps|Paper_Talk research interpretation|Suggested next study)/i.test(line)) {
-      skipPaperListMode = /Relevant\s+(Paper_Talk\s+DB\s+)?papers|Paper-by-paper findings/i.test(line);
-      continue;
-    }
-
-    if (/^\d+\.\s+/i.test(line)) {
-      skipPaperListMode = false;
-    }
-
-    // Remove long paper-title bullet dumps after old "Relevant papers" sections.
-    if (skipPaperListMode && /^[-•]\s+/.test(line) && line.length > 80) {
-      continue;
-    }
-
-    cleaned.push(rawLine);
-  }
-
-  let result = cleaned.join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/^\s*-\s+/gm, "")
-    .trim();
-
-  if (!result) {
-    return text;
-  }
-
-  // Add a gentle opening if the answer became too abrupt.
-  if (!/^[가-힣A-Za-z0-9]/.test(result)) {
-    result = result.replace(/^[^\w가-힣]+/, "");
-  }
-
-  return result;
-}
-
-
+__name(hideAccidentalPaperListFromNormalAnswer, "hideAccidentalPaperListFromNormalAnswer");
 function detectStrictUserOutputFormat(userMessage) {
   const text = String(userMessage || "");
   const standaloneDashCount = (text.match(/^\s*-\s*$/gm) || []).length;
-
   const explicitCountMatch = text.match(/(?:^|[^0-9])(\d{1,2})\s*(?:줄|줄로|lines?|sentences?|문장|points?|bullets?|개|항목)/i);
   const explicitCount = explicitCountMatch ? Math.max(1, Math.min(12, Number(explicitCountMatch[1] || 0))) : 0;
-
-  const asksBullet =
-    standaloneDashCount >= 2 ||
-    /bullet|bullets|point|points|목록|항목|불릿|하이픈|dash|dashes/i.test(text) ||
-    /아래\s*처럼|이런\s*식|이렇게|형식|format/i.test(text) && standaloneDashCount >= 1;
-
-  const asksLineCount =
-    explicitCount > 0 ||
-    /간략하게|짧게|brief|concise|short/i.test(text) && /줄|line|sentence|point|bullet/i.test(text);
-
+  const asksBullet = standaloneDashCount >= 2 || /bullet|bullets|point|points|목록|항목|불릿|하이픈|dash|dashes/i.test(text) || /아래\s*처럼|이런\s*식|이렇게|형식|format/i.test(text) && standaloneDashCount >= 1;
+  const asksLineCount = explicitCount > 0 || /간략하게|짧게|brief|concise|short/i.test(text) && /줄|line|sentence|point|bullet/i.test(text);
   const strict = asksBullet || asksLineCount;
-
   let count = explicitCount || 0;
   if (!count && standaloneDashCount >= 2) count = Math.min(standaloneDashCount, 12);
-
   return {
     strict,
     bullet: asksBullet || standaloneDashCount >= 2,
@@ -12110,19 +7960,17 @@ function detectStrictUserOutputFormat(userMessage) {
     wantsKorean: /한국어|Korean/i.test(text)
   };
 }
-
+__name(detectStrictUserOutputFormat, "detectStrictUserOutputFormat");
 function detectCleanStructuredAnswerRequest(userMessage) {
   const text = String(userMessage || "").replace(/\s+/g, " ").trim();
   if (!text) return false;
-
   return /(깔끔하게|정리해서|정리해\s*줘|구조화|한눈에|보기\s*좋게|서술형\s*말고|문단\s*말고|길게\s*풀지\s*말고|표로|테이블로|비교표|체크리스트|bullet|bullets|table|checklist|structured|not\s+narrative|non[-\s]?narrative)/i.test(text);
 }
-
+__name(detectCleanStructuredAnswerRequest, "detectCleanStructuredAnswerRequest");
 function buildUserRequestedFormatInstruction(userMessage) {
   const format = detectStrictUserOutputFormat(userMessage);
   const cleanStructured = detectCleanStructuredAnswerRequest(userMessage);
   if (!format.strict && !cleanStructured) return "";
-
   if (cleanStructured && !format.strict) {
     return `
 USER-REQUESTED CLEAN STRUCTURED ANSWER OVERRIDE
@@ -12130,7 +7978,7 @@ The user explicitly asked for a clean organized answer, not a narrative explanat
 Answer in the user's language.
 
 Required style:
-- Do NOT write long 서술형 paragraphs.
+- Do NOT write long \uC11C\uC220\uD615 paragraphs.
 - Start with a short conclusion/recommendation first.
 - Then use compact tables, checklists, or short bullets.
 - Use section headings only when they make scanning easier.
@@ -12142,21 +7990,9 @@ Required style:
 - Do not add generic background unless it directly helps the user's decision.
 `.trim();
   }
-
-  const countRule = format.count
-    ? `- Return exactly ${format.count} lines/items.`
-    : `- Return only the requested number of lines/items if the user specified it; otherwise keep it very concise.`;
-
-  const bulletRule = format.bullet
-    ? `- Each line/item MUST begin with a plain hyphen and one space: "- ".`
-    : `- Use short separate lines, not a long paragraph.`;
-
-  const languageRule = format.wantsEnglish
-    ? `- The user requested English, so answer in English even if part of the prompt is Korean.`
-    : format.wantsKorean
-      ? `- The user requested Korean, so answer in Korean.`
-      : `- Use the user's requested language.`;
-
+  const countRule = format.count ? `- Return exactly ${format.count} lines/items.` : `- Return only the requested number of lines/items if the user specified it; otherwise keep it very concise.`;
+  const bulletRule = format.bullet ? `- Each line/item MUST begin with a plain hyphen and one space: "- ".` : `- Use short separate lines, not a long paragraph.`;
+  const languageRule = format.wantsEnglish ? `- The user requested English, so answer in English even if part of the prompt is Korean.` : format.wantsKorean ? `- The user requested Korean, so answer in Korean.` : `- Use the user's requested language.`;
   return `
 USER-REQUESTED OUTPUT FORMAT OVERRIDE
 The user explicitly requested a specific output format. This overrides the normal Paper_Talk paragraph style.
@@ -12170,125 +8006,76 @@ ${bulletRule}
 ${languageRule}
 `.trim();
 }
-
+__name(buildUserRequestedFormatInstruction, "buildUserRequestedFormatInstruction");
 function enforceStrictUserOutputFormat(answer, userMessage) {
   const format = detectStrictUserOutputFormat(userMessage);
   if (!format.strict) return String(answer || "").trim();
-
-  let text = String(answer || "")
-    .replace(/\r/g, "\n")
-    .replace(/^\s*(Here are|Sure|물론입니다|네[,，]?|아래는).*?:\s*/i, "")
-    .trim();
-
-  let items = text
-    .split(/\n+/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => line.replace(/^[-•*]\s*/, "").replace(/^\d+[.)]\s*/, "").trim())
-    .filter(Boolean);
-
+  let text = String(answer || "").replace(/\r/g, "\n").replace(/^\s*(Here are|Sure|물론입니다|네[,，]?|아래는).*?:\s*/i, "").trim();
+  let items = text.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => line.replace(/^[-•*]\s*/, "").replace(/^\d+[.)]\s*/, "").trim()).filter(Boolean);
   if (items.length <= 1) {
     const sentenceMatches = text.replace(/\n+/g, " ").match(/[^.!?。！？]+[.!?。！？]?/g) || [];
-    items = sentenceMatches
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
+    items = sentenceMatches.map((s) => s.trim()).filter((s) => s.length > 0);
   }
-
   if (!items.length) return text;
-
   const count = format.count || Math.min(items.length, 4);
   const picked = items.slice(0, count);
-
-  const normalized = picked
-    .map(item => item.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-
+  const normalized = picked.map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean);
   if (!format.bullet) {
     return normalized.join("\n");
   }
-
-  return normalized
-    .map(item => `- ${item}`)
-    .join("\n");
+  return normalized.map((item) => `- ${item}`).join("\n");
 }
-
-
-// v72 note: legacy normalizePaperTalkIntentLabel was removed to avoid duplicate top-level declaration.
-
+__name(enforceStrictUserOutputFormat, "enforceStrictUserOutputFormat");
 function detectPaperTalkUserIntent(userMessage, intent = null, hasContext = false) {
   const raw = String(userMessage || "");
   const questionType = normalizeQuestionType(intent?.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent?.answer_style || "concise_answer");
-
-  // Hard priority:
-  // 1. Explicit source tracing: "어떤 논문 기반?", "근거 논문?", "출처?"
-  // 2. Paper recommendation/literature: "논문 추천", "최신 논문", "트렌디한 논문"
-  // 3. Follow-up more: use previous topic/task
-  // 4. Research direction: "어떤 연구", "유망", "앞으로", "연구 방향"
-  // 5. Validation / comparison / method / concept
-
   if (isExplicitSourceTraceRequest(raw)) {
     return "SOURCE_TRACE";
   }
-
   const semanticIntent = normalizePaperTalkIntentLabel(intent?.paper_talk_intent || "");
   if (semanticIntent === "PIPELINE_WORKFLOW" || questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow" || answerStyle === "paper_grounded_workflow") {
     return "PIPELINE_WORKFLOW";
   }
-
   if (isSpatialRoiMethodWorkflowQuestion(raw)) {
     return "PIPELINE_WORKFLOW";
   }
-
   if (semanticIntent === "METHOD_EXTRACTION" || questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") {
     return "METHOD_EXTRACTION";
   }
-
-  // Fallback only. The main route should come from the LLM intent planner above.
   if (/(pipeline|workflow|end[-\s]?to[-\s]?end|step[-\s]?by[-\s]?step|analysis\s+order|procedure|파이프라인|워크플로우|분석\s*순서|분석\s*단계|단계별|전체\s*분석|처음부터)/i.test(raw)) {
     return "PIPELINE_WORKFLOW";
   }
-
   if (/(논문|paper|papers|study|studies).{0,60}(썼|사용|used|applied|implemented|분석|방법|패키지|도구|툴|software|method|package|tool)|(?:package|packages|software|tool|tools|method|methods|algorithm|model|패키지|툴|도구|방법론|분석법|알고리즘|모델)/i.test(raw)) {
     return "METHOD_EXTRACTION";
   }
-
   if (isPaperRecommendationRequest(raw)) {
     return "LITERATURE_REVIEW";
   }
-
   if (/(논문\s*정리|논문\s*요약|문헌\s*리뷰|문헌\s*정리|literature review|paper review|summarize papers?|papers?\s+about)/i.test(raw)) {
     return "LITERATURE_REVIEW";
   }
-
   if (hasContext && isEvidenceStyleAssociationQuestion(raw)) {
     return "LITERATURE_REVIEW";
   }
-
   if (isContinuationMoreRequest(raw)) {
     return "FOLLOW_UP_MORE";
   }
-
   if (isResearchDirectionRequest(raw)) {
     return "RESEARCH_DIRECTION";
   }
-
   if (/(검증|실험|validation|validate|experimental design|experiment|protocol|control|대조군|분석\s*방법|어떻게\s*확인|how to test|test this|assay|perturbation)/i.test(raw)) {
     return "VALIDATION_PLAN";
   }
-
   if (/(비교|차이|다른점|공통점|compare|comparison|difference|similarity|versus| vs\.? )/i.test(raw)) {
     return "COMPARISON";
   }
-
   if (/(방법론|method|algorithm|분석법|어떻게\s*분석|tool|툴)/i.test(raw)) {
     return "METHOD_EXPLANATION";
   }
-
   if (/(개념|정의|뜻|뭐야|무엇|설명|기전|메커니즘|mechanism|overview|explain|what is|define|meaning|why does|how does)/i.test(raw)) {
     return "CONCEPT_EXPLANATION";
   }
-
   if (questionType === "LITERATURE" || answerStyle === "literature_review") return "LITERATURE_REVIEW";
   if (questionType === "RESEARCH" || answerStyle === "hypothesis_generation") return "RESEARCH_DIRECTION";
   if (questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow" || answerStyle === "paper_grounded_workflow") {
@@ -12310,17 +8097,14 @@ Recommended structure:
 - End with the simplest paper-consistent starting pipeline.
     `.trim();
   }
-
   if (questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") return "METHOD_EXTRACTION";
   if (questionType === "VALIDATION" || answerStyle === "validation_plan") return "VALIDATION_PLAN";
   if (questionType === "CONCEPT" || answerStyle === "educational_overview") return "CONCEPT_EXPLANATION";
-
   return "GENERAL_RESEARCH";
 }
-
+__name(detectPaperTalkUserIntent, "detectPaperTalkUserIntent");
 function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
   const semanticIntent = normalizePaperTalkIntentLabel(intent?.paper_talk_intent || "");
-
   if (semanticIntent === "PIPELINE_WORKFLOW") return "PIPELINE_WORKFLOW";
   if (semanticIntent === "METHOD_EXTRACTION") return "METHOD_EXTRACTION";
   if (semanticIntent === "LITERATURE_REVIEW") return "LITERATURE_REVIEW";
@@ -12330,9 +8114,7 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
   if (semanticIntent === "CONCEPT") return "CONCEPT_EXPLANATION";
   if (semanticIntent === "PAPER_SUMMARY") return "PAPER_SUMMARY";
   if (semanticIntent === "SOURCE_TRACE") return "SOURCE_TRACE";
-
   const detectedIntent = detectPaperTalkUserIntent(userMessage, intent, hasContext);
-
   switch (detectedIntent) {
     case "SOURCE_TRACE":
       return "SOURCE_TRACE";
@@ -12362,11 +8144,9 @@ function determinePaperTalkOutputStyle({ userMessage, intent, hasContext }) {
       return hasContext ? "RESEARCH_SYNTHESIS" : "STANDARD";
   }
 }
-
-
+__name(determinePaperTalkOutputStyle, "determinePaperTalkOutputStyle");
 function detectUserLanguage(text) {
   const value = String(text || "").trim();
-
   const overrideMatch = value.match(/ANSWER_LANGUAGE_OVERRIDE:\s*(English|Korean|Japanese|Chinese|Multilingual)/i);
   if (overrideMatch) {
     const label = overrideMatch[1].toLowerCase();
@@ -12376,26 +8156,19 @@ function detectUserLanguage(text) {
     if (label === "chinese") return "Chinese";
     if (label === "multilingual") return "Multilingual";
   }
-
-  // Explicit target-language phrases in the current user instruction should win
-  // over older retrieved/context text that may contain Korean, English, or mixed language.
   if (/(영어로|영문으로|in english|to english|answer in english)/i.test(value)) return "English";
   if (/(한국어로|한글로|in korean|to korean|answer in korean)/i.test(value)) return "Korean";
   if (/(일본어로|일어로|in japanese|to japanese)/i.test(value)) return "Japanese";
   if (/(중국어로|중문으로|in chinese|to chinese)/i.test(value)) return "Chinese";
   if (/(다국어|여러\s*언어|multilingual|multi[-\s]?language|multiple languages|several languages)/i.test(value)) return "Multilingual";
-
   if (/[가-힣]/.test(value)) return "Korean";
   if (/[\u3040-\u30ff]/.test(value)) return "Japanese";
   if (/[\u4e00-\u9fff]/.test(value)) return "Chinese";
-
-  // Default to English for Latin-script scientific questions.
   return "English";
 }
-
+__name(detectUserLanguage, "detectUserLanguage");
 function buildMultilingualAnswerInstruction(userMessage) {
   const language = detectUserLanguage(userMessage);
-
   if (language === "Multilingual") {
     return `
 MULTILINGUAL LANGUAGE POLICY
@@ -12405,12 +8178,11 @@ Detected user language request: Multilingual
 Answer in a compact multilingual format.
 Do not default to Korean merely because previous context or retrieved DB context contains Korean.
 If the user names exact target languages, use those languages.
-If the user only says "multilingual" or "다국어", use English as the primary language and add short parallel versions in 1-2 additional common languages only when useful.
+If the user only says "multilingual" or "\uB2E4\uAD6D\uC5B4", use English as the primary language and add short parallel versions in 1-2 additional common languages only when useful.
 
 Paper titles, gene names, software names, model names, and technical terms may remain in their original language.
 `.trim();
   }
-
   return `
 MULTILINGUAL LANGUAGE POLICY
 
@@ -12425,10 +8197,10 @@ Important follow-up rule:
 
 If the user asks in English:
 - Use English section titles such as "Why this matters", "Recommended papers", "How to read this", "Next research ideas".
-- Do not use Korean labels such as "추천 논문", "왜 중요한가", "다음 연구 아이디어".
+- Do not use Korean labels such as "\uCD94\uCC9C \uB17C\uBB38", "\uC65C \uC911\uC694\uD55C\uAC00", "\uB2E4\uC74C \uC5F0\uAD6C \uC544\uC774\uB514\uC5B4".
 
 If the user asks in Korean:
-- Use Korean section titles such as "왜 중요한가", "추천 논문", "어떻게 읽으면 좋은가", "다음 연구 아이디어".
+- Use Korean section titles such as "\uC65C \uC911\uC694\uD55C\uAC00", "\uCD94\uCC9C \uB17C\uBB38", "\uC5B4\uB5BB\uAC8C \uC77D\uC73C\uBA74 \uC88B\uC740\uAC00", "\uB2E4\uC74C \uC5F0\uAD6C \uC544\uC774\uB514\uC5B4".
 - Do not switch to English section titles unless they are scientific terms.
 
 If the user asks in Japanese or Chinese:
@@ -12439,8 +8211,7 @@ Paper titles, gene names, software names, model names, and technical terms may r
 But all explanatory sentences and section labels must follow the detected user language.
 `.trim();
 }
-
-
+__name(buildMultilingualAnswerInstruction, "buildMultilingualAnswerInstruction");
 function buildAdaptiveStyleInstruction({ outputStyle, hasContext, userMessage = "" }) {
   const common = `
 GENERAL READABILITY RULES
@@ -12453,8 +8224,8 @@ GENERAL READABILITY RULES
 - Keep a calm senior cancer-genomics mentor tone: clear, kind, practical, and research-aware.
 - Sound like a helpful senior colleague, not like a textbook or automated report.
 - When the user sounds confused or dissatisfied, acknowledge the practical issue briefly and then make the answer easier to use.
-- Use concrete examples naturally. For example, say "예를 들어 선생님 데이터가 CAF–Tumor–Myeloid niche를 보려는 거라면..." rather than only explaining abstract categories.
-- Prefer warm explanatory phrases such as "쉽게 말하면", "실제로는 이렇게 보시면 됩니다", "여기서 중요한 건", "제가 추천하는 시작점은" when answering in Korean.
+- Use concrete examples naturally. For example, say "\uC608\uB97C \uB4E4\uC5B4 \uC120\uC0DD\uB2D8 \uB370\uC774\uD130\uAC00 CAF\u2013Tumor\u2013Myeloid niche\uB97C \uBCF4\uB824\uB294 \uAC70\uB77C\uBA74..." rather than only explaining abstract categories.
+- Prefer warm explanatory phrases such as "\uC27D\uAC8C \uB9D0\uD558\uBA74", "\uC2E4\uC81C\uB85C\uB294 \uC774\uB807\uAC8C \uBCF4\uC2DC\uBA74 \uB429\uB2C8\uB2E4", "\uC5EC\uAE30\uC11C \uC911\uC694\uD55C \uAC74", "\uC81C\uAC00 \uCD94\uCC9C\uD558\uB294 \uC2DC\uC791\uC810\uC740" when answering in Korean.
 - Global DB-first concrete-answer rule:
   For any biomedical research, method, workflow, analysis, validation, comparison, literature, or research-idea question, do not answer from generic knowledge alone when retrieved Paper_Talk DB context exists.
   First use the retrieved DB papers as the evidence base.
@@ -12466,16 +8237,14 @@ GENERAL READABILITY RULES
 - Do not force a fixed template. Decide the most readable structure from the user's actual question.
 - Use tables only when comparison or decision-making becomes clearer. Use prose for interpretation, bullets for action steps, and workflow blocks for implementation.
 - Treat any named answer structures as optional examples, not mandatory headings.
-- If the user asks for a clean organized answer, avoid 서술형 paragraphs and use conclusion-first tables/checklists.
+- If the user asks for a clean organized answer, avoid \uC11C\uC220\uD615 paragraphs and use conclusion-first tables/checklists.
 - For method/workflow questions, prefer a decision table plus practical checklist over long explanatory prose.
 - Be kind and concrete. Do not sound like a generic textbook, grant abstract, or algorithm brochure.
 - Avoid empty workflow words unless you immediately explain what the user should calculate or decide.
 - A generic stage list is not enough for any method question. For example, answers like "preprocessing, clustering, differential analysis, validation" or "QC, normalization, modeling, interpretation" are insufficient unless each step is translated into concrete operations and paper-grounded choices.
 - Be more specific than the user's question when needed: name the likely data table, columns, unit of analysis, features, model/score, thresholding/selection step, output plot/table, and QC checks.
   `.trim();
-
   const associationEvidenceStyle = isEvidenceStyleAssociationQuestion(userMessage);
-
   if (outputStyle === "LITERATURE_REVIEW" && associationEvidenceStyle) {
     return `
 ${common}
@@ -12513,7 +8282,6 @@ For the CAF-macrophage / immunosuppression / immune exclusion type of question, 
 Return the answer in the user's language.
     `.trim();
   }
-
   if (outputStyle === "PIPELINE_WORKFLOW") {
     return `
 ${common}
@@ -12535,8 +8303,8 @@ Anti-generic rule:
 Adaptive organization rule:
 - Do not use a rigid fixed template.
 - After DB retrieval and Thinking-logic comparison, choose the most readable structure for the specific user question.
-- If the user asks "어떻게 찾지 / how do I find", lead with the practical recommendation, then show the paper-grounded method groups, comparison/discussion, and a usable workflow.
-- If the user asks "뭐가 제일 좋아 / which is best", lead with the recommendation, then use a compact decision table and explain when each option is appropriate.
+- If the user asks "\uC5B4\uB5BB\uAC8C \uCC3E\uC9C0 / how do I find", lead with the practical recommendation, then show the paper-grounded method groups, comparison/discussion, and a usable workflow.
+- If the user asks "\uBB50\uAC00 \uC81C\uC77C \uC88B\uC544 / which is best", lead with the recommendation, then use a compact decision table and explain when each option is appropriate.
 - If the user asks for papers, make the paper groups more visible.
 - If the user asks for implementation, make the workflow/action steps more visible.
 - Section names, number of sections, and table use should be chosen dynamically.
@@ -12558,7 +8326,7 @@ Paper-use extraction rule:
   what biological or clinical output they obtained,
   and what part of that workflow the user can reuse.
 - If the retrieved excerpt does not clearly state a detail, say that the detail is not explicit in the retrieved DB excerpt instead of guessing.
-- Prefer a compact "논문에서 실제로 한 방식" comparison table when it helps the user see how papers operationalized the method.
+- Prefer a compact "\uB17C\uBB38\uC5D0\uC11C \uC2E4\uC81C\uB85C \uD55C \uBC29\uC2DD" comparison table when it helps the user see how papers operationalized the method.
 
 Concrete ROI answer rule:
 - For multiplexed spatial imaging / spatial proteomics / CODEX / MIBI / IMC / CyCIF / Xenium / CosMx ROI questions, the answer should usually explain 3-5 concrete ROI strategies:
@@ -12590,36 +8358,36 @@ Core behavior:
 
 Recommended answer ingredients, not a fixed template:
 1. Start with a direct sentence in the user's language, for example:
-   "이건 generic workflow가 아니라, 관련 논문들에서 실제로 어떤 분석 흐름을 썼는지 기준으로 정리해야 합니다."
+   "\uC774\uAC74 generic workflow\uAC00 \uC544\uB2C8\uB77C, \uAD00\uB828 \uB17C\uBB38\uB4E4\uC5D0\uC11C \uC2E4\uC81C\uB85C \uC5B4\uB5A4 \uBD84\uC11D \uD750\uB984\uC744 \uC37C\uB294\uC9C0 \uAE30\uC900\uC73C\uB85C \uC815\uB9AC\uD574\uC57C \uD569\uB2C8\uB2E4."
 
 2. Include the top relevant DB paper candidates when they are useful for the user's decision.
    Use a table with columns:
-   - 논문 / DB 근거 제목
-   - 왜 이 키워드와 관련 있는지
-   - 데이터 타입
-   - 논문에서 확인되는 workflow 단서
-   - 명시된 tool / method
-   If there are no keyword-matched papers in the retrieved DB context, say: "현재 검색된 Paper_Talk DB context만으로는 이 키워드에 맞는 pipeline 논문 근거가 충분하지 않습니다."
+   - \uB17C\uBB38 / DB \uADFC\uAC70 \uC81C\uBAA9
+   - \uC65C \uC774 \uD0A4\uC6CC\uB4DC\uC640 \uAD00\uB828 \uC788\uB294\uC9C0
+   - \uB370\uC774\uD130 \uD0C0\uC785
+   - \uB17C\uBB38\uC5D0\uC11C \uD655\uC778\uB418\uB294 workflow \uB2E8\uC11C
+   - \uBA85\uC2DC\uB41C tool / method
+   If there are no keyword-matched papers in the retrieved DB context, say: "\uD604\uC7AC \uAC80\uC0C9\uB41C Paper_Talk DB context\uB9CC\uC73C\uB85C\uB294 \uC774 \uD0A4\uC6CC\uB4DC\uC5D0 \uB9DE\uB294 pipeline \uB17C\uBB38 \uADFC\uAC70\uAC00 \uCDA9\uBD84\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."
 
 3. Compare workflow patterns or methodological themes using the Thinking-logic rubric.
    Use a table with columns:
-   - 방법론 주제
+   - \uBC29\uBC95\uB860 \uC8FC\uC81C
    - biological/analytical question
    - data type / unit of analysis
    - ROI/region/niche definition
-   - 명시된 tool / method
+   - \uBA85\uC2DC\uB41C tool / method
    - output / validation
-   - 장점 / 한계
-   - 내가 가져다 쓰면 좋은 부분
+   - \uC7A5\uC810 / \uD55C\uACC4
+   - \uB0B4\uAC00 \uAC00\uC838\uB2E4 \uC4F0\uBA74 \uC88B\uC740 \uBD80\uBD84
    If retrieved DB context does not explicitly show the workflow or tools, say so clearly.
 
 4. Provide a synthesized practical workflow.
    Give a step-by-step workflow with columns:
-   - 단계
-   - 목적
+   - \uB2E8\uACC4
+   - \uBAA9\uC801
    - input
-   - 논문에서 확인된 tool/method
-   - 부족한 경우 보완할 general recommendation
+   - \uB17C\uBB38\uC5D0\uC11C \uD655\uC778\uB41C tool/method
+   - \uBD80\uC871\uD55C \uACBD\uC6B0 \uBCF4\uC644\uD560 general recommendation
    - output
    - QC/checkpoint
 
@@ -12644,12 +8412,11 @@ Recommended answer ingredients, not a fixed template:
    - "General practical recommendation": useful standard workflow step, but not directly confirmed in the retrieved DB excerpt.
    - Never claim a specific paper used a tool unless the retrieved DB excerpt says or strongly supports it.
 
-7. End with a practical recommendation. The wording does not have to be "실제로 시작한다면"; choose a natural ending that fits the question and recommend the simplest paper-consistent workflow first.
+7. End with a practical recommendation. The wording does not have to be "\uC2E4\uC81C\uB85C \uC2DC\uC791\uD55C\uB2E4\uBA74"; choose a natural ending that fits the question and recommend the simplest paper-consistent workflow first.
 
 Return the answer in the user's language.
   `.trim();
-}
-
+  }
   if (outputStyle === "PAPER_SUMMARY") {
     return `
 ${common}
@@ -12663,48 +8430,47 @@ Organize the answer so a researcher can quickly understand what the paper did, w
 
 Required output structure:
 
-핵심 한 줄
+\uD575\uC2EC \uD55C \uC904
 - State the central contribution in one precise sentence.
 - If the user asks for English, write this section in English.
 
-무엇을 한 논문인가
+\uBB34\uC5C7\uC744 \uD55C \uB17C\uBB38\uC778\uAC00
 - Problem:
 - Data / system:
 - Main method:
 - Main output:
 
-과학적으로 중요한 점
+\uACFC\uD559\uC801\uC73C\uB85C \uC911\uC694\uD55C \uC810
 - 2 to 4 bullets.
 - Explain the methodological or biological importance, not just a generic "it is useful".
 
-해석 포인트
+\uD574\uC11D \uD3EC\uC778\uD2B8
 - Observation:
 - Interpretation:
 - Why it matters:
 
-한계 / 조심할 점
+\uD55C\uACC4 / \uC870\uC2EC\uD560 \uC810
 - Mention what is unclear from the retrieved excerpt.
 - Do not overclaim mechanisms, clinical utility, sample size, or validation if the DB context does not support it.
 
-다음 연구로 연결한다면
-- Give 2 to 4 concrete directions only if the user asks for future research or "앞으로 어떤 연구".
+\uB2E4\uC74C \uC5F0\uAD6C\uB85C \uC5F0\uACB0\uD55C\uB2E4\uBA74
+- Give 2 to 4 concrete directions only if the user asks for future research or "\uC55E\uC73C\uB85C \uC5B4\uB5A4 \uC5F0\uAD6C".
 - Each direction should be compact:
-  1) 질문
-  2) 데이터/방법
-  3) 기대 결과
-  4) 검증
+  1) \uC9C8\uBB38
+  2) \uB370\uC774\uD130/\uBC29\uBC95
+  3) \uAE30\uB300 \uACB0\uACFC
+  4) \uAC80\uC99D
 
 Formatting:
 - Use headings and bullets.
 - Keep each bullet concise.
 - Avoid dense paragraphs.
 - Do not expose paper labels, source IDs, URLs, DOI, or journal metadata unless the user asks.
-- If DB context is thin, say so in the "한계 / 조심할 점" section instead of starting with a failure message.
+- If DB context is thin, say so in the "\uD55C\uACC4 / \uC870\uC2EC\uD560 \uC810" section instead of starting with a failure message.
 
 Return the answer in the user's language unless the user explicitly requests another language.
   `.trim();
-}
-
+  }
   if (outputStyle === "METHOD_EXTRACTION") {
     return `
 ${common}
@@ -12720,13 +8486,13 @@ Do not recommend papers as reading material unless the user explicitly asks for 
 Extract methods/packages/tools from the retrieved Paper_Talk DB context and convert them into a practical analysis guide.
 
 Preferred answer structure:
-1. Start with a direct sentence in the user's language: "이 질문은 트렌드보다 실제 분석에 쓸 수 있는 method/package 관점으로 보는 게 맞습니다."
+1. Start with a direct sentence in the user's language: "\uC774 \uC9C8\uBB38\uC740 \uD2B8\uB80C\uB4DC\uBCF4\uB2E4 \uC2E4\uC81C \uBD84\uC11D\uC5D0 \uC4F8 \uC218 \uC788\uB294 method/package \uAD00\uC810\uC73C\uB85C \uBCF4\uB294 \uAC8C \uB9DE\uC2B5\uB2C8\uB2E4."
 2. Provide a compact table grouped by analysis task:
-   - 분석 목적
+   - \uBD84\uC11D \uBAA9\uC801
    - package / method / tool
-   - 논문에서 쓰인 맥락 or DB-supported evidence
-   - 어떤 데이터에 적합한지
-   - 지금 바로 쓴다면 추천도
+   - \uB17C\uBB38\uC5D0\uC11C \uC4F0\uC778 \uB9E5\uB77D or DB-supported evidence
+   - \uC5B4\uB5A4 \uB370\uC774\uD130\uC5D0 \uC801\uD569\uD55C\uC9C0
+   - \uC9C0\uAE08 \uBC14\uB85C \uC4F4\uB2E4\uBA74 \uCD94\uCC9C\uB3C4
 3. Group by practical analysis task, for example:
    - preprocessing / QC
    - clustering / annotation
@@ -12741,13 +8507,12 @@ Preferred answer structure:
 5. If a useful method is general knowledge but not explicit in the retrieved DB context, label it clearly as "general practical recommendation, not directly confirmed in retrieved DB excerpt."
 6. You may show retrieved paper titles because the user asked what papers used.
 7. Never invent package names, paper titles, datasets, sample sizes, or implementation details.
-8. End with a short "실제로 시작한다면" recommendation: 3-5 packages/methods to try first.
+8. End with a short "\uC2E4\uC81C\uB85C \uC2DC\uC791\uD55C\uB2E4\uBA74" recommendation: 3-5 packages/methods to try first.
 9. For scRNA-seq + scATAC-seq or multiome analysis, do not omit standard practical tools such as LIGER/iNMF, Seurat/Signac WNN, ArchR, GLUE, MultiVI/scvi-tools, SnapATAC2, Harmony, MOFA+, and SCENIC/SCENIC+ when relevant; label each as DB-supported only if retrieved excerpts explicitly support it.
 
 Return the answer in the user's language.
     `.trim();
   }
-
   if (outputStyle === "LITERATURE_REVIEW") {
     return `
 ${common}
@@ -12767,14 +8532,13 @@ Preferred flow:
 5. End with a short summary paragraph in the user's language.
 
 Formatting rules:
-- Do not use paper labels such as 논문 A/B/C or Paper A/B/C.
+- Do not use paper labels such as \uB17C\uBB38 A/B/C or Paper A/B/C.
 - Do not start with only a raw list of papers.
 - Do not write long isolated paper summaries unless the user explicitly asks for a summary.
 - Actual retrieved DB paper titles may appear naturally inside the explanation.
 - If retrieved papers are weakly matched, say that gently and recommend better search terms.
     `.trim();
   }
-
   if (outputStyle === "RESEARCH_INSIGHT" || outputStyle === "RESEARCH_SYNTHESIS") {
     return `
 ${common}
@@ -12812,33 +8576,29 @@ For spatial biology / cancer genomics, naturally prioritize when relevant:
 - tumor evolution modeling,
 - 3D spatial atlas or digital twin modeling.
 
-Do not show paper titles, 논문 A/B/C labels, DOI, PMID, or source tracing unless the user explicitly asks for sources or papers.
+Do not show paper titles, \uB17C\uBB38 A/B/C labels, DOI, PMID, or source tracing unless the user explicitly asks for sources or papers.
     `.trim();
   }
-
   if (outputStyle === "VALIDATION_PLAN") {
-    return `${common}\n\nAUTOMATIC STYLE: USER-FRIENDLY VALIDATION PLAN\nExplain the key claim first, then organize validation into computational validation, experimental validation, controls, expected results, and caveats. Use retrieved DB papers when available to extract how similar claims were validated: cohort split, external dataset, spatial co-localization, perturbation, pathology review, survival/response association, or wet-lab assay. Keep it practical and easy to follow. Do not give generic validation categories without concrete checks.`;
-  }
+    return `${common}
 
+AUTOMATIC STYLE: USER-FRIENDLY VALIDATION PLAN
+Explain the key claim first, then organize validation into computational validation, experimental validation, controls, expected results, and caveats. Use retrieved DB papers when available to extract how similar claims were validated: cohort split, external dataset, spatial co-localization, perturbation, pathology review, survival/response association, or wet-lab assay. Keep it practical and easy to follow. Do not give generic validation categories without concrete checks.`;
+  }
   if (outputStyle === "COMPARISON") {
-    return `${common}\n\nAUTOMATIC STYLE: USER-FRIENDLY COMPARISON\nStart with the biggest difference in plain language, then compare by clear axes. Use retrieved DB papers when available to compare how each approach was actually used, what input/output it had, what validation supported it, and what limitation matters. Use the uploaded Thinking logic as the comparison rubric when useful. Use a compact table only if it truly improves clarity.`;
-  }
+    return `${common}
 
+AUTOMATIC STYLE: USER-FRIENDLY COMPARISON
+Start with the biggest difference in plain language, then compare by clear axes. Use retrieved DB papers when available to compare how each approach was actually used, what input/output it had, what validation supported it, and what limitation matters. Use the uploaded Thinking logic as the comparison rubric when useful. Use a compact table only if it truly improves clarity.`;
+  }
   return common;
 }
-
+__name(buildAdaptiveStyleInstruction, "buildAdaptiveStyleInstruction");
 function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
   let text = String(answer || "").trim();
   if (!text) return text;
-
-  text = text
-    .replace(/\r/g, "\n")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  const sectionStyles = new Set([
+  text = text.replace(/\r/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const sectionStyles = /* @__PURE__ */ new Set([
     "RESEARCH_INSIGHT",
     "RESEARCH_SYNTHESIS",
     "PIPELINE_WORKFLOW",
@@ -12848,33 +8608,15 @@ function formatAnswerForReadability(answer, outputStyle = "STANDARD") {
     "METHOD_EXPLANATION",
     "METHOD_EXTRACTION"
   ]);
-
   if (sectionStyles.has(outputStyle)) {
-    text = text
-      .replace(/(?:^|\n)\s*1\.\s*/g, "\n\n### 1. ")
-      .replace(/(?:^|\n)\s*2\.\s*/g, "\n\n### 2. ")
-      .replace(/(?:^|\n)\s*3\.\s*/g, "\n\n### 3. ")
-      .replace(/(?:^|\n)\s*4\.\s*/g, "\n\n### 4. ")
-      .replace(/(?:^|\n)\s*5\.\s*/g, "\n\n### 5. ")
-      .replace(/첫째[,，]?\s*/g, "\n\n### 1. ")
-      .replace(/둘째[,，]?\s*/g, "\n\n### 2. ")
-      .replace(/셋째[,，]?\s*/g, "\n\n### 3. ")
-      .replace(/넷째[,，]?\s*/g, "\n\n### 4. ")
-      .replace(/다섯째[,，]?\s*/g, "\n\n### 5. ");
+    text = text.replace(/(?:^|\n)\s*1\.\s*/g, "\n\n### 1. ").replace(/(?:^|\n)\s*2\.\s*/g, "\n\n### 2. ").replace(/(?:^|\n)\s*3\.\s*/g, "\n\n### 3. ").replace(/(?:^|\n)\s*4\.\s*/g, "\n\n### 4. ").replace(/(?:^|\n)\s*5\.\s*/g, "\n\n### 5. ").replace(/첫째[,，]?\s*/g, "\n\n### 1. ").replace(/둘째[,，]?\s*/g, "\n\n### 2. ").replace(/셋째[,，]?\s*/g, "\n\n### 3. ").replace(/넷째[,，]?\s*/g, "\n\n### 4. ").replace(/다섯째[,，]?\s*/g, "\n\n### 5. ");
   }
-
-  text = text
-    .replace(/\n{0,2}(#{2,3}\s+[^\n]+)\n{0,2}/g, "\n\n$1\n\n")
-    .replace(/\s*(정리하면[,，]?)/g, "\n\n$1")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
+  text = text.replace(/\n{0,2}(#{2,3}\s+[^\n]+)\n{0,2}/g, "\n\n$1\n\n").replace(/\s*(정리하면[,，]?)/g, "\n\n$1").replace(/\n{3,}/g, "\n\n").trim();
   return text;
 }
-
+__name(formatAnswerForReadability, "formatAnswerForReadability");
 function buildStrictInternalEvidenceInstruction({ outputStyle, hasContext }) {
   const sourceRequested = ["SOURCE_TRACE", "LITERATURE_REVIEW", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle);
-
   if (sourceRequested) {
     return `
 SOURCE DISCLOSURE MODE
@@ -12904,7 +8646,6 @@ Do not use a rigid fixed answer template. The model should choose the clearest o
 Never invent papers, packages, datasets, methods, or implementation details outside the retrieved DB context. If a workflow step is a general recommendation rather than DB-supported, label it clearly.
     `.trim();
   }
-
   return `
 CRITICAL INTERNAL EVIDENCE RULE
 
@@ -12912,16 +8653,16 @@ Retrieved Paper_Talk DB papers are INTERNAL EVIDENCE ONLY.
 
 For normal answers, NEVER expose:
 - paper titles
-- paper labels such as 논문 A, 논문 B, Paper A, Paper B
+- paper labels such as \uB17C\uBB38 A, \uB17C\uBB38 B, Paper A, Paper B
 - author names
 - journal names
 - DOI, PMID, URL
 - source lists
-- parenthetical paper citations such as "(논문 A: ...)" or "(Paper B: ...)"
-- phrases like "이 논문에서는", "논문 C에 따르면", "The paper shows"
+- parenthetical paper citations such as "(\uB17C\uBB38 A: ...)" or "(Paper B: ...)"
+- phrases like "\uC774 \uB17C\uBB38\uC5D0\uC11C\uB294", "\uB17C\uBB38 C\uC5D0 \uB530\uB974\uBA74", "The paper shows"
 - long pasted title chains from retrieved context
 
-Also avoid saying "논문", "paper", "source", "reference", "근거 논문" in the answer unless the user explicitly asks for sources.
+Also avoid saying "\uB17C\uBB38", "paper", "source", "reference", "\uADFC\uAC70 \uB17C\uBB38" in the answer unless the user explicitly asks for sources.
 
 Use retrieved papers only to infer:
 - common biological themes
@@ -12931,169 +8672,31 @@ Use retrieved papers only to infer:
 - limitations
 
 The user should see the synthesized research insight, not the retrieval evidence.
-If the user later asks "어떤 논문 기반이야?", the Worker will show stored sources separately.
+If the user later asks "\uC5B4\uB5A4 \uB17C\uBB38 \uAE30\uBC18\uC774\uC57C?", the Worker will show stored sources separately.
   `.trim();
 }
-
-
-function buildLiteratureRecommendationAnswerFromContext({ context, userMessage }) {
-  const items = selectTopSupportingPapersForAnswer(context, 10, "LITERATURE_REVIEW");
-  const language = detectUserLanguage(userMessage);
-  const isKo = language === "Korean";
-
-  if (!items.length) {
-    return isKo
-      ? "현재 Paper_Talk DB에서 이 주제와 직접 매칭되는 논문을 찾지 못했습니다. 검색어를 조금 더 구체화하거나 DB에 해당 논문을 추가한 뒤 다시 시도해 주세요."
-      : "I could not find papers in the current Paper_Talk DB that directly match this topic. Try a narrower keyword or add relevant papers to the DB and search again.";
-  }
-
-  const topic = String(userMessage || "")
-    .replace(/추천해\s*주세요|추천해주세요|관련|최신|최근|트렌디한|논문|paper|papers/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const heading = isKo
-    ? (topic
-      ? `현재 Paper_Talk DB에서 ${topic} 주제는 몇 가지 흐름으로 나누어 읽으면 좋습니다.`
-      : "현재 Paper_Talk DB에서 이 주제는 몇 가지 흐름으로 나누어 읽으면 좋습니다.")
-    : (topic
-      ? `In the current Paper_Talk DB, ${topic} is best read through a few major trends.`
-      : "In the current Paper_Talk DB, this topic is best read through a few major trends.");
-
-  const labels = isKo
-    ? {
-        why: "왜 중요한가",
-        papers: "추천 논문",
-        read: "어떻게 읽으면 좋은가",
-        next: "다음 연구 아이디어",
-        summary: "정리하면,",
-        summaryText: "이 주제는 방법론, 조직 구조 해석, 세포 상태 모델링, translational biomarker 발굴 쪽으로 나누어 읽으면 흐름을 잡기 좋습니다."
-      }
-    : {
-        why: "Why this trend matters",
-        papers: "Recommended papers",
-        read: "How to read this",
-        next: "Next research ideas",
-        summary: "In short,",
-        summaryText: "This topic is easiest to understand by separating it into methods, tissue-architecture interpretation, cell-state modeling, and translational biomarker discovery."
-      };
-
-  const groups = [];
-  const used = new Set();
-
-  function addGroup(name, predicate) {
-    const selected = items.filter(item => {
-      const hay = `${item.title || ""} ${item.content || ""} ${item.matched_chunk || ""}`.toLowerCase();
-      return !used.has(item.title) && predicate(hay);
-    }).slice(0, 4);
-
-    if (selected.length) {
-      selected.forEach(item => used.add(item.title));
-      groups.push({ name, items: selected });
-    }
-  }
-
-  addGroup("Spatial representation learning", hay => /graph|representation|embedding|contrastive|morpholog|image|histolog|deep|learning|neural|공간|표현/.test(hay));
-  addGroup("Spatial architecture and tissue organization", hay => /architecture|organization|atlas|3d|tissue|microenvironment|niche|cell type|세포|조직|미세환경/.test(hay));
-  addGroup("Spatial trajectory and cell-state modeling", hay => /trajectory|transition|state|fate|velocity|differentiation|pseudotime|운명|상태/.test(hay));
-  addGroup("Clinical or translational spatial analysis", hay => /clinical|patient|therapy|response|biomarker|prognosis|cancer|tumou?r|치료|바이오마커|암/.test(hay));
-
-  const remaining = items.filter(item => !used.has(item.title)).slice(0, 5);
-  if (remaining.length) groups.push({ name: isKo ? "추가로 읽어볼 흐름" : "Additional useful direction", items: remaining });
-
-  const body = groups.map((group, groupIndex) => {
-    const paperLines = group.items.map(item => {
-      const title = cleanBibtexText(item.title || "Untitled paper");
-      const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, 220);
-      const why = excerpt
-        ? excerpt.replace(/\s+/g, " ").replace(/^(title|abstract)\s*[:：]\s*/i, "")
-        : (isKo ? "이 주제와 직접적으로 연결되는 Paper_Talk DB 논문입니다." : "This is a relevant Paper_Talk DB paper for this topic.");
-      return `- ${title}\n  - ${why}`;
-    }).join("\n");
-
-    return [
-      `${groupIndex + 1}. ${group.name}`,
-      "",
-      labels.why,
-      isKo ? "이 흐름은 현재 질문을 더 구체적인 연구 문제로 바꾸는 데 도움이 됩니다." : "This trend helps turn the broad question into a more concrete research problem.",
-      "",
-      labels.papers,
-      paperLines,
-      "",
-      labels.read,
-      isKo ? "먼저 biological question과 데이터 타입을 확인한 뒤, 방법론이 어떤 한계를 해결하는지 보시면 좋습니다." : "Read it by first identifying the biological question and data type, then asking what limitation the method or result addresses.",
-      "",
-      labels.next,
-      isKo ? "이 흐름을 바탕으로 validation, multimodal integration, 또는 환자 cohort 적용 가능성을 생각해볼 수 있습니다." : "From this trend, consider validation, multimodal integration, or application to patient cohorts."
-    ].join("\n");
-  }).join("\n\n");
-
-  return [
-    heading,
-    "",
-    body,
-    "",
-    labels.summary,
-    "",
-    labels.summaryText
-  ].join("\n");
-}
-
+__name(buildStrictInternalEvidenceInstruction, "buildStrictInternalEvidenceInstruction");
 async function normalizeFinalAnswerToUserIntentStyle({ answer, userMessage, outputStyle, env }) {
   const original = String(answer || "").trim();
   if (!original) return original;
-
-  // v73:
-  // Only explicit paper/literature/source modes may expose paper titles or paper labels.
-  // Research idea / research insight answers should use DB evidence internally and show
-  // project-level synthesis only. If the user later asks for sources, SOURCE_TRACE will show them.
   if (["SOURCE_TRACE", "LITERATURE_REVIEW", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle)) {
     return formatAnswerForReadability(original, outputStyle);
   }
-
   const cleaned = hideInternalEvidenceLeaksFromNormalAnswer(original);
   return formatAnswerForReadability(cleaned, outputStyle);
 }
-
-function forceLocalResearchInsightLayout(answer) {
-  let text = String(answer || "").trim();
-  if (!text) return text;
-
-  text = text
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/^\s*[-*]\s*/gm, "- ")
-    .trim();
-
-  if (!/Project|프로젝트|Input|입력|Model|모델|Research Question|연구 질문/i.test(text)) {
-    text = [
-      "이 질문은 단순한 분야 요약보다 실제 프로젝트 형태로 정리하는 편이 좋습니다.",
-      "아래 내용은 Paper_Talk DB 근거와 질문 의도를 바탕으로 정리한 연구 아이디어입니다.",
-      "",
-      text
-    ].join("\n");
-  }
-
-  return text;
-}
-
+__name(normalizeFinalAnswerToUserIntentStyle, "normalizeFinalAnswerToUserIntentStyle");
 function buildPracticalMethodCatalogForPrompt({ userMessage, intent, outputStyle }) {
   if (!["METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle)) return "";
-
   const text = [
     userMessage || "",
     intent?.interpreted_intent || "",
     intent?.primary_domain || "",
     Array.isArray(intent?.key_entities) ? intent.key_entities.join(" ") : ""
   ].join(" ").toLowerCase();
-
   const domain = String(intent?.primary_domain || "").toUpperCase();
-  const isSingleCellOrMultiome =
-    domain === "SINGLE_CELL" ||
-    domain === "MULTIOMICS" ||
-    /(scrna|sc\s*rna|single[-\s]?cell|싱글셀|단일세포|scatac|sc\s*atac|atac[-\s]?seq|chromatin|크로마틴|multi[-\s]?omics|멀티오믹스)/i.test(text);
-
+  const isSingleCellOrMultiome = domain === "SINGLE_CELL" || domain === "MULTIOMICS" || /(scrna|sc\s*rna|single[-\s]?cell|싱글셀|단일세포|scatac|sc\s*atac|atac[-\s]?seq|chromatin|크로마틴|multi[-\s]?omics|멀티오믹스)/i.test(text);
   if (!isSingleCellOrMultiome) return "";
-
   return `
 PRACTICAL METHOD CATALOG FOR METHOD_EXTRACTION / PIPELINE_WORKFLOW
 
@@ -13102,7 +8705,7 @@ This catalog exists so broad tool questions do not get answered with random retr
 
 Critical rule:
 - Always separate DB-supported methods from general practical recommendations.
-- If a method below is not explicitly present in the retrieved DB excerpt, label it as "general practical recommendation / retrieved DB excerpt에서 직접 확인되지는 않음".
+- If a method below is not explicitly present in the retrieved DB excerpt, label it as "general practical recommendation / retrieved DB excerpt\uC5D0\uC11C \uC9C1\uC811 \uD655\uC778\uB418\uC9C0\uB294 \uC54A\uC74C".
 - Do not claim a specific paper used a method unless the retrieved DB excerpt explicitly supports it.
 - For scRNA-seq + scATAC-seq or multiome questions, the answer should include the standard practical tools below when relevant.
 
@@ -13153,11 +8756,10 @@ Expected answer behavior for this user request:
 - Do not let unrelated retrieved items such as generic reference mapping or map-building phrases replace the standard method list or workflow.
 `.trim();
 }
-
+__name(buildPracticalMethodCatalogForPrompt, "buildPracticalMethodCatalogForPrompt");
 async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrameworks = [], pastFrameworks = [], generatedFramework, recentMessages, autoIntent = null, strictActivePaperLocked = false }, env, cancelRuntime = null) {
   context = trimContextForChat(context);
   const hasContext = context.length > 0;
-
   const intent = autoIntent || makeFallbackResearchIntent(userMessage);
   const outputStyle = determinePaperTalkOutputStyle({ userMessage, intent, hasContext });
   const adaptiveStyleInstruction = buildAdaptiveStyleInstruction({ outputStyle, hasContext, userMessage });
@@ -13167,39 +8769,24 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
   const questionType = normalizeQuestionType(intent.question_type || "GENERAL");
   const answerStyle = normalizeAnswerStyle(intent.answer_style || "concise_answer");
   const shouldGenerateHypotheses = Boolean(intent.should_generate_hypotheses);
-  const shouldUseDbEvidence =
-    Boolean(intent.should_use_db_evidence) ||
-    ["RESEARCH", "METHOD", "PIPELINE", "VALIDATION", "LITERATURE"].includes(questionType);
-
-  const isResearchRelated =
-    shouldUseDbEvidence ||
-    ["RESEARCH", "METHOD", "PIPELINE", "VALIDATION", "LITERATURE"].includes(questionType) ||
-    /paper_talk|db|논문|연구|literature|paper|papers|rna velocity|spatial|single-cell|single cell|genomics|cancer/i.test(String(userMessage || ""));
-
-  const dbTitles = hasContext
-    ? [...new Set(context.map(item => cleanBibtexText(item.title || "").trim()).filter(Boolean))]
-    : [];
-
+  const shouldUseDbEvidence = Boolean(intent.should_use_db_evidence) || ["RESEARCH", "METHOD", "PIPELINE", "VALIDATION", "LITERATURE"].includes(questionType);
+  const isResearchRelated = shouldUseDbEvidence || ["RESEARCH", "METHOD", "PIPELINE", "VALIDATION", "LITERATURE"].includes(questionType) || /paper_talk|db|논문|연구|literature|paper|papers|rna velocity|spatial|single-cell|single cell|genomics|cancer/i.test(String(userMessage || ""));
+  const dbTitles = hasContext ? [...new Set(context.map((item) => cleanBibtexText(item.title || "").trim()).filter(Boolean))] : [];
   const thinkingLogicContext = buildThinkingLogicContext(thinkingLogicFrameworks);
   const requestedFormatInstruction = buildUserRequestedFormatInstruction(userMessage);
-
-  const contextText = hasContext
-    ? context.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS).map((item, index) => {
-        const paperLabel = String.fromCharCode(65 + index);
-        const title = cleanBibtexText(item.title || "");
-        const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM);
-
-        return [
-          `DB_SOURCE_${index + 1}`,
-          `INTERNAL_SOURCE_LABEL_DO_NOT_OUTPUT: ${paperLabel}`,
-          `DB_EXCERPT_FOR_SYNTHESIS_ONLY: ${excerpt}`,
-          `EXACT_DB_TITLE: ${title}`,
-          item.source_url ? `DB_ARTICLE_URL: ${item.source_url}` : "",
-          item.pdf_link ? `DB_PDF_URL: ${item.pdf_link}` : ""
-        ].filter(Boolean).join("\n");
-      }).join("\n\n---\n\n")
-    : "NO_MATCHING_PAPER_TALK_DB_CONTEXT";
-
+  const contextText = hasContext ? context.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_ITEMS).map((item, index) => {
+    const paperLabel = String.fromCharCode(65 + index);
+    const title = cleanBibtexText(item.title || "");
+    const excerpt = cleanBibtexText(item.matched_chunk || makeBestEvidenceExcerpt(item.content || "")).slice(0, PAPER_TALK_MAX_FULLTEXT_EXCERPT_PER_ITEM);
+    return [
+      `DB_SOURCE_${index + 1}`,
+      `INTERNAL_SOURCE_LABEL_DO_NOT_OUTPUT: ${paperLabel}`,
+      `DB_EXCERPT_FOR_SYNTHESIS_ONLY: ${excerpt}`,
+      `EXACT_DB_TITLE: ${title}`,
+      item.source_url ? `DB_ARTICLE_URL: ${item.source_url}` : "",
+      item.pdf_link ? `DB_PDF_URL: ${item.pdf_link}` : ""
+    ].filter(Boolean).join("\n");
+  }).join("\n\n---\n\n") : "NO_MATCHING_PAPER_TALK_DB_CONTEXT";
   const intentText = [
     `Question type: ${questionType}`,
     `Answer style: ${answerStyle}`,
@@ -13215,7 +8802,6 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
     `Hypothesis angle: ${intent.hypothesis_angle || ""}`,
     `Validation angle: ${intent.validation_angle || ""}`
   ].filter(Boolean).join("\n");
-
   const modeInstruction = buildModeInstruction({
     questionType,
     answerStyle,
@@ -13224,14 +8810,13 @@ async function callOpenAIForPaperTalk({ userMessage, context, thinkingLogicFrame
     shouldUseDbEvidence,
     isResearchRelated
   });
-
   const insightFirstInstruction = `
 READABLE INSIGHT-FIRST SYNTHESIS RULE
 
 For normal research answers:
 - Do not explain one paper at a time.
 - Do not use paper labels.
-- Do not say "논문 A/B/C" or "Paper A/B/C".
+- Do not say "\uB17C\uBB38 A/B/C" or "Paper A/B/C".
 - Do not include paper titles in parentheses.
 - Do not include citations or references unless the user asks for sources.
 - Extract common biological themes from all retrieved DB excerpts.
@@ -13240,9 +8825,7 @@ For normal research answers:
 - Avoid dense literature-review wording.
 - The answer should feel like a senior cancer genomics mentor explaining what direction is promising, not a paper retrieval report.
   `.trim();
-
-  const strictDbRule = hasContext
-    ? `
+  const strictDbRule = hasContext ? `
 STRICT PAPER_TALK DB-ONLY RULES FOR RESEARCH ANSWERS
 
 The user has retrieved Paper_Talk DB context.
@@ -13253,8 +8836,8 @@ For research-related answers:
 3. Do NOT mention a paper title in normal answers. Titles are internal evidence only unless the user explicitly asks for sources.
 4. Do NOT cite La Manno, Nature papers, famous landmark papers, PubMed papers, or any external publication unless that exact title is present in the retrieved DB context.
 5. Do NOT invent authors, years, journals, sample sizes, datasets, biomarkers, mechanisms, or conclusions.
-6. If a detail is not in the DB excerpt, say "이 정보는 현재 검색된 Paper_Talk DB excerpt에는 명확하지 않습니다."
-7. If the retrieved DB context contains at least one relevant source, never say "관련 논문이 검색되지 않았습니다."
+6. If a detail is not in the DB excerpt, say "\uC774 \uC815\uBCF4\uB294 \uD604\uC7AC \uAC80\uC0C9\uB41C Paper_Talk DB excerpt\uC5D0\uB294 \uBA85\uD655\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."
+7. If the retrieved DB context contains at least one relevant source, never say "\uAD00\uB828 \uB17C\uBB38\uC774 \uAC80\uC0C9\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4."
 8. When comparing papers, compare only the retrieved DB titles and excerpts, but do not expose paper labels/titles in the normal answer unless the user asks for sources.
 9. You may make a cautious research interpretation, but it must be explicitly based on the DB excerpts.
 10. If the DB excerpts are too thin for a strong claim, say the evidence is limited.
@@ -13270,10 +8853,10 @@ v63 readable hidden-source behavior:
 - Internally use retrieved DB papers only as evidence.
 - The user-facing answer must NOT show paper titles, paper labels, or parenthetical paper references.
 - Never write these patterns in a normal answer:
-  "(논문 A: ...)", "(논문 B: ...)", "(Paper A: ...)"
-  "논문 A에서는", "논문 B는", "논문 C에 따르면"
-  "예를 들어 ... (논문 ...)"
-  "사용한 논문", "근거 논문", "참고 논문", "Relevant papers", "Sources"
+  "(\uB17C\uBB38 A: ...)", "(\uB17C\uBB38 B: ...)", "(Paper A: ...)"
+  "\uB17C\uBB38 A\uC5D0\uC11C\uB294", "\uB17C\uBB38 B\uB294", "\uB17C\uBB38 C\uC5D0 \uB530\uB974\uBA74"
+  "\uC608\uB97C \uB4E4\uC5B4 ... (\uB17C\uBB38 ...)"
+  "\uC0AC\uC6A9\uD55C \uB17C\uBB38", "\uADFC\uAC70 \uB17C\uBB38", "\uCC38\uACE0 \uB17C\uBB38", "Relevant papers", "Sources"
 - Do NOT organize by paper. Organize by synthesized insight.
 - Write in the user's language with short paragraphs.
 - For research-direction questions, use a clear insight style automatically:
@@ -13284,8 +8867,7 @@ v63 readable hidden-source behavior:
   5) End with a short 2-3 line summary in the user's language.
 - Use natural transition phrases in the user's language instead of hard-coded Korean phrases.
 - Do not reveal individual paper titles now. The Worker stores the sources separately for later follow-up.
-    `.trim()
-    : `
+    `.trim() : `
 STRICT PAPER_TALK DB-ONLY RULES FOR RESEARCH ANSWERS
 
 No Paper_Talk DB context was retrieved.
@@ -13297,9 +8879,7 @@ For research-related answers:
 4. For ordinary concept, method, algorithm, or research-idea questions, answer the scientific question directly from general knowledge first.
 5. If the user explicitly asked for sources/evidence, say in the user's language that no matching Paper_Talk DB source was retrieved and suggest narrower keywords or reindexing.
     `.trim();
-
-  const activePaperLockInstruction = strictActivePaperLocked
-    ? `
+  const activePaperLockInstruction = strictActivePaperLocked ? `
 STRICT ACTIVE PAPER LOCK
 
 The current conversation is locked to ONE explicit paper selected from the user's URL/title.
@@ -13311,9 +8891,7 @@ If the user asks whether the full paper was read, answer honestly:
 Important technical truth: the Worker fetches publisher URLs from Cloudflare server-side, not from the user browser, user cookies, institutional VPN, or the user IP address. Therefore the user's personal/institutional access to Cell/Nature/Science cannot be used by the Worker. If the full text is not stored in Paper_Talk DB and is not openly fetchable, say so clearly.
 If the user asks where a statement came from and the statement is not supported by DB_SOURCE_1, say it was not supported by the active paper context and correct it using DB_SOURCE_1.
 For follow-up requests such as key takeaway, 1 line, 3 lines, why important, or clinical meaning, answer from DB_SOURCE_1 only.
-    `.trim()
-    : "";
-
+    `.trim() : "";
   const messages = [
     {
       role: "system",
@@ -13328,7 +8906,7 @@ Core behavior:
 - For ordinary research idea / research direction answers, use retrieved Paper_Talk DB papers as hidden internal evidence unless the user asks for sources.
 - For any biomedical research, method, analysis, workflow, validation, comparison, or literature question, do not stop at a generic explanation. Use retrieved Paper_Talk DB papers when available and extract how papers actually did the work.
 - The answer should explain not only what methods exist, but how the retrieved papers used them, what data/unit they used, what output they produced, what limitation remains, and what the user can reuse.
-- Do not show paper labels such as 논문 A/B/C or paper titles unless the user explicitly asks for paper recommendations, literature, sources, references, or evidence.
+- Do not show paper labels such as \uB17C\uBB38 A/B/C or paper titles unless the user explicitly asks for paper recommendations, literature, sources, references, or evidence.
 - If the user asks for paper recommendations or sources, then show only retrieved Paper_Talk DB titles and explain why they matter.
 - Do not force old report headings such as "Direct answer / Relevant papers / Findings / Gaps".
 - Do not dump retrieved papers as a raw list unless the user specifically asks for papers.
@@ -13366,26 +8944,26 @@ For interpretation questions, use short prose paragraphs.
 For implementation questions, use action steps or workflow blocks.
 Do not use the same section names and order every time.
 
-핵심 한 줄
+\uD575\uC2EC \uD55C \uC904
 - One precise takeaway. If the user asked in English, use "Core takeaway" instead.
 
-무엇을 한 논문인가
+\uBB34\uC5C7\uC744 \uD55C \uB17C\uBB38\uC778\uAC00
 - Biological/technical problem.
 - Data or model system.
 - Main method.
 
-왜 중요한가
+\uC65C \uC911\uC694\uD55C\uAC00
 - Scientific meaning.
 - What limitation or bottleneck it addresses.
 
-해석 포인트
+\uD574\uC11D \uD3EC\uC778\uD2B8
 - 2 to 4 bullet points.
 - Separate observation, method contribution, biological interpretation, and clinical/translational implication.
 
-한계 / 주의점
+\uD55C\uACC4 / \uC8FC\uC758\uC810
 - Mention uncertainty, missing validation, dataset limitation, or what is not clear from the retrieved excerpt.
 
-다음 연구 아이디어
+\uB2E4\uC74C \uC5F0\uAD6C \uC544\uC774\uB514\uC5B4
 - If the user asks what to do next, give 2 to 4 concrete project directions.
 - Each direction should include: question, data/method, expected output, and validation.
 
@@ -13404,7 +8982,7 @@ Paper/source visibility rule:
 - In LITERATURE_REVIEW, SOURCE_TRACE, METHOD_EXTRACTION, and PIPELINE_WORKFLOW modes, you may show retrieved DB paper titles.
 - In METHOD_EXTRACTION mode, show paper titles only to support a listed package/tool/method and organize by analysis purpose, not by trend.
 - In PIPELINE_WORKFLOW mode, show paper titles only to support a workflow step or tool choice and organize by analysis order, not by trend.
-- In normal RESEARCH_INSIGHT, RESEARCH_SYNTHESIS, VALIDATION, CONCEPT, COMPARISON, or GENERAL answers, do NOT show 논문 A/B/C labels, paper titles, URLs, journals, authors, DOI/PMID, or source lists.
+- In normal RESEARCH_INSIGHT, RESEARCH_SYNTHESIS, VALIDATION, CONCEPT, COMPARISON, or GENERAL answers, do NOT show \uB17C\uBB38 A/B/C labels, paper titles, URLs, journals, authors, DOI/PMID, or source lists.
 - For broad research-direction questions, synthesize across retrieved DB papers silently and give project-level research ideas.
 - If the user later asks for sources/evidence/references in any language, SOURCE_TRACE will show the stored sources separately.
 
@@ -13420,11 +8998,11 @@ Adaptive format rules:
 
 Paper_Talk DB rules:
 - Publisher URL reading is server-side from the Cloudflare Worker, not through the user's browser/IP/cookies. Do not imply that the user's institutional access lets the Worker read paywalled full text. For full-text-level answers, the full text must be stored in Paper_Talk DB, uploaded as PDF/TXT, or openly accessible to the Worker.
-- For research-related questions, method/package extraction questions, literature questions, validation questions, paper comparison questions, and any question mentioning Paper_Talk DB, DB, 논문, or 연구, use the retrieved Paper_Talk DB context as the evidence source.
+- For research-related questions, method/package extraction questions, literature questions, validation questions, paper comparison questions, and any question mentioning Paper_Talk DB, DB, \uB17C\uBB38, or \uC5F0\uAD6C, use the retrieved Paper_Talk DB context as the evidence source.
 - Do not mix outside papers into the evidence.
 - Do not invent paper titles, authors, years, journals, sample sizes, datasets, mechanisms, biomarkers, or conclusions.
 - If DB evidence is thin, still answer the user's scientific question first in a helpful way.
-- If DB context exists, never say "관련 논문이 없습니다". Use the retrieved DB excerpts quietly unless the user explicitly asks for sources.
+- If DB context exists, never say "\uAD00\uB828 \uB17C\uBB38\uC774 \uC5C6\uC2B5\uB2C8\uB2E4". Use the retrieved DB excerpts quietly unless the user explicitly asks for sources.
 - If no DB context was retrieved, do NOT start with a database-failure sentence. For ordinary concept/method/research-idea questions, answer from general scientific knowledge first. Mention DB retrieval failure only when the user explicitly asks for sources, references, Paper_Talk DB evidence, or which papers were used.
 
 Language:
@@ -13468,16 +9046,18 @@ ${thinkingLogicContext.slice(0, PAPER_TALK_MAX_THINKING_LOGIC_CHAT_CHARS)}
     },
     {
       role: "system",
-      content: `Automatic question interpretation:\n\n${intentText}`
+      content: `Automatic question interpretation:
+
+${intentText}`
     },
     {
       role: "system",
       content: strictDbRule
     },
-    ...(practicalMethodCatalog ? [{
+    ...practicalMethodCatalog ? [{
       role: "system",
       content: practicalMethodCatalog
-    }] : []),
+    }] : [],
     {
       role: "system",
       content: `
@@ -13498,17 +9078,17 @@ If outputStyle is PIPELINE_WORKFLOW:
 - Do not only list relevant papers. For each important paper or paper group, explain how the paper actually used the method: the biological/analytical purpose, data type, unit of analysis, region/ROI definition, computation/model/tool, output, validation, and which part can be reused for the user's analysis.
 - Behave like an agent reading papers one by one. Select candidate papers from the DB based on direct relevance to the user's question, not a fixed number. If the DB has many strong matches, show more candidates and group them by theme. If the DB has few strong matches, show only those few and say the evidence is limited. Do not pad with weak papers.
 - The answer should visibly show the selected papers or paper groups, then compare them, then discuss the practical conclusion. Do not jump straight to a generic workflow.
-- If the user asks "깔끔하게 정리", "서술형 말고", or similar, use a concise structure:
-  1) 추천 결론
-  2) DB에서 직접 맞는 후보 논문/논문군 table
-  3) 논문들이 실제로 한 방식 비교 table
-  4) 내 질문에 맞는 선택 기준 table
-  5) 바로 적용 checklist
+- If the user asks "\uAE54\uB054\uD558\uAC8C \uC815\uB9AC", "\uC11C\uC220\uD615 \uB9D0\uACE0", or similar, use a concise structure:
+  1) \uCD94\uCC9C \uACB0\uB860
+  2) DB\uC5D0\uC11C \uC9C1\uC811 \uB9DE\uB294 \uD6C4\uBCF4 \uB17C\uBB38/\uB17C\uBB38\uAD70 table
+  3) \uB17C\uBB38\uB4E4\uC774 \uC2E4\uC81C\uB85C \uD55C \uBC29\uC2DD \uBE44\uAD50 table
+  4) \uB0B4 \uC9C8\uBB38\uC5D0 \uB9DE\uB294 \uC120\uD0DD \uAE30\uC900 table
+  5) \uBC14\uB85C \uC801\uC6A9 checklist
 - Keep the discussion short and decision-oriented. Do not write long narrative paragraphs.
 - If a retrieved DB excerpt is too thin to know exactly how the paper did it, say that clearly and use it only as weak support.
 - For single-cell/scRNA/scATAC/multiome workflow questions, extract workflow patterns from keyword-matched single-cell or multiome papers.
 - For spatial/spatial transcriptomics workflow questions, extract workflow patterns from keyword-matched spatial papers.
-- Do not start with "먼저 찾은 관련 pipeline 논문" unless the user explicitly asks for related papers.
+- Do not start with "\uBA3C\uC800 \uCC3E\uC740 \uAD00\uB828 pipeline \uB17C\uBB38" unless the user explicitly asks for related papers.
 - Do not force a fixed answer template. Choose section names, order, table use, and level of detail based on the user's question.
 - Include top candidate papers and paper-grounded method groups when they help the user decide.
 - Then summarize workflow patterns visible in the retrieved Paper_Talk DB papers.
@@ -13540,15 +9120,15 @@ If outputStyle is LITERATURE_REVIEW:
 - Select the number of papers adaptively based on the DB. A narrow topic may need only a few strong papers; a broad trend question may need several papers grouped by theme.
 - The answer must show the selected retrieved papers or paper groups and then synthesize them. Do not answer from one unrelated previous active paper.
 - For each trend use this structure:
-  ① Trend name
-  왜 뜨는가?
-  추천 논문
-  이 논문을 어떻게 읽으면 좋은가?
-  다음 연구 아이디어
-- Show exact retrieved DB paper titles only under 추천 논문.
-- Do not use paper labels such as 논문 A/B/C or Paper A/B/C.
+  \u2460 Trend name
+  \uC65C \uB728\uB294\uAC00?
+  \uCD94\uCC9C \uB17C\uBB38
+  \uC774 \uB17C\uBB38\uC744 \uC5B4\uB5BB\uAC8C \uC77D\uC73C\uBA74 \uC88B\uC740\uAC00?
+  \uB2E4\uC74C \uC5F0\uAD6C \uC544\uC774\uB514\uC5B4
+- Show exact retrieved DB paper titles only under \uCD94\uCC9C \uB17C\uBB38.
+- Do not use paper labels such as \uB17C\uBB38 A/B/C or Paper A/B/C.
 - Do not write a long sequential summary of each paper.
-- End with a short 정리하면 paragraph.
+- End with a short \uC815\uB9AC\uD558\uBA74 paragraph.
 
 If outputStyle is RESEARCH_INSIGHT or RESEARCH_SYNTHESIS:
 - Produce actionable project-level research ideas.
@@ -13562,74 +9142,65 @@ If outputStyle is RESEARCH_INSIGHT or RESEARCH_SYNTHESIS:
 Never answer a paper recommendation request with only a field summary.
       `.trim()
     },
-    ...(activePaperLockInstruction ? [{
+    ...activePaperLockInstruction ? [{
       role: "system",
       content: activePaperLockInstruction
-    }] : []),
+    }] : [],
     {
       role: "system",
       content: modeInstruction
     },
     {
       role: "system",
-      content: `Retrieved Paper_Talk DB sources:\n\n${contextText.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_TEXT)}`
+      content: `Retrieved Paper_Talk DB sources:
+
+${contextText.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_TEXT)}`
     },
     {
       role: "system",
-      content: hasContext
-        ? (["LITERATURE_REVIEW", "SOURCE_TRACE", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle)
-          ? "A DB context is present. The user explicitly asked for papers/literature/sources, paper-grounded methods, or an analysis workflow. You may show retrieved EXACT_DB_TITLE values only when they support a method/workflow step. Select candidate papers or paper groups based on direct relevance in the DB, not a fixed number. If many DB papers strongly match the question, include more candidates and group them by theme. If only a few strongly match, show only those few and state that DB evidence is limited. Do not pad with weak papers. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method. For PIPELINE_WORKFLOW, identify keyword-matched retrieved papers, explain how each selected paper actually used the relevant method/concept, group them by methodological theme, compare themes using the uploaded Thinking logic rubric, discuss the best-fit option for the user's data/question, then provide a practical workflow. Do not jump directly to a generic workflow. If the user asks for a clean organized answer or says not to use narrative style, prefer tables/checklists/short bullets and avoid long paragraphs. Do not force a fixed template; choose the most readable structure for the question. Do not use paper labels without exact titles. Do not use external papers as DB evidence. If keyword-matched workflow evidence is insufficient, say so clearly before any general fallback."
-          : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources. Still extract how the retrieved papers approached the problem: what data, unit, method/model, output, validation, limitation, and reusable idea they contain. Answer the user's question first in a friendly, concrete, operational way rather than a generic overview.")
-        : "No DB context is present. Do not start with a Paper_Talk DB retrieval-failure sentence unless the user explicitly asked for sources/evidence. For ordinary concept, algorithm, method, or research-idea questions, answer the scientific question directly from general knowledge. Do not invent paper titles, authors, years, journals, sample sizes, or datasets."
+      content: hasContext ? ["LITERATURE_REVIEW", "SOURCE_TRACE", "METHOD_EXTRACTION", "PIPELINE_WORKFLOW"].includes(outputStyle) ? "A DB context is present. The user explicitly asked for papers/literature/sources, paper-grounded methods, or an analysis workflow. You may show retrieved EXACT_DB_TITLE values only when they support a method/workflow step. Select candidate papers or paper groups based on direct relevance in the DB, not a fixed number. If many DB papers strongly match the question, include more candidates and group them by theme. If only a few strongly match, show only those few and state that DB evidence is limited. Do not pad with weak papers. For LITERATURE_REVIEW, organize papers by trend/theme. For METHOD_EXTRACTION, organize by analysis purpose and package/tool/method. For PIPELINE_WORKFLOW, identify keyword-matched retrieved papers, explain how each selected paper actually used the relevant method/concept, group them by methodological theme, compare themes using the uploaded Thinking logic rubric, discuss the best-fit option for the user's data/question, then provide a practical workflow. Do not jump directly to a generic workflow. If the user asks for a clean organized answer or says not to use narrative style, prefer tables/checklists/short bullets and avoid long paragraphs. Do not force a fixed template; choose the most readable structure for the question. Do not use paper labels without exact titles. Do not use external papers as DB evidence. If keyword-matched workflow evidence is insufficient, say so clearly before any general fallback." : "A DB context is present. Use the retrieved DB excerpts as INTERNAL evidence only. Do not output EXACT_DB_TITLE values, paper labels, URLs, journals, authors, or source lists unless the user explicitly asks for sources. Still extract how the retrieved papers approached the problem: what data, unit, method/model, output, validation, limitation, and reusable idea they contain. Answer the user's question first in a friendly, concrete, operational way rather than a generic overview." : "No DB context is present. Do not start with a Paper_Talk DB retrieval-failure sentence unless the user explicitly asked for sources/evidence. For ordinary concept, algorithm, method, or research-idea questions, answer the scientific question directly from general knowledge. Do not invent paper titles, authors, years, journals, sample sizes, or datasets."
     },
-    ...recentMessages
-      .filter(m => m.role !== "assistant")
-      .slice(-2)
-      .map(m => ({
-        role: "user",
-        content: String(m.content || "").slice(0, 800)
-      })),
+    ...recentMessages.filter((m) => m.role !== "assistant").slice(-2).map((m) => ({
+      role: "user",
+      content: String(m.content || "").slice(0, 800)
+    })),
     {
       role: "user",
       content: String(userMessage || "").slice(0, 1200)
     }
   ];
-
-  if (!env.AI) {
-    return "Cloudflare Workers AI binding is missing.";
+  if (!env.OPENAI_API_KEY) {
+    return "OPENAI_API_KEY is missing.";
   }
-
   await cancelRuntime?.throwIfCanceled?.();
-  const abortable = createLinkedAbortController(cancelRuntime, 70000);
-
+  const abortable = createLinkedAbortController(cancelRuntime, 7e4);
   try {
-    const res = await fetchChatCompletionWithWorkersAI(env, {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       signal: abortable.signal,
       headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model: "gpt-4o",
         messages,
         temperature: isResearchRelated ? 0 : 0.1,
-        max_completion_tokens: hasContext ? 2600 : (questionType === "CONCEPT" && !shouldUseDbEvidence ? 1700 : 2100)
+        max_completion_tokens: hasContext ? 2600 : questionType === "CONCEPT" && !shouldUseDbEvidence ? 1700 : 2100
       })
     });
-
     const raw = await res.text();
     let data = {};
-
     try {
       data = JSON.parse(raw);
     } catch {
-      return `OpenAI API returned non-JSON response:\n\n${raw.slice(0, 500)}`;
-    }
+      return `OpenAI API returned non-JSON response:
 
+${raw.slice(0, 500)}`;
+    }
     if (!res.ok) {
       return `OpenAI API error: ${data?.error?.message || `HTTP ${res.status}`}`;
     }
-
     return extractOpenAIText(data) || getOpenAIErrorMessage(data, "No answer was generated. Please try again with a shorter question.");
   } catch (error) {
     if (isUserCanceledError(error) || await isGptRuntimeCanceledNoThrow(cancelRuntime)) {
@@ -13638,14 +9209,12 @@ Never answer a paper recommendation request with only a field summary.
     if (error && error.name === "AbortError") {
       return "OpenAI API timeout after 70 seconds. Please try a narrower question or ask about fewer mechanisms at once.";
     }
-
     return `OpenAI API request failed: ${error?.message || "Unknown error"}`;
   } finally {
     abortable.cleanup();
   }
 }
-
-
+__name(callOpenAIForPaperTalk, "callOpenAIForPaperTalk");
 function buildModeInstruction({ questionType, answerStyle, shouldGenerateHypotheses, hasContext, shouldUseDbEvidence = false, isResearchRelated = false }) {
   if (questionType === "CONCEPT" && !shouldUseDbEvidence) {
     return `
@@ -13655,7 +9224,6 @@ Use examples when useful.
 Do not force paper lists or research gaps unless asked.
     `.trim();
   }
-
   if (questionType === "PIPELINE" || answerStyle === "end_to_end_workflow" || answerStyle === "pipeline_workflow" || answerStyle === "paper_grounded_workflow") {
     return `
 Selected mode: PRACTICAL END-TO-END ANALYSIS WORKFLOW.
@@ -13679,7 +9247,6 @@ Adaptive workflow organization:
 - End with the simplest starting pipeline or most practical recommendation.
     `.trim();
   }
-
   if (questionType === "METHOD" || answerStyle === "practical_method_table" || answerStyle === "method_extraction") {
     return `
 Selected mode: PAPER-GROUNDED METHOD / PACKAGE EXTRACTION.
@@ -13698,14 +9265,13 @@ Recommended structure:
 - End with 3-5 practical methods/packages to try first.
     `.trim();
   }
-
   if (questionType === "LITERATURE") {
     return `
 Selected mode: LITERATURE_REVIEW / USER-FRIENDLY TREND RECOMMENDATION.
 
 The user wants papers, trends, hot topics, representative studies, or state-of-the-art direction.
 Use only retrieved Paper_Talk DB sources for paper names and evidence.
-Do not answer as a mechanical list of 논문 A, 논문 B, 논문 C.
+Do not answer as a mechanical list of \uB17C\uBB38 A, \uB17C\uBB38 B, \uB17C\uBB38 C.
 Do not summarize each paper one by one as the main structure.
 
 Answer goal:
@@ -13724,13 +9290,12 @@ Do not use retrieval scores or anonymous paper labels.
 Actual DB paper titles should appear only as recommended reading under each trend.
     `.trim();
   }
-
   if (questionType === "RESEARCH" || shouldGenerateHypotheses || isResearchRelated) {
     return `
 Selected mode: USER-FRIENDLY RESEARCH IDEA MENTORING.
 
 The user wants research directions, project ideas, hypotheses, or practical next studies.
-Use retrieved Paper_Talk DB evidence silently as background when available, but do not expose paper titles or 논문 A/B/C labels unless the user explicitly asks for sources.
+Use retrieved Paper_Talk DB evidence silently as background when available, but do not expose paper titles or \uB17C\uBB38 A/B/C labels unless the user explicitly asks for sources.
 Do not mix outside papers as evidence.
 
 Answer goal:
@@ -13763,7 +9328,6 @@ For spatial biology, cancer genomics, single-cell, or multiomics questions, natu
 If Paper_Talk DB context is absent, say that no strong DB match was retrieved, then give only a clearly labeled general brainstorming answer.
     `.trim();
   }
-
   if (questionType === "VALIDATION") {
     return `
 Selected mode: VALIDATION PLAN.
@@ -13771,19 +9335,17 @@ Explain what to test, computational validation, experimental validation, control
 Use only retrieved DB evidence for paper-based claims.
     `.trim();
   }
-
   return `
 Selected mode: GENERAL.
 Answer naturally and clearly.
 If the question is research-related, stay DB-grounded and do not invent citations.
   `.trim();
 }
-
+__name(buildModeInstruction, "buildModeInstruction");
 async function adminListGptThreads(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const threads = await env.DB.prepare(`
     SELECT
       gpt_threads.id,
@@ -13797,25 +9359,21 @@ async function adminListGptThreads(request, env) {
     LEFT JOIN users ON users.id = gpt_threads.user_id
     ORDER BY datetime(gpt_threads.updated_at) DESC
   `).all();
-
   return json({
     ok: true,
     threads: threads.results || []
   });
 }
-
+__name(adminListGptThreads, "adminListGptThreads");
 async function adminListGptMessages(request, env) {
   if (!isAdmin(request, env)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
-
   const url = new URL(request.url);
   const threadId = url.searchParams.get("threadId");
-
   if (!threadId) {
     return json({ ok: false, error: "threadId is required." }, 400);
   }
-
   const messages = await env.DB.prepare(`
     SELECT
       gpt_messages.role,
@@ -13828,9 +9386,13 @@ async function adminListGptMessages(request, env) {
     WHERE gpt_messages.thread_id = ?
     ORDER BY datetime(gpt_messages.created_at) ASC
   `).bind(threadId).all();
-
   return json({
     ok: true,
     messages: messages.results || []
   });
 }
+__name(adminListGptMessages, "adminListGptMessages");
+export {
+  worker_default as default
+};
+//# sourceMappingURL=worker.js.map
