@@ -2,6 +2,9 @@ name = "paper-talk"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
+[placement]
+region = "aws:ap-northeast-1"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "paper-talk-db"
