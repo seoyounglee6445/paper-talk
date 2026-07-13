@@ -623,27 +623,30 @@ function getOpenAIErrorMessage(data, fallback = "OpenAI API returned no answer."
 __name(getOpenAIErrorMessage, "getOpenAIErrorMessage");
 function getOpenAIChatCompletionsUrl(env) {
   const accountId = String(env.CLOUDFLARE_ACCOUNT_ID || "").trim();
-  const gatewayId = String(env.CLOUDFLARE_AI_GATEWAY_ID || "default").trim() || "default";
+  const gatewayId = String(env.CLOUDFLARE_AI_GATEWAY_ID || "").trim();
   if (!accountId) {
     throw new Error("CLOUDFLARE_ACCOUNT_ID is missing.");
+  }
+  if (!gatewayId || gatewayId === "REPLACE_WITH_YOUR_GATEWAY_ID") {
+    throw new Error("CLOUDFLARE_AI_GATEWAY_ID is missing. Enter the ID of the AI Gateway created in Cloudflare.");
   }
   return `https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(gatewayId)}/openai/chat/completions`;
 }
 __name(getOpenAIChatCompletionsUrl, "getOpenAIChatCompletionsUrl");
 function getOpenAIRequestHeaders(env) {
   const openAIKey = String(env.OPENAI_API_KEY || "").trim();
-  const gatewayToken = String(env.CF_AIG_TOKEN || "").trim();
   if (!openAIKey) {
     throw new Error("OPENAI_API_KEY is missing.");
   }
-  if (!gatewayToken) {
-    throw new Error("CF_AIG_TOKEN is missing. Add it as a Cloudflare Worker secret so the default AI Gateway can be authenticated and created automatically.");
-  }
-  return {
+  const headers = {
     "Authorization": `Bearer ${openAIKey}`,
-    "cf-aig-authorization": `Bearer ${gatewayToken}`,
     "Content-Type": "application/json"
   };
+  const gatewayToken = String(env.CF_AIG_TOKEN || "").trim();
+  if (gatewayToken) {
+    headers["cf-aig-authorization"] = `Bearer ${gatewayToken}`;
+  }
+  return headers;
 }
 __name(getOpenAIRequestHeaders, "getOpenAIRequestHeaders");
 async function testOpenAI(env) {
