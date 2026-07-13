@@ -17,10 +17,13 @@ var worker_default = {
         return json({
           hasKey: !!env.OPENAI_API_KEY,
           hasModel: !!env.OPENAI_MODEL,
+          hasGatewayAccountId: !!env.CLOUDFLARE_ACCOUNT_ID,
+          hasGatewayId: !!env.CLOUDFLARE_AI_GATEWAY_ID,
+          hasGatewayToken: !!env.CF_AIG_TOKEN,
           hasSessionSecret: !!env.SESSION_SECRET,
           hasNeuroPassword: !!env.NEURO_GPT_PASSWORD,
           model: env.OPENAI_MODEL || "gpt-4o",
-          provider: "openai-direct"
+          provider: "cloudflare-ai-gateway-openai"
         });
       }
       if (pathname === "/api/test-openai") {
@@ -618,18 +621,31 @@ function getOpenAIErrorMessage(data, fallback = "OpenAI API returned no answer."
   return fallback;
 }
 __name(getOpenAIErrorMessage, "getOpenAIErrorMessage");
-function getOpenAIChatCompletionsUrl() {
-  return "https://api.openai.com/v1/chat/completions";
+function getOpenAIChatCompletionsUrl(env) {
+  const accountId = String(env.CLOUDFLARE_ACCOUNT_ID || "").trim();
+  const gatewayId = String(env.CLOUDFLARE_AI_GATEWAY_ID || "").trim();
+  if (!accountId) {
+    throw new Error("CLOUDFLARE_ACCOUNT_ID is missing.");
+  }
+  if (!gatewayId || gatewayId === "REPLACE_WITH_YOUR_GATEWAY_ID") {
+    throw new Error("CLOUDFLARE_AI_GATEWAY_ID is missing. Create an AI Gateway in Cloudflare and set its Gateway ID in wrangler.toml.");
+  }
+  return `https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(gatewayId)}/openai/chat/completions`;
 }
 __name(getOpenAIChatCompletionsUrl, "getOpenAIChatCompletionsUrl");
 function getOpenAIRequestHeaders(env) {
   if (!env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is missing.");
   }
-  return {
+  const headers = {
     "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
     "Content-Type": "application/json"
   };
+  const gatewayToken = String(env.CF_AIG_TOKEN || "").trim();
+  if (gatewayToken) {
+    headers["cf-aig-authorization"] = `Bearer ${gatewayToken}`;
+  }
+  return headers;
 }
 __name(getOpenAIRequestHeaders, "getOpenAIRequestHeaders");
 async function testOpenAI(env) {
