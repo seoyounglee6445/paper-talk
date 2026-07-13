@@ -3,7 +3,7 @@ main = "src/worker.js"
 compatibility_date = "2025-01-01"
 
 [vars]
-CLOUDFLARE_AI_MODEL = "@cf/openai/gpt-oss-120b"
+OPENAI_MODEL = "gpt-4o"
 
 [assets]
 directory = "./public"
@@ -12,10 +12,3 @@ directory = "./public"
 binding = "DB"
 database_name = "paper-talk-db"
 database_id = "5b33c4d2-9d1d-47f0-993f-a694c2b05d8a"
-
-[ai]
-binding = "AI"
-
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "paper-talk-research"
