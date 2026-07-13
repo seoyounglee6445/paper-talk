@@ -1,17 +1,20 @@
 name = "paper-talk"
-main = "src/index.js"
+main = "src/worker.js"
 compatibility_date = "2025-01-01"
 
 [placement]
 region = "aws:ap-northeast-1"
 
+[vars]
+OPENAI_MODEL = "gpt-4o"
+
+[assets]
+directory = "./public"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "paper-talk-db"
 database_id = "5b33c4d2-9d1d-47f0-993f-a694c2b05d8a"
-
-[assets]
-directory = "./public"
 
 [ai]
 binding = "AI"
