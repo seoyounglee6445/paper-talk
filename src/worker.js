@@ -17,7 +17,9 @@ var worker_default = {
         return json({
           hasKey: !!env.OPENAI_API_KEY,
           hasModel: !!env.OPENAI_MODEL,
-          model: "gpt-4o"
+          hasGateway: !!env.CLOUDFLARE_ACCOUNT_ID && !!env.CLOUDFLARE_AI_GATEWAY_ID,
+          model: env.OPENAI_MODEL || "gpt-4o",
+          gatewayId: env.CLOUDFLARE_AI_GATEWAY_ID || ""
         });
       }
       if (pathname === "/api/test-openai") {
@@ -607,19 +609,40 @@ function getOpenAIErrorMessage(data, fallback = "OpenAI API returned no answer."
   return fallback;
 }
 __name(getOpenAIErrorMessage, "getOpenAIErrorMessage");
+function getOpenAIChatCompletionsUrl(env) {
+  const accountId = String(env.CLOUDFLARE_ACCOUNT_ID || "").trim();
+  const gatewayId = String(env.CLOUDFLARE_AI_GATEWAY_ID || "").trim();
+  if (!accountId) {
+    throw new Error("CLOUDFLARE_ACCOUNT_ID is missing.");
+  }
+  if (!gatewayId || gatewayId === "REPLACE_WITH_YOUR_GATEWAY_ID") {
+    throw new Error("CLOUDFLARE_AI_GATEWAY_ID is missing. Create an AI Gateway in Cloudflare and set its Gateway ID in wrangler.toml.");
+  }
+  return `https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(gatewayId)}/openai/chat/completions`;
+}
+__name(getOpenAIChatCompletionsUrl, "getOpenAIChatCompletionsUrl");
+function getOpenAIRequestHeaders(env) {
+  const headers = {
+    "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+    "Content-Type": "application/json"
+  };
+  const gatewayToken = String(env.CF_AIG_TOKEN || "").trim();
+  if (gatewayToken) {
+    headers["cf-aig-authorization"] = `Bearer ${gatewayToken}`;
+  }
+  return headers;
+}
+__name(getOpenAIRequestHeaders, "getOpenAIRequestHeaders");
 async function testOpenAI(env) {
   if (!env.OPENAI_API_KEY) {
     return json({ ok: false, error: "OPENAI_API_KEY is missing." }, 500);
   }
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch(getOpenAIChatCompletionsUrl(env), {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
+      headers: getOpenAIRequestHeaders(env),
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           { role: "user", content: "Say hello in one short sentence." }
         ],
@@ -630,13 +653,13 @@ async function testOpenAI(env) {
     const data = await readJsonResponseSafely(response, "OpenAI test request");
     return json({
       ok: true,
-      model: "gpt-4o",
+      model: env.OPENAI_MODEL || "gpt-4o",
       answer: extractOpenAIText(data) || "No answer returned."
     });
   } catch (error) {
     return json({
       ok: false,
-      model: "gpt-4o",
+      model: env.OPENAI_MODEL || "gpt-4o",
       error: error?.message || "Unknown OpenAI test error"
     }, 500);
   }
@@ -2525,15 +2548,12 @@ async function callOpenAIThinkingDistiller(prompt, env, maxTokens = 1800) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 9e4);
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(getOpenAIChatCompletionsUrl(env), {
       method: "POST",
       signal: controller.signal,
-      headers: {
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
+      headers: getOpenAIRequestHeaders(env),
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -4970,15 +4990,12 @@ async function callOpenAIGeneralNoRetrieval(userMessage, env, cancelRuntime = nu
   await cancelRuntime?.throwIfCanceled?.();
   const abortable = createLinkedAbortController(cancelRuntime, 45e3);
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(getOpenAIChatCompletionsUrl(env), {
       method: "POST",
       signal: abortable.signal,
-      headers: {
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
+      headers: getOpenAIRequestHeaders(env),
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -5318,15 +5335,12 @@ async function inferPaperTalkResearchIntentForChat(userMessage, env, cancelRunti
   await cancelRuntime?.throwIfCanceled?.();
   const abortable = createLinkedAbortController(cancelRuntime, 9e3);
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(getOpenAIChatCompletionsUrl(env), {
       method: "POST",
       signal: abortable.signal,
-      headers: {
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
+      headers: getOpenAIRequestHeaders(env),
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -6002,13 +6016,10 @@ ${codeContextText}
   `.trim();
   const abortable = createLinkedAbortController(cancelRuntime, 12e4);
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch(getOpenAIChatCompletionsUrl(env), {
       method: "POST",
       signal: abortable.signal,
-      headers: {
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
+      headers: getOpenAIRequestHeaders(env),
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-4o",
         messages: [
@@ -9175,13 +9186,10 @@ ${contextText.slice(0, PAPER_TALK_MAX_CHAT_CONTEXT_TEXT)}`
   await cancelRuntime?.throwIfCanceled?.();
   const abortable = createLinkedAbortController(cancelRuntime, 7e4);
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(getOpenAIChatCompletionsUrl(env), {
       method: "POST",
       signal: abortable.signal,
-      headers: {
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
+      headers: getOpenAIRequestHeaders(env),
       body: JSON.stringify({
         model: "gpt-4o",
         messages,
